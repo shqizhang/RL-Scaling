@@ -61,7 +61,8 @@ done
 
 # ── 脚本目录定位 ─────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST_DIR="${SCRIPT_DIR}/manifests"
+# MANIFEST_DIR 可被外部 wrapper 覆盖（例如 RL-Scaling 部署器会传入 sed 改写过镜像引用的临时目录）
+MANIFEST_DIR="${MANIFEST_DIR:-${SCRIPT_DIR}/manifests}"
 
 # ── 颜色输出 ─────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
