@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rl-scaling-controller
+  namespace: dynamo
+  labels: { app: rl-scaling-controller }
+spec:
+  replicas: 1                      # Single-writer; do not scale > 1
+  strategy: { type: Recreate }     # Never run two controllers concurrently
+  selector:
+    matchLabels: { app: rl-scaling-controller }
+  template:
+    metadata:
+      labels: { app: rl-scaling-controller }
+    spec:
+      serviceAccountName: rl-scaling-controller
+      containers:
+        - name: controller
+          image: ghcr.io/shqizhang/rl-scaling-controller:dev   # override per env
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: rl-scaling-controller-config }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /api/v1/status, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v1/status, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rl-scaling-controller
+  namespace: dynamo
+spec:
+  type: ClusterIP
+  selector: { app: rl-scaling-controller }
+  ports:
+    - { name: http, port: 8080, targetPort: http }

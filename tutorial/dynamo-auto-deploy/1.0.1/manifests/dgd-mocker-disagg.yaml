@@ -1,0 +1,74 @@
+# ============================================================
+# dgd-mocker-disagg.yaml — Dynamo 1.0.1 Mocker (无 GPU 模拟)
+#
+# 直接基于官方示例:
+#   dynamo/examples/backends/mocker/deploy/disagg.yaml @ tag v1.0.1
+#
+# 用途: 在没有 GPU / 不想跑真实模型 的环境下验证 Planner / Router
+# 通过预置的吞吐曲线模拟 prefill / decode 行为，资源开销极低 (CPU only)。
+#
+# Mocker 镜像内置 profile data 路径:
+#   /workspace/tests/planner/profiling_results/H200_TP1P_TP1D/
+#     ├── disagg.yaml
+#     ├── selected_decode_interpolation/raw_data.npz
+#     └── selected_prefill_interpolation/raw_data.npz
+#
+# 模板变量: ${NAMESPACE}, ${RELEASE_VERSION}, ${MODEL_NAME},
+#           ${PREFILL_REPLICAS}, ${DECODE_REPLICAS}
+# ============================================================
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeployment
+metadata:
+  name: mocker-disagg
+  namespace: ${NAMESPACE}
+spec:
+  services:
+    Frontend:
+      componentType: frontend
+      replicas: 1
+      envs:
+        - name: DYN_ROUTER_MODE
+          value: kv
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/mocker-runtime:${RELEASE_VERSION}
+
+    MockerDecodeWorker:
+      componentType: worker
+      subComponentType: decode
+      replicas: ${DECODE_REPLICAS}
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/mocker-runtime:${RELEASE_VERSION}
+          command:
+            - python3
+            - -m
+            - dynamo.mocker
+          args:
+            - --model
+            - ${MODEL_NAME}
+            - --extra-engine-args
+            - /workspace/tests/planner/profiling_results/H200_TP1P_TP1D/disagg.yaml
+
+    MockerPrefillWorker:
+      componentType: worker
+      subComponentType: prefill
+      replicas: ${PREFILL_REPLICAS}
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/mocker-runtime:${RELEASE_VERSION}
+          command:
+            - python3
+            - -m
+            - dynamo.mocker
+          args:
+            - --model
+            - ${MODEL_NAME}
+            - --extra-engine-args
+            - /workspace/tests/planner/profiling_results/H200_TP1P_TP1D/disagg.yaml

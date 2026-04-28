@@ -1,0 +1,65 @@
+# ============================================================
+# ingress-nginx-values.yaml — ingress-nginx Helm Values
+#
+# 部署模式: DaemonSet + hostPort
+# 适用场景: 单节点 K8s, 无 LoadBalancer
+# 访问方式: http://<NodeIP>/v1/*
+#
+# 超时配置:
+#   proxy-read-timeout: 3600s — LLM 推理可能需要很长时间
+#   proxy-send-timeout: 3600s — 避免长生成中途断连
+#
+# 与 0.7.1 ingress-nginx 配置相同
+# ============================================================
+controller:
+  # DaemonSet 模式 + hostPort: 直接绑定宿主机 80/443 端口
+  kind: DaemonSet
+
+  service:
+    type: ClusterIP
+
+  hostPort:
+    enabled: true
+    ports:
+      http: 80
+      https: 443
+
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: true
+
+  # 超时配置 (长请求支持)
+  config:
+    proxy-read-timeout: "3600"
+    proxy-send-timeout: "3600"
+    proxy-connect-timeout: "60"
+    proxy-body-size: "256m"
+    # 关闭 gzip 避免流式响应问题
+    use-gzip: "false"
+    # 支持大型请求头 (Authorization Bearer Token)
+    large-client-header-buffers: "4 32k"
+    client-header-buffer-size: "32k"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # 容忍所有节点 taint (确保 DaemonSet 在主节点部署)
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/master"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+  # Prometheus metrics 暴露
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false  # 有 kube-prometheus-stack 时设为 true

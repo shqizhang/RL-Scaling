@@ -1,0 +1,43 @@
+# ============================================================
+# dgdsa-decode.yaml — Decode Worker 扩缩容适配器 (DGDSA)
+#
+# DynamoGraphDeploymentScalingAdapter (DGDSA) 是 Dynamo 1.0.1 新增的 CRD
+# 为 DGD 中的单个 Service 提供 K8s scale subresource
+#
+# 作用:
+#   - RL Scaling Controller 通过 PATCH spec.replicas 驱动扩缩容
+#   - HPA 可通过 DGDSA 作为 scale target 实现基于 metrics 的自动扩缩容
+#   - 解耦: 避免直接操作 DGD (影响全局), 精确控制单个 Worker 类型副本数
+#
+# 关联资源:
+#   - DGD: vllm-v1-disagg-router (dgd-vllm-disagg-router.yaml)
+#   - Service: VllmDecodeWorker
+#
+# RL 扩缩容命令示例:
+#   kubectl patch dgdsa vllm-v1-disagg-router-decode \
+#     -n ${NAMESPACE} --type=merge -p '{"spec":{"replicas":2}}'
+#
+# HPA 使用示例 (通过 Prometheus Adapter 获取 GPU metrics):
+#   kubectl autoscale dgdsa vllm-v1-disagg-router-decode \
+#     --min=1 --max=6 --cpu-percent=80   # CPU 示例
+#   或使用自定义 metrics HPA YAML (见 hpa-decode-worker.yaml)
+#
+# 模板变量:
+#   ${NAMESPACE}        K8s 命名空间
+#   ${DECODE_REPLICAS}  初始副本数 (与 DGD 一致)
+# ============================================================
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeploymentScalingAdapter
+metadata:
+  name: vllm-v1-disagg-router-decode
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: dynamo-inference
+    dynamo.nvidia.com/component: decode-worker
+spec:
+  # 初始副本数 (与 dgd-vllm-disagg-router.yaml 中 VllmDecodeWorker.replicas 保持一致)
+  replicas: ${DECODE_REPLICAS}
+  # 关联的 DGD 和 Service 名称
+  dgdRef:
+    name: vllm-v1-disagg-router
+    serviceName: VllmDecodeWorker

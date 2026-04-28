@@ -1,0 +1,22 @@
+# RuntimeClass for NVIDIA GPU containers
+#
+# 作用：告诉 kubelet 使用 containerd 的 "nvidia" handler 启动 Pod，
+#       该 handler 会将宿主机 GPU 驱动库（libcuda.so.1 等）挂载进容器。
+#
+# 前提条件：
+#   1. nvidia-container-toolkit 已安装
+#   2. containerd 已配置 nvidia runtime handler：
+#        sudo nvidia-ctk runtime configure --runtime=containerd
+#        sudo systemctl restart containerd
+#   3. 或者使用 NVIDIA GPU Operator（toolkit.enabled=true），
+#      它会自动完成上述配置。
+#
+# 注意：NVIDIA GPU Operator 通常会自动创建此 RuntimeClass。
+#       本文件作为声明式备份，确保即使 GPU Operator 未安装
+#       也能手动创建。部署脚本中会先检测是否已存在再决定是否 apply。
+#
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia

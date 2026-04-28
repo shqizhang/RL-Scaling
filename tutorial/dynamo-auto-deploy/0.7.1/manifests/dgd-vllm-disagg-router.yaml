@@ -1,0 +1,140 @@
+# ═══════════════════════════════════════════════════════════════════
+# DynamoGraphDeployment — vLLM Disaggregated Prefill/Decode + KV Router
+#
+# 前置条件：
+#   kubectl / K8s 集群 / Dynamo Platform (Operator + etcd + NATS) 已就绪
+#   containerd: defaultRuntimeName=nvidia + enableCDI=true（脚本 Stage 0.7 检测）
+#
+# 模板变量（envsubst 渲染，见 deploy-dynamo-0.7.1.sh）：
+#   ${NAMESPACE}          部署 namespace
+#   ${RELEASE_VERSION}    dynamo 版本（如 0.7.1）
+#   ${MODEL_NAME}         HuggingFace model id（如 Qwen/Qwen3-0.6B）
+#   ${PREFILL_REPLICAS}   Prefill Worker 副本数（= 占用 GPU 数）
+#   ${DECODE_REPLICAS}    Decode Worker 副本数（= 占用 GPU 数）
+#   ${GPU_MEMORY_UTIL}    vLLM gpu_memory_utilization（0.0-1.0，默认 0.90）
+#
+# ┌────────────────────────────────────────────────────────────────────┐
+# │ 关于 runtimeClassName 与 GPU 隔离                                  │
+# │                                                                    │
+# │ 本 manifest 不设 runtimeClassName — 这是刻意的。                   │
+# │                                                                    │
+# │ 正确运行需要 containerd 满足两个条件：                              │
+# │   ① defaultRuntimeName = "nvidia"                                  │
+# │   ② enableCDI = true                                               │
+# │                                                                    │
+# │ ① 让所有容器默认使用 nvidia runtime（无需 runtimeClassName）       │
+# │ ② CDI (Container Device Interface) 使 Device Plugin 能通过         │
+# │   annotation 将单张 GPU 精确注入容器，容器仅见 1 块 GPU。          │
+# │                                                                    │
+# │ 错误场景：                                                          │
+# │ - 加 runtimeClassName: nvidia → 走 RuntimeClass handler 路径，     │
+# │   绕过 CDI → 容器看到全部 GPU → 多 Worker 用 cuda:0 → OOM        │
+# │ - 缺①（default=runc）→ 无 GPU 驱动 → libcuda.so.1 缺失          │
+# │ - 缺②（CDI 未启用）→ 隔离失效 → 容器看到全部 GPU → OOM          │
+# │                                                                    │
+# │ 修复方法见 deploy-dynamo-0.7.1.sh Stage 0.7 的错误提示。          │
+# └────────────────────────────────────────────────────────────────────┘
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │ GPU 调度原理                                                      │
+# │                                                                  │
+# │ 每个 Worker（Prefill/Decode）各请求 nvidia.com/gpu: "1"。        │
+# │ NVIDIA device plugin 为每个 Pod 分配独立的物理 GPU，通过         │
+# │ NVIDIA_VISIBLE_DEVICES 环境变量注入（由 kubelet plugin 完成，    │
+# │ 不显示在 kubectl describe 的 env 列表中）。                       │
+# │                                                                  │
+# │ 容器内：只能看到 1 块 GPU（表现为 device 0）。                    │
+# │ vLLM 在 device 0 上预分配 GPU_MEMORY_UTIL × total_vram。        │
+# │                                                                  │
+# │ 重要注意事项：                                                    │
+# │   部署前必须确认旧 Worker Pod 已完全终止（不是 Terminating），    │
+# │   否则 device plugin 的 GPU 分配状态可能处于竞态，导致两个        │
+# │   Worker 被分配到同一 GPU → OOM CrashLoopBackOff。              │
+# └──────────────────────────────────────────────────────────────────┘
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeployment
+metadata:
+  name: vllm-v1-disagg-router
+  namespace: ${NAMESPACE}
+spec:
+  services:
+    # ─── Frontend（Router）──────────────────────────────────────────
+    # CPU Pod。接收外部请求，读取 etcd 中 Prefill/Decode 的 KV 状态，
+    # 决策路由：优先将请求路由到 KV Cache 命中率高的 Prefill Worker，
+    # 同时将该请求的 KV Block ID 通知给某个 Decode Worker 等待接收。
+    # CPU Pod，不消耗 GPU。依赖 containerd 默认 nvidia runtime 访问 CUDA 库。
+    Frontend:
+      dynamoNamespace: vllm-v1-disagg-router
+      componentType: frontend
+      replicas: 1
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          imagePullPolicy: IfNotPresent
+      envs:
+        - name: DYN_ROUTER_MODE
+          value: kv
+
+    # ─── Decode Worker ──────────────────────────────────────────────
+    # GPU Pod。运行完整 vLLM 引擎（decode-only 模式）。
+    # 职责：接收来自 Prefill Worker 的 KV Cache Transfer（via NIXL/UCX），
+    #       执行 autoregressive decoding，生成 output tokens。
+    # GPU 资源：每个副本独占 1 块 GPU。
+    VllmDecodeWorker:
+      dynamoNamespace: vllm-v1-disagg-router
+      envFromSecret: hf-token-secret
+      componentType: worker
+      replicas: ${DECODE_REPLICAS}
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace/examples/backends/vllm
+          command: ["python3", "-m", "dynamo.vllm"]
+          args:
+            - --model
+            - "${MODEL_NAME}"
+            - --is-decode-worker
+            - --gpu-memory-utilization
+            - "${GPU_MEMORY_UTIL}"
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+            limits:
+              nvidia.com/gpu: "1"
+
+    # ─── Prefill Worker ─────────────────────────────────────────────
+    # GPU Pod。运行完整 vLLM 引擎（prefill-only 模式）。
+    # 职责：处理 input token 的完整 prefill 阶段，计算出 KV Cache，
+    #       通过 NIXL（基于 UCX/InfiniBand/NVLink）将 KV Cache 块
+    #       传输给负责 decoding 的 Decode Worker。
+    # GPU 资源：每个副本独占 1 块 GPU。
+    VllmPrefillWorker:
+      dynamoNamespace: vllm-v1-disagg-router
+      envFromSecret: hf-token-secret
+      componentType: worker
+      replicas: ${PREFILL_REPLICAS}
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace/examples/backends/vllm
+          command: ["python3", "-m", "dynamo.vllm"]
+          args:
+            - --model
+            - "${MODEL_NAME}"
+            - --is-prefill-worker
+            - --gpu-memory-utilization
+            - "${GPU_MEMORY_UTIL}"
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+            limits:
+              nvidia.com/gpu: "1"

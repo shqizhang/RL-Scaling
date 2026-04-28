@@ -1,0 +1,34 @@
+# ============================================================
+# dgdsa-prefill.yaml — Prefill Worker 扩缩容适配器 (DGDSA)
+#
+# 与 dgdsa-decode.yaml 对应，管理 VllmPrefillWorker 的副本数
+#
+# 扩缩容策略 (根据 RL 设计文档 S2/S3 场景):
+#   S2 (TTFT 优化): Prefill 请求积压时, 扩容 PrefillWorker
+#     - 触发条件: avg_prefill_queue_depth > threshold (通过 NATS/Prometheus 检测)
+#     - 扩容范围: 1-4 (RTX 3090 单节点 8 GPU, 保留 4 给 Decode)
+#
+#   S3 (Checkpoint/Sleep): 低流量时缩容 PrefillWorker 并 Checkpoint 状态
+#     - 触发条件: prefill_util < 20% 持续 5 分钟
+#     - 缩容到 0 (Sleep 模式): Worker 保存 KV Cache 状态到 PVC
+#     - 唤醒: 新请求到来时 RL Controller 扩容到 1
+#
+# 模板变量:
+#   ${NAMESPACE}         K8s 命名空间
+#   ${PREFILL_REPLICAS}  初始副本数
+# ============================================================
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeploymentScalingAdapter
+metadata:
+  name: vllm-v1-disagg-router-prefill
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: dynamo-inference
+    dynamo.nvidia.com/component: prefill-worker
+spec:
+  # 初始副本数 (与 dgd-vllm-disagg-router.yaml 中 VllmPrefillWorker.replicas 保持一致)
+  replicas: ${PREFILL_REPLICAS}
+  # 关联的 DGD 和 Service 名称
+  dgdRef:
+    name: vllm-v1-disagg-router
+    serviceName: VllmPrefillWorker

@@ -1,0 +1,25 @@
+# Helm values for prometheus-adapter (HPA custom metrics)
+# Template variables: ${MONITORING_NS}
+prometheus:
+  url: http://prometheus-kube-prometheus-prometheus.${MONITORING_NS}.svc.cluster.local
+  port: 9090
+rules:
+  custom:
+    - seriesQuery: 'dynamo_component_inflight_requests{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "dynamo_component_inflight_requests"
+        as: "dynamo_inflight_requests"
+      metricsQuery: 'avg_over_time(<<.Series>>{<<.LabelMatchers>>}[1m])'
+    - seriesQuery: 'dynamo_component_kvstats_gpu_cache_usage_percent{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "dynamo_component_kvstats_gpu_cache_usage_percent"
+        as: "dynamo_gpu_cache_usage"
+      metricsQuery: 'avg_over_time(<<.Series>>{<<.LabelMatchers>>}[1m])'

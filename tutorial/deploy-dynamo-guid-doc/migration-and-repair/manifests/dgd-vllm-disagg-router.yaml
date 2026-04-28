@@ -1,0 +1,87 @@
+# DynamoGraphDeployment - vLLM Disaggregated Prefill/Decode with KV Router
+#
+# 模板变量（由 envsubst 渲染）:
+#   ${NAMESPACE}, ${RELEASE_VERSION}, ${MODEL_NAME},
+#   ${DECODE_REPLICAS}, ${PREFILL_REPLICAS}
+#
+# ┌─────────────────────────────────────────────────────────────────┐
+# │ 重要：本 manifest 不设 runtimeClassName（2026-04-10 更新）       │
+# │                                                                 │
+# │ Dynamo DGD 依赖 CDI（Container Device Interface）实现 GPU 隔离  │
+# │ （每个 Worker 只看到 1 张 GPU）。CDI 要求 Pod 使用 containerd   │
+# │ 的默认 nvidia runtime，而非通过 runtimeClassName 显式指定。      │
+# │                                                                 │
+# │ 如果加了 runtimeClassName: nvidia，会绕过 CDI 设备隔离，         │
+# │ 导致每个容器看到全部 8 张 GPU → OOM。                            │
+# │                                                                 │
+# │ 正确工作需要 containerd 满足 3 个条件：                           │
+# │   ① defaultRuntimeName = nvidia                                 │
+# │   ② enable_cdi = true                                           │
+# │   ③ nvidia-device-plugin-daemonset 在配置正确后重启过            │
+# │                                                                 │
+# │ 部署前请用 02-deploy-dynamo.sh 的 Stage 0.7 或                  │
+# │ 04-fix-worker-crashloop.sh 的 Stage 1 验证/修复。               │
+# └─────────────────────────────────────────────────────────────────┘
+#
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeployment
+metadata:
+  name: vllm-v1-disagg-router
+  namespace: ${NAMESPACE}
+spec:
+  services:
+    Frontend:
+      dynamoNamespace: vllm-v1-disagg-router
+      componentType: frontend
+      replicas: 1
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          imagePullPolicy: IfNotPresent
+      envs:
+        - name: DYN_ROUTER_MODE
+          value: kv
+
+    VllmDecodeWorker:
+      dynamoNamespace: vllm-v1-disagg-router
+      envFromSecret: hf-token-secret
+      componentType: worker
+      replicas: ${DECODE_REPLICAS}
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace/examples/backends/vllm
+          command: ["python3", "-m", "dynamo.vllm"]
+          args:
+            - --model
+            - "${MODEL_NAME}"
+            - --is-decode-worker
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+
+    VllmPrefillWorker:
+      dynamoNamespace: vllm-v1-disagg-router
+      envFromSecret: hf-token-secret
+      componentType: worker
+      replicas: ${PREFILL_REPLICAS}
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace/examples/backends/vllm
+          command: ["python3", "-m", "dynamo.vllm"]
+          args:
+            - --model
+            - "${MODEL_NAME}"
+            - --is-prefill-worker
+          resources:
+            limits:
+              nvidia.com/gpu: "1"

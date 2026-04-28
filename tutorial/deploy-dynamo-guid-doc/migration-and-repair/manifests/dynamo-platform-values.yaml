@@ -1,0 +1,21 @@
+# Helm values for dynamo-platform chart
+# Template variables: ${PROM_ENDPOINT}
+dynamo-operator:
+  dynamo:
+    metrics:
+      prometheusEndpoint: "${PROM_ENDPOINT}"
+  imagePullSecrets:
+    - name: nvcr-imagepullsecret
+  controllerManager:
+    kubeRbacProxy:
+      image:
+        repository: quay.io/brancz/kube-rbac-proxy
+        tag: v0.15.0
+etcd:
+  replicaCount: 1
+  podDisruptionBudget:
+    enabled: false
+nats:
+  replicaCount: 1
+  cluster:
+    enabled: false

@@ -1,0 +1,33 @@
+# Helm values for prometheus-adapter (HPA custom metrics)
+# Template variables: ${MONITORING_NS}
+#
+# 重要：MONITORING_NS 必须 export 才能被 envsubst 看到（common.sh 已修复）
+prometheus:
+  url: http://prometheus-kube-prometheus-prometheus.${MONITORING_NS}.svc.cluster.local
+  port: 9090
+rules:
+  custom:
+    # ── dynamo_inflight_requests ──────────────────────────────
+    # 来源：dynamo_component_inflight_requests (Gauge)
+    # 用途：HPA 扩缩容判断（当前 Worker 正在处理的请求数）
+    # 注意：不按 dynamo_endpoint 过滤，因为该 label 可能不存在
+    #       使用 avg_over_time 平滑瞬时波动，避免 HPA 在 0 和峰值之间震荡
+    - seriesQuery: 'dynamo_component_inflight_requests{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "dynamo_component_inflight_requests"
+        as: "dynamo_inflight_requests"
+      metricsQuery: 'avg_over_time(<<.Series>>{<<.LabelMatchers>>}[1m])'
+    # ── dynamo_gpu_cache_usage ────────────────────────────────
+    - seriesQuery: 'dynamo_component_kvstats_gpu_cache_usage_percent{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "dynamo_component_kvstats_gpu_cache_usage_percent"
+        as: "dynamo_gpu_cache_usage"
+      metricsQuery: 'avg_over_time(<<.Series>>{<<.LabelMatchers>>}[1m])'

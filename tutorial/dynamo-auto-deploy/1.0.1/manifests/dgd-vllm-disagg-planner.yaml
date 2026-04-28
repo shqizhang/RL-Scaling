@@ -1,0 +1,137 @@
+# ============================================================
+# dgd-vllm-disagg-planner.yaml — Dynamo 1.0.1 Planner-driven scaling
+#
+# 直接基于官方示例:
+#   dynamo/examples/backends/vllm/deploy/disagg_planner.yaml @ tag v1.0.1
+#
+# 架构:
+#   Frontend → Planner (autoscaler) ⇄ DGDSA → VllmPrefill / VllmDecode
+#
+# Planner 通过 PATCH dynamographdeploymentscalingadapters/scale 动态调整
+# Prefill / Decode 副本数。无需 HPA。
+#
+# 配置说明:
+#   - environment=kubernetes: K8s 模式 (启用 K8s API 调用)
+#   - backend=vllm: 拉取 vllm 自身的 metrics
+#   - throughput_adjustment_interval=60: 每 60s 评估一次
+#   - profile_results_dir 指向 ConfigMap 挂载点
+#
+# !!! 重要 !!!:
+#   - prefill_raw_data.json / decode_raw_data.json 中的数值是 PLACEHOLDER
+#   - 真实部署前应替换为通过 Profiler 测得的 (RTX 3090 + Qwen3-0.6B) 数据
+#   - 否则 Planner 决策会基于错误的吞吐曲线
+#
+# 模板变量:
+#   ${NAMESPACE}, ${RELEASE_VERSION}, ${MODEL_NAME},
+#   ${PREFILL_REPLICAS}, ${DECODE_REPLICAS}
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: planner-profile-data
+  namespace: ${NAMESPACE}
+data:
+  prefill_raw_data.json: |
+    {
+      "prefill_isl":          [128, 256, 512, 1024, 2048],
+      "prefill_ttft":         [12,  18,  30,  55,   105],
+      "prefill_thpt_per_gpu": [9800, 8500, 6200, 3800, 2000]
+    }
+  decode_raw_data.json: |
+    {
+      "x_kv_usage":       [0.1, 0.1, 0.1, 0.1, 0.3, 0.3, 0.3, 0.3, 0.5, 0.5, 0.5, 0.5, 0.7, 0.7, 0.7, 0.7, 0.9, 0.9, 0.9, 0.9],
+      "y_context_length": [128, 512, 1024, 2048, 128, 512, 1024, 2048, 128, 512, 1024, 2048, 128, 512, 1024, 2048, 128, 512, 1024, 2048],
+      "z_itl":            [5, 6, 7, 9, 6, 7, 8, 10, 7, 8, 10, 12, 8, 10, 12, 15, 10, 12, 15, 20],
+      "z_thpt_per_gpu":   [4500, 4000, 3500, 2800, 4200, 3700, 3200, 2500, 3800, 3300, 2800, 2200, 3400, 2900, 2400, 1800, 2800, 2400, 1900, 1400],
+      "max_kv_tokens": 32768
+    }
+---
+apiVersion: nvidia.com/v1alpha1
+kind: DynamoGraphDeployment
+metadata:
+  name: vllm-disagg-planner
+  namespace: ${NAMESPACE}
+spec:
+  services:
+    Frontend:
+      componentType: frontend
+      replicas: 1
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+
+    Planner:
+      componentType: planner
+      replicas: 1
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          command:
+            - python3
+            - -m
+            - dynamo.planner
+          args:
+            - --config
+            - '{"environment":"kubernetes","backend":"vllm","throughput_adjustment_interval":60,"profile_results_dir":"/workspace/profiling_results","ttft":500,"itl":50,"max_gpu_budget":8,"min_endpoint":1}'
+          volumeMounts:
+            - name: planner-profile-data
+              mountPath: /workspace/profiling_results
+              readOnly: true
+        volumes:
+          - name: planner-profile-data
+            configMap:
+              name: planner-profile-data
+
+    VllmDecodeWorker:
+      envFromSecret: hf-token-secret
+      componentType: worker
+      subComponentType: decode
+      replicas: ${DECODE_REPLICAS}
+      resources:
+        limits:
+          gpu: "1"
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          workingDir: /workspace/examples/backends/vllm
+          command:
+            - python3
+          args:
+            - -m
+            - dynamo.vllm
+            - --model
+            - ${MODEL_NAME}
+            - --disaggregation-mode
+            - decode
+
+    VllmPrefillWorker:
+      envFromSecret: hf-token-secret
+      componentType: worker
+      subComponentType: prefill
+      replicas: ${PREFILL_REPLICAS}
+      resources:
+        limits:
+          gpu: "1"
+      extraPodSpec:
+        imagePullSecrets:
+          - name: nvcr-imagepullsecret
+        mainContainer:
+          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          workingDir: /workspace/examples/backends/vllm
+          command:
+            - python3
+          args:
+            - -m
+            - dynamo.vllm
+            - --model
+            - ${MODEL_NAME}
+            - --disaggregation-mode
+            - prefill
+            - --kv-transfer-config
+            - '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'

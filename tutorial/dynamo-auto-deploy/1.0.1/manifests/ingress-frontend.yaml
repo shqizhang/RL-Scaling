@@ -1,0 +1,51 @@
+# ============================================================
+# ingress-frontend.yaml — Dynamo Frontend Ingress 规则
+#
+# 路由规则:
+#   http://<NodeIP>/v1/*  → vllm-v1-disagg-router-frontend:8000
+#   http://<NodeIP>/      → vllm-v1-disagg-router-frontend:8000 (健康检查)
+#
+# 服务命名规则 (Dynamo Operator 1.0.1 自动创建):
+#   DGD name: vllm-v1-disagg-router
+#   Service:  vllm-v1-disagg-router-frontend  (小写, 连字符)
+#   Port:     8000
+#
+# 模板变量:
+#   ${NAMESPACE}  K8s 命名空间
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dynamo-frontend-ingress
+  namespace: ${NAMESPACE}
+  annotations:
+    # \u4e0d\u7528 rewrite-target: \u540e\u7aef Frontend \u7684\u5b9e\u9645\u8def\u5f84\u5c31\u662f /v1/* (\u4f4d\u7f6e\u4e0d\u80fd\u88ab\u91cd\u5199\u4e3a /)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    # 保留原始 Host header (某些模型服务需要)
+    nginx.ingress.kubernetes.io/preserve-host: "true"
+    # 关闭 buffering 确保 SSE/流式响应实时传输
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # OpenAI 兼容 API 路径
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: ${FRONTEND_SVC}
+                port:
+                  number: 8000
+          # 健康检查 + 根路径
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${FRONTEND_SVC}
+                port:
+                  number: 8000

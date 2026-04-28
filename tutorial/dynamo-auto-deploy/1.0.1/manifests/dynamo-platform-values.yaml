@@ -1,0 +1,105 @@
+# ============================================================
+# dynamo-platform-values.yaml — Dynamo Platform 1.0.1 Helm Values
+#
+# 1.0.1 关键变化 vs 0.7.1:
+#   - etcd 默认禁用 (K8s 原生 Discovery 替代)
+#   - CRDs 内置于 dynamo-operator subchart (upgradeCRD: true)
+#   - kai-scheduler / grove 默认禁用 (单节点不需要)
+#   - NATS 保留 (Event Plane)
+#   - Webhook 强制启用 (built-in cert-controller 管理 TLS)
+#
+# 部署产生的 Pod:
+#   dynamo-platform-dynamo-operator-controller-manager-xxx  ← Operator
+#   dynamo-platform-nats-0                                  ← Event Plane
+#   dynamo-platform-dynamo-operator-webhook-xxx             ← Admission Webhook
+# ============================================================
+
+global:
+  # etcd 禁用: 使用 K8s 原生 Service Discovery 替代
+  etcd:
+    install: false
+
+  # kai-scheduler 禁用 (单节点不需要拓扑感知调度)
+  kai-scheduler:
+    install: false
+    enabled: false
+
+  # grove 禁用 (高级拓扑感知特性，单节点不需要)
+  grove:
+    install: false
+    enabled: false
+
+# ── Dynamo Operator ──────────────────────────────────────────
+dynamo-operator:
+  enabled: true
+
+  # upgradeCRD=true: Operator 通过 pre-upgrade Job 管理 CRD 生命周期
+  # 1.0.1 包含: DynamoGraphDeployment, DynamoGraphDeploymentScalingAdapter,
+  #             DynamoGraphDeploymentRollout, DynamoCheckpoint
+  upgradeCRD: true
+
+  # Discovery Backend: kubernetes (使用 K8s Service 替代 etcd)
+  discoveryBackend: "kubernetes"
+
+  # NATS 地址: 空字符串 = 使用 subchart 自动部署的 NATS
+  natsAddr: ""
+
+  # etcd 地址: 空字符串 = 不使用 etcd
+  etcdAddr: ""
+
+  # 使用内置 NATS subchart
+  nats:
+    enabled: true
+
+  controllerManager:
+    manager:
+      image:
+        repository: nvcr.io/nvidia/ai-dynamo/kubernetes-operator
+        tag: "${RELEASE_VERSION}"
+        pullPolicy: IfNotPresent
+      resources:
+        limits:
+          cpu: "2"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "512Mi"
+
+  imagePullSecrets:
+    - name: nvcr-imagepullsecret
+
+  # ── 让 Operator 把 PROMETHEUS_ENDPOINT 注入所有 worker ──────
+  # Planner / global_planner 需要这个 env 才能拉取 metrics
+  dynamo:
+    metrics:
+      prometheusEndpoint: "${PROM_ENDPOINT}"
+      podMonitors:
+        # true = 总是创建 PodMonitor (要求 prometheus-operator CRD 已部署)
+        # 这是把 Frontend / Worker / Planner / Mocker 暴露给 kube-prometheus-stack 的关键
+        enabled: true
+
+# ── NATS (Event Plane) ───────────────────────────────────────
+# 用途: ZMQ 的 K8s 替代控制平面; Prefill→Decode KV Event 广播
+nats:
+  nats:
+    jetstream:
+      enabled: true
+      # 持久化存储 (生产建议使用 PVC)
+      fileStore:
+        enabled: false  # 单节点测试使用内存模式
+        pvc:
+          enabled: false
+      memoryStore:
+        enabled: true
+        maxSize: "1Gi"
+    resources:
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+
+# ── etcd (禁用) ───────────────────────────────────────────────
+etcd:
+  enabled: false

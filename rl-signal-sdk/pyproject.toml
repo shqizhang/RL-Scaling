@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rl-signal"
+version = "0.1.0"
+description = "RL Training Framework signal emitter SDK for RL Scaling Controller"
+authors = [{ name = "Shengqi Zhang" }]
+requires-python = ">=3.9"
+dependencies = ["httpx>=0.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-asyncio>=0.21", "respx>=0.20"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rl_signal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

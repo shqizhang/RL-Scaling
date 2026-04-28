@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rl-scaling-controller"
+version = "0.1.0"
+description = "RL-aware scaling controller for NVIDIA Dynamo (S1/S2/S3)"
+authors = [{ name = "Shengqi Zhang" }]
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.24",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+k8s = ["kubernetes>=29.0", "kubernetes-asyncio>=29.0"]
+test = [
+    "pytest>=7",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.24",
+    "respx>=0.20",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rl_scaling_controller"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"

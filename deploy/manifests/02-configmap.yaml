@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rl-scaling-controller-config
+  namespace: dynamo
+data:
+  # ── Connectivity ──
+  DYNAMO_NAMESPACE: "dynamo"
+  DGD_NAME: "rl-serving"
+  PROMETHEUS_URL: "http://prometheus-kube-prometheus-prometheus.monitoring:9090"
+
+  # ── S1 ──
+  PRE_WARM_THRESHOLD: "0.8"
+  COOLDOWN_SECONDS: "30"
+  CONTROL_LOOP_INTERVAL: "5"
+  SINGLE_PREFILL_TPS: "50000"
+  MAX_CONCURRENT_PER_DECODE: "64"
+  TARGET_PREFILL_SECONDS: "5"
+  MAX_GPUS: "8"
+  MIN_PREFILL_REPLICAS: "1"
+  MIN_DECODE_REPLICAS: "1"
+
+  # ── S2 (disabled by default, opt-in) ──
+  ROLE_SWITCH_ENABLED: "false"
+  PREFILL_QUEUE_THRESHOLD: "10"
+  DECODE_QUEUE_THRESHOLD: "10"
+  DECODE_IDLE_THRESHOLD: "0.2"
+  PREFILL_IDLE_THRESHOLD: "0.2"
+  MIN_SWITCH_INTERVAL: "30"
+
+  # ── S3 (disabled by default, opt-in) ──
+  CONSOLIDATION_ENABLED: "false"
+  CONSOLIDATION_THRESHOLD: "3"
+  MIN_BATCH_COMPLETION: "0.6"
+  PER_REQUEST_MIGRATION_OVERHEAD: "0.5"
+
+  # ── HTTP ──
+  HTTP_HOST: "0.0.0.0"
+  HTTP_PORT: "8080"

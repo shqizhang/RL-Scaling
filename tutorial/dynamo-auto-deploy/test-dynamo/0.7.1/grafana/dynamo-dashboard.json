@@ -1,0 +1,533 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "dynamo-hpa-router-v1",
+    "title": "Dynamo — HPA & Router Monitor",
+    "tags": ["dynamo", "hpa", "router", "inference"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 0,
+    "refresh": "10s",
+    "time": { "from": "now-30m", "to": "now" },
+    "liveNow": true,
+    "templating": {
+      "list": [
+        {
+          "name": "namespace",
+          "label": "Namespace",
+          "type": "constant",
+          "query": "__NAMESPACE__",
+          "hide": 2,
+          "current": { "value": "__NAMESPACE__", "text": "__NAMESPACE__" },
+          "options": [{ "value": "__NAMESPACE__", "text": "__NAMESPACE__", "selected": true }]
+        }
+      ]
+    },
+    "annotations": { "list": [] },
+    "panels": [
+
+      {
+        "id": 101, "type": "row",
+        "title": "🔄 HPA Autoscaling",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+        "collapsed": false
+      },
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "HPA Replicas — Current vs Desired",
+        "description": "实线=当前副本数 虚线=期望副本数。两线分离表示 HPA 正在扩/缩容。",
+        "gridPos": { "h": 8, "w": 16, "x": 0, "y": 1 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"$namespace\"}",
+            "legendFormat": "{{horizontalpodautoscaler}} — current",
+            "editorMode": "code",
+            "range": true
+          },
+          {
+            "refId": "B",
+            "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"$namespace\"}",
+            "legendFormat": "{{horizontalpodautoscaler}} — desired",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "stepAfter",
+              "fillOpacity": 10,
+              "pointSize": 5,
+              "showPoints": "auto",
+              "lineWidth": 2
+            },
+            "unit": "short",
+            "decimals": 0
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byRegexp", "options": "desired" },
+              "properties": [
+                { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                { "id": "custom.fillOpacity", "value": 0 }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] }
+        }
+      },
+      {
+        "id": 2,
+        "type": "stat",
+        "title": "Deployment Available Replicas",
+        "description": "每个 Deployment 当前可用副本数",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "kube_deployment_status_replicas_available{namespace=\"$namespace\"}",
+            "legendFormat": "{{deployment}}",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "graphMode": "none",
+          "textMode": "auto",
+          "orientation": "horizontal"
+        }
+      },
+
+      {
+        "id": 102, "type": "row",
+        "title": "📊 Request Load",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+        "collapsed": false
+      },
+      {
+        "id": 3,
+        "type": "timeseries",
+        "title": "Inflight Requests per Pod",
+        "description": "每个 Pod 当前正在处理的请求数（按 pod + endpoint 分组）。堆叠面积图直观展示负载在 Pod 间的分布。",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "dynamo_component_inflight_requests{namespace=\"$namespace\"}",
+            "legendFormat": "{{pod}} [{{dynamo_endpoint}}]",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "fillOpacity": 25,
+              "stacking": { "mode": "normal", "group": "A" },
+              "lineWidth": 1
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+        }
+      },
+      {
+        "id": 4,
+        "type": "timeseries",
+        "title": "Frontend Inflight & Queued",
+        "description": "Frontend 层面的请求状态：inflight（正在处理）和 queued（排队等待）",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "dynamo_frontend_inflight_requests{namespace=\"$namespace\"}",
+            "legendFormat": "inflight — {{pod}}",
+            "editorMode": "code",
+            "range": true
+          },
+          {
+            "refId": "B",
+            "expr": "dynamo_frontend_queued_requests{namespace=\"$namespace\"}",
+            "legendFormat": "queued — {{pod}}",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "fillOpacity": 10, "lineWidth": 2 },
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byRegexp", "options": "queued" },
+              "properties": [
+                { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+        }
+      },
+
+      {
+        "id": 103, "type": "row",
+        "title": "⏱ Latency & Throughput",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+        "collapsed": false
+      },
+      {
+        "id": 5,
+        "type": "timeseries",
+        "title": "TTFT — Time to First Token (P50 / P90 / P99)",
+        "description": "首 token 延迟的百分位数。P99 飙高通常与 Prefill 排队有关。",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "histogram_quantile(0.50, rate(dynamo_frontend_time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[2m]))",
+            "legendFormat": "P50",
+            "editorMode": "code",
+            "range": true
+          },
+          {
+            "refId": "B",
+            "expr": "histogram_quantile(0.90, rate(dynamo_frontend_time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[2m]))",
+            "legendFormat": "P90",
+            "editorMode": "code",
+            "range": true
+          },
+          {
+            "refId": "C",
+            "expr": "histogram_quantile(0.99, rate(dynamo_frontend_time_to_first_token_seconds_bucket{namespace=\"$namespace\"}[2m]))",
+            "legendFormat": "P99",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": { "fillOpacity": 5, "lineWidth": 2 }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "P99" },
+              "properties": [
+                { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "P90" },
+              "properties": [
+                { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "P50" },
+              "properties": [
+                { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+        }
+      },
+      {
+        "id": 6,
+        "type": "timeseries",
+        "title": "Output Tokens per Second",
+        "description": "推理输出 token 速率，衡量系统整体吞吐量。",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "rate(dynamo_frontend_output_tokens_total{namespace=\"$namespace\"}[1m])",
+            "legendFormat": "tokens/s — {{pod}}",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "fillOpacity": 15, "lineWidth": 2 }
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+        }
+      },
+
+      {
+        "id": 104, "type": "row",
+        "title": "🗄 KV Cache",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+        "collapsed": false
+      },
+      {
+        "id": 7,
+        "type": "timeseries",
+        "title": "GPU Cache Usage %",
+        "description": "每个 Worker Pod 的 GPU KV Cache 占用率。接近 100% 表示需要更多 Worker 或更大显存。",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "dynamo_component_kvstats_gpu_cache_usage_percent{namespace=\"$namespace\"}",
+            "legendFormat": "{{pod}}",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0, "max": 1,
+            "custom": { "fillOpacity": 15 },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 0.7 },
+                { "color": "red", "value": 0.9 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "list", "placement": "bottom" }
+        }
+      },
+      {
+        "id": 8,
+        "type": "timeseries",
+        "title": "KV Prefix Cache Hit Rate",
+        "description": "前缀缓存命中率。重复相同 prompt 会提高此值，Router 倾向将相同前缀路由到缓存命中的 Worker。",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "dynamo_component_kvstats_gpu_prefix_cache_hit_rate{namespace=\"$namespace\"}",
+            "legendFormat": "{{pod}}",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0, "max": 1,
+            "custom": { "fillOpacity": 15 }
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "list", "placement": "bottom" }
+        }
+      },
+      {
+        "id": 9,
+        "type": "timeseries",
+        "title": "KV Active Blocks",
+        "description": "KV Cache 活跃 block 数量。数值上升表示模型正在缓存更多 KV 数据。",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "dynamo_component_kvstats_active_blocks{namespace=\"$namespace\"}",
+            "legendFormat": "{{pod}}",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": { "fillOpacity": 15 }
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "list", "placement": "bottom" }
+        }
+      },
+
+      {
+        "id": 105, "type": "row",
+        "title": "🔀 Router Distribution",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+        "collapsed": false
+      },
+      {
+        "id": 10,
+        "type": "timeseries",
+        "title": "Request Rate per Pod (5m avg)",
+        "description": "每个 Pod 的请求速率。不同 Pod 间的速率差异体现 Router 的负载分发。KV Cache 亲和性可能导致不均匀分布。",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "sum by (pod) (rate(dynamo_component_requests_total{namespace=\"$namespace\"}[5m]))",
+            "legendFormat": "{{pod}}",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": {
+              "fillOpacity": 25,
+              "stacking": { "mode": "normal", "group": "A" },
+              "lineWidth": 1
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+        }
+      },
+      {
+        "id": 11,
+        "type": "stat",
+        "title": "NATS Connection State",
+        "description": "Worker 到 NATS 的连接状态。1=Connected, 0=Disconnected。所有 Worker 均需 Connected 才能参与路由。",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "dynamo_component_nats_client_connection_state{namespace=\"$namespace\"}",
+            "legendFormat": "{{pod}}",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": { "text": "Disconnected", "color": "red" },
+                  "1": { "text": "Connected", "color": "green" }
+                }
+              }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "colorMode": "background",
+          "graphMode": "none",
+          "textMode": "auto",
+          "orientation": "horizontal"
+        }
+      },
+
+      {
+        "id": 106, "type": "row",
+        "title": "🖥 GPU",
+        "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 },
+        "collapsed": false
+      },
+      {
+        "id": 12,
+        "type": "timeseries",
+        "title": "GPU Utilization (DCGM)",
+        "description": "来自 DCGM Exporter 的 GPU 利用率。需要部署 dcgm-exporter 才有数据。",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 46 },
+        "datasource": { "type": "prometheus" },
+        "targets": [
+          {
+            "refId": "A",
+            "expr": "DCGM_FI_DEV_GPU_UTIL",
+            "legendFormat": "GPU {{gpu}} ({{Hostname}})",
+            "editorMode": "code",
+            "range": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0, "max": 100,
+            "custom": { "fillOpacity": 10, "lineWidth": 1 },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "red", "value": 90 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "desc" },
+          "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+        }
+      }
+    ]
+  },
+  "folderId": 0,
+  "message": "Auto-imported by 01-start-monitoring.sh",
+  "overwrite": true
+}
