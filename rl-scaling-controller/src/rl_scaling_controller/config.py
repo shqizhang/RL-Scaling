@@ -35,8 +35,11 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass
 class ControllerConfig:
     # ─── Connectivity ───
-    namespace: str = field(default_factory=lambda: _env_str("DYNAMO_NAMESPACE", "dynamo"))
-    dgd_name: str = field(default_factory=lambda: _env_str("DGD_NAME", "rl-serving"))
+    namespace: str = field(default_factory=lambda: _env_str("DYNAMO_NAMESPACE", "dynamo-system"))
+    # DGD_NAME must match the DGD created by the upstream deployer.
+    # The 1.0.1 disagg-router manifest names it `vllm-v1-disagg-router`, so the
+    # operator creates DGDSAs named `vllm-v1-disagg-router-{prefill,decode}`.
+    dgd_name: str = field(default_factory=lambda: _env_str("DGD_NAME", "vllm-v1-disagg-router"))
     prometheus_url: str = field(default_factory=lambda: _env_str(
         "PROMETHEUS_URL",
         "http://prometheus-kube-prometheus-prometheus.monitoring:9090",
@@ -45,6 +48,10 @@ class ControllerConfig:
     # ─── S1: Rollout scale ───
     pre_warm_threshold: float = field(default_factory=lambda: _env_float("PRE_WARM_THRESHOLD", 0.8))
     cooldown_seconds: int = field(default_factory=lambda: _env_int("COOLDOWN_SECONDS", 30))
+    # Hard upper bound on how long COOL_DOWN waits for in-flight requests to
+    # drain before forcing scale-to-zero. Total time in COOL_DOWN is bounded
+    # by max(cooldown_seconds, drain_timeout_seconds).
+    drain_timeout_seconds: int = field(default_factory=lambda: _env_int("DRAIN_TIMEOUT_SECONDS", 60))
     control_loop_interval: float = field(default_factory=lambda: _env_float("CONTROL_LOOP_INTERVAL", 5.0))
 
     # Capacity planner

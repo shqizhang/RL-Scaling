@@ -37,6 +37,10 @@ class State(str, Enum):
 
 _TRANSITIONS: dict[State, set[State]] = {
     State.IDLE: {State.WARM_UP},
+    # WARM_UP -> COOL_DOWN covers two cases:
+    #   (a) pre-warm canceled before workers became Ready, and
+    #   (b) batch finished so fast that batch_complete arrived before the
+    #       Prometheus poll could move us to ACTIVE.
     State.WARM_UP: {State.ACTIVE, State.COOL_DOWN},
     State.ACTIVE: {State.COOL_DOWN},
     State.COOL_DOWN: {State.IDLE, State.WARM_UP},
@@ -123,8 +127,11 @@ class ScalingStateMachine:
         return self.state
 
     def on_batch_complete(self) -> State:
-        if self.state != State.ACTIVE:
-            logger.warning("batch_complete received in state %s", self.state)
+        # Accept from ACTIVE (normal path) and from WARM_UP (tiny batch that
+        # finished before workers were marked Ready by Prometheus). Reject
+        # from IDLE/COOL_DOWN (no batch in flight).
+        if self.state not in (State.ACTIVE, State.WARM_UP):
+            logger.warning("batch_complete ignored in state %s", self.state)
             return self.state
         self.transition_to(State.COOL_DOWN)
         return self.state
@@ -141,12 +148,41 @@ class ScalingStateMachine:
             ):
                 self.transition_to(State.ACTIVE)
         elif self.state == State.COOL_DOWN:
-            if self.time_in_state >= self.config.cooldown_seconds:
+            # Two gates must clear before scale-to-zero:
+            #   (1) cooldown_seconds elapsed (catches stragglers from RL loop), and
+            #   (2) no in-flight requests across the cluster (so KV blocks can be
+            #       evicted cleanly and KVPublisher can emit removed events to
+            #       the Router KVIndexer before pods terminate).
+            # Gate (2) is bounded by drain_timeout_seconds to guarantee progress.
+            cooldown_done = self.time_in_state >= self.config.cooldown_seconds
+            inflight = await self._inflight_total()
+            drain_done = inflight == 0
+            drain_forced = self.time_in_state >= self.config.drain_timeout_seconds
+            if cooldown_done and (drain_done or drain_forced):
+                if not drain_done:
+                    logger.warning(
+                        "drain timeout (%ss) hit with %d in-flight; forcing scale-to-zero",
+                        self.config.drain_timeout_seconds,
+                        inflight,
+                    )
                 self.dgdsa.patch("prefill", 0)
                 self.dgdsa.patch("decode", 0)
                 self.current_target = None
                 self.transition_to(State.IDLE)
         return self.state
+
+    async def _inflight_total(self) -> int:
+        if self.metrics is None:
+            return 0
+        getter = getattr(self.metrics, "get_cluster_metrics", None)
+        if getter is None:
+            return 0
+        try:
+            cm = await getter()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("inflight probe failed, treating as 0: %s", exc)
+            return 0
+        return int(getattr(cm, "prefill_queue_depth", 0)) + int(getattr(cm, "decode_queue_depth", 0))
 
     # ─── Internals ───
     def _scale_to(self, target: ScaleTarget) -> None:
@@ -159,3 +195,4 @@ class ScalingStateMachine:
 class _StateMachineConfig:
     pre_warm_threshold: float
     cooldown_seconds: float
+    drain_timeout_seconds: float = 60.0

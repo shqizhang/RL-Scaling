@@ -41,6 +41,7 @@ def _build_state_machine(
         config=_StateMachineConfig(
             pre_warm_threshold=cfg.pre_warm_threshold,
             cooldown_seconds=cfg.cooldown_seconds,
+            drain_timeout_seconds=cfg.drain_timeout_seconds,
         ),
         dgdsa=dgdsa,
         planner=planner,
