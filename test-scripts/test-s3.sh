@@ -161,6 +161,42 @@ for side in src dst; do
 done
 ${KVBM_DIFF_OK} && green "  KVBM block-transfer counters flat on both sides (recompute-prefill ✓)"
 
+# ────────── 4. Phase-2.B vLLM-native connector-path verification (optional)
+# Triggered when worker is started with DYNAMO_RL_CONNECTOR_ENABLED=1 (the
+# unsafe path; only safe once src-side block-hold is implemented). Verifies
+# that migrate_out responses carry kv_transfer_params in the vLLM 0.16
+# schema (do_remote_prefill, remote_engine_id, remote_block_ids,
+# remote_host, remote_port, remote_request_id) and that migrate_in
+# routed via the connector returns path:"connector".
+blue "4. Phase-2.B connector-path probe (skipped if connector_enabled=False)"
+RID2="s3b-$(date +%s)"
+SYNTH2='{"request_id":"'"${RID2}"'","prompt_tokens":[1,2,3,4,5,6,7,8],"generated_tokens":[10,11,12,13,14,15,16],"sampling_params":{"temperature":0.0,"max_tokens":64,"seed":42}}'
+kubectl -n "${NAMESPACE}" exec "${SRC}" -- curl -sS -X POST \
+    "http://127.0.0.1:${WORKER_PORT}/migrate_in" \
+    -H 'Content-Type: application/json' -d "${SYNTH2}" > /dev/null || true
+OUT2="$(kubectl -n "${NAMESPACE}" exec "${SRC}" -- curl -sS -X POST \
+        "http://127.0.0.1:${WORKER_PORT}/migrate_out" \
+        -H 'Content-Type: application/json' -d "{\"request_id\":\"${RID2}\"}" || true)"
+echo "${OUT2}" | tee "${RUN_DIR}/src-migrate_out-b.json"
+if echo "${OUT2}" | grep -q '"kv_transfer_params"'; then
+  green "  Phase-2.B path armed: migrate_out carries kv_transfer_params"
+  for fld in '"do_remote_prefill":true' '"remote_engine_id"' '"remote_block_ids"' '"remote_host"' '"remote_port"' '"remote_request_id"'; do
+    echo "${OUT2}" | grep -q "${fld}" || warn "kv_transfer_params missing field ${fld}"
+  done
+  DST_IN_B="$(kubectl -n "${NAMESPACE}" exec "${DST}" -- curl -sS -X POST \
+              "http://127.0.0.1:${WORKER_PORT}/migrate_in" \
+              -H 'Content-Type: application/json' -d "${OUT2}" || true)"
+  echo "${DST_IN_B}" | tee "${RUN_DIR}/dst-migrate_in-b.json"
+  if echo "${DST_IN_B}" | grep -q '"path":"connector"'; then
+    green "  Phase-2.B migrate_in went through connector path"
+    warn "REMINDER: src-side block-hold is not yet wired — DST KV may be stale until that lands."
+  else
+    yellow "  migrate_in fell back to recompute (DYNAMO_RL_CONNECTOR_ENABLED probably not set on DST)"
+  fi
+else
+  yellow "  migrate_out did not carry kv_transfer_params — set DYNAMO_RL_CONNECTOR_ENABLED=1 on the SRC worker to enable Phase-2.B."
+fi
+
 # Frontend migration counter (best-effort — only ticks on actual frontend
 # request migrations; synthetic API-level path may not increment it).
 if [[ -n "${POST_MIG_TOTAL}" && -n "${PRE_MIG_TOTAL}" ]] && \
