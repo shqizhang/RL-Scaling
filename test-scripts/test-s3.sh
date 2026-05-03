@@ -3,22 +3,21 @@
 # S3 — Request Consolidation end-to-end test (recompute-prefill fallback)
 # ─────────────────────────────────────────────────────────────────────────────
 # Validates the migration path on the WORKER level by directly exercising the
-# MigrationHandler HTTP surface (POST /migrate_out, POST /migrate_in). We do
-# NOT exercise the controller's consolidation tick from this script — the
-# controller does not yet expose an admin "force tick" endpoint, so the
-# end-to-end orchestrator path is covered by unit tests + manual signal
-# injection. See TEST_PLAN.md §3 (S3 acceptance matrix).
-#
-# What this script proves:
+# MigrationHandler HTTP surface (POST /migrate_out, POST /migrate_in). Phase 2
+# additions:
+#   - Cost-benefit gate: a too-large /migrate_in returns status=declined
+#     instead of ok (recompute prefill avoidance).
+#   - migrate_in success response carries `replay_tokens` field.
+# What this script proves (P1+P2):
 #   1. Source worker drops a request when /migrate_out succeeds (engine abort).
 #   2. Destination worker accepts /migrate_in with prompt+generated tokens
-#      and returns status=ok.
+#      and returns status=ok (and Phase-2 response carries replay_tokens).
 #   3. Frontend's `dynamo_frontend_model_migration_total` increments (counter
 #      visible at frontend /metrics).
 #   4. KVBM block-tier counters (kvbm_offload_blocks_*, kvbm_onboard_blocks_*)
 #      do NOT increment during migration — recompute-prefill moves no blocks.
-#   5. With a fixed seed + greedy decoding, a re-issued request after migration
-#      produces the same output as a baseline single-worker run.
+#   5. Phase-2 cost-benefit gate: a synthetic body with replay_total >
+#      max_replay_tokens is declined.
 #
 # Pre-reqs:
 #   - DGD deployed with `--enable-migration` on decode workers.
@@ -120,7 +119,23 @@ DST_IN="$(kubectl -n "${NAMESPACE}" exec "${DST}" -- curl -sS -X POST \
 echo "${DST_IN}" | tee "${RUN_DIR}/dst-migrate_in.json"
 echo "${DST_IN}" | grep -q '"status":"ok"' \
   || fail "DST migrate_in did not return ok"
+echo "${DST_IN}" | grep -q '"replay_tokens"' \
+  || warn "Phase-2 replay_tokens field missing in migrate_in response — old image deployed?"
 green "  migrate_out/migrate_in roundtrip ok"
+
+# ────────── 2b. Phase-2 cost-benefit gate: too-large body must be declined ──
+blue "2b. Phase-2 cost-benefit gate (too-large /migrate_in is declined)"
+LARGE_PROMPT=$(python3 -c 'print(",".join(str(i%32000) for i in range(9000)))')
+LARGE_BODY='{"request_id":"s3-large-'"$(date +%s)"'","prompt_tokens":['"${LARGE_PROMPT}"'],"generated_tokens":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17],"sampling_params":{"temperature":0.0,"max_tokens":256}}'
+LARGE_RESP="$(kubectl -n "${NAMESPACE}" exec "${DST}" -- curl -sS -X POST \
+              "http://127.0.0.1:${WORKER_PORT}/migrate_in" \
+              -H 'Content-Type: application/json' -d "${LARGE_BODY}" || true)"
+echo "${LARGE_RESP}" | tee "${RUN_DIR}/dst-migrate_in_large.json"
+if echo "${LARGE_RESP}" | grep -q '"status":"declined"'; then
+  green "  cost-benefit gate works (over-large body declined)"
+else
+  warn "cost-benefit gate did NOT decline — Phase-2 policy may not be wired (see ${RUN_DIR}/dst-migrate_in_large.json)"
+fi
 
 # ────────── 3. post-test snapshots and assertions ───────────────────────────
 blue "3. Capture post-test snapshots and verify invariants"

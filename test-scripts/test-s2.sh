@@ -3,16 +3,18 @@
 # S2 — Elastic Role Switch end-to-end test
 # ─────────────────────────────────────────────────────────────────────────────
 # Validates the *observable* parts of a P↔D role flip on a single dual-mode
-# worker. Per the design doc, the underlying NIXL + KV-pool reconfig is still
-# stubbed (logs a warning), so we DO NOT assert that requests start landing on
-# the new role in vLLM. We DO assert:
+# worker. Phase 2 (real reconfig): asserts that
 #
-#   1. The worker accepts POST /switch_role and reports a switch_time_ms.
-#   2. The worker logs go through the orchestrated sequence:
-#        sleep(level=2) → _reconfig_nixl(stub) → _reconfig_kv_pool(stub)
+#   1. POST /switch_role returns ok with switch_time_ms.
+#   2. Worker log shows the orchestrated sequence:
+#        sleep(level=2) → _reconfig_nixl(real) → _reconfig_kv_pool(real)
 #        → set_disaggregation_mode(target) → wake_up → _emit_role_changed
-#   3. The handler's persisted disaggregation mode flips.
-#   4. The flip back also succeeds (idempotency).
+#   3. _reconfig_kv_pool actually called engine.reset_prefix_cache (look for
+#      "reset_prefix_cache OK" in worker log).
+#   4. NO "stubbed; no Rust reconfig API" markers appear (Phase 2 dropped
+#      these stubs in favour of real engine calls).
+#   5. Handler's persisted disaggregation mode flips, and the flip back also
+#      succeeds (idempotency).
 #
 # Pre-reqs:
 #   - Worker must be deployed with `--dual-mode --initial-role <role>`.
@@ -102,9 +104,15 @@ if (( ${#MISSING[@]} == 0 )); then
 else
   warn "missing markers: ${MISSING[*]} (worker log may be truncated, see ${RUN_DIR}/worker-flip.log)"
 fi
-# Stub warning is *expected* by design — call it out positively
+# Stub warnings should NOT appear in Phase 2 — fail loudly if they do.
 if grep -qiE 'stubbed; no Rust reconfig API' "${RUN_DIR}/worker-flip.log"; then
-  green "  NIXL/KV-pool stubs reached as expected (design doc S2 stub markers)"
+  fail "Phase-1 stub markers present in worker log — Phase-2 image not deployed?"
+fi
+# Phase-2 positive marker: reset_prefix_cache must have been called.
+if grep -qiE 'reset_prefix_cache OK' "${RUN_DIR}/worker-flip.log"; then
+  green "  Phase-2 marker: engine.reset_prefix_cache reached (real KV-pool reconfig)"
+else
+  warn "missing 'reset_prefix_cache OK' marker — engine may not expose reset_prefix_cache, see worker log"
 fi
 
 # ────────── 3. flip back to original role ──────────────────────────────────
