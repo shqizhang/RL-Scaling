@@ -66,12 +66,18 @@ mkdir -p "${RUN_DIR}"
 # Use max_tokens=1500 to keep decode busy long enough for poll to catch it
 TEST_PROMPT="Count from 1 to 1000, one number per line. Write only the numbers, no other text."
 
-# ─────────────────────────────── colour helpers ───────────────────────────────
-red()     { printf '\e[31m%s\e[0m\n' "$*"; }
-green()   { printf '\e[32m%s\e[0m\n' "$*"; }
-yellow()  { printf '\e[33m%s\e[0m\n' "$*"; }
-blue()    { printf '\e[34m== %s ==\e[0m\n' "$*"; }
-cyan()    { printf '\e[36m  %s\e[0m\n' "$*"; }
+# ─────────────────────────────── timestamp + colour helpers ──────────────────
+# Every log line is prefixed with [HH:MM:SS.mmm] so the report has a precise
+# timeline of the migration sequence (poll catch, migrate_in, recompute, etc.)
+ts()      { date '+%H:%M:%S.%3N'; }
+red()     { printf '\e[31m[%s] %s\e[0m\n' "$(ts)" "$*"; }
+green()   { printf '\e[32m[%s] %s\e[0m\n' "$(ts)" "$*"; }
+yellow()  { printf '\e[33m[%s] %s\e[0m\n' "$(ts)" "$*"; }
+blue()    { printf '\e[34m[%s] == %s ==\e[0m\n' "$(ts)" "$*"; }
+cyan()    { printf '\e[36m[%s]   %s\e[0m\n' "$(ts)" "$*"; }
+# `say` is a plain (non-coloured) timestamped echo; use it instead of bare `echo`
+# whenever a step's progress should be visible in the timeline.
+say()     { printf '[%s] %s\n' "$(ts)" "$*"; }
 fail()    { red    "FAIL: $*"; exit 1; }
 warn()    { yellow "WARN: $*"; }
 ok()      { green  "  [✓] $*"; }
@@ -241,18 +247,20 @@ CHAT_BODY_LONG="$(python3 -c "import json; print(json.dumps({
     'stream': False
 }))")"  
 
-echo "  Submitting long request (max_tokens=1500) in background…"
+say "  Submitting long request (max_tokens=1500) in background…"
+T_INFER_START=$(date +%s.%3N)
 curl -sS --max-time 120 -X POST \
     "http://127.0.0.1:${FE_LOCAL_PORT}/v1/chat/completions" \
     -H 'Content-Type: application/json' \
     -d "${CHAT_BODY_LONG}" > "${RUN_DIR}/long-infer.json" 2>&1 &
 INFER_PID=$!
+say "  inference background PID=${INFER_PID}, started at t=${T_INFER_START}"
 
 # Give prefill a brief head-start (1s); decode registry visible immediately after
 sleep 1
 
-echo "  Polling both decode workers for an active request (timeout=${POLL_TIMEOUT}s)…"
-echo "  (using direct port-forward HTTP — no kubectl-exec overhead)"
+say "  Polling both decode workers for an active request (timeout=${POLL_TIMEOUT}s)…"
+say "  (using direct port-forward HTTP — no kubectl-exec overhead)"
 ACTUAL_SRC=""
 ACTUAL_DST=""
 MOUT_BODY=""
@@ -299,7 +307,8 @@ while true; do
           ACTUAL_DST="${DECODE_A}"
         fi
         echo "${MOUT_BODY}" > "${RUN_DIR}/migrate_out.json"
-        echo "  CAUGHT at +${ELAPSED}s — SRC=${ACTUAL_SRC} request_id=${FIRST_RID}"
+        T_CAUGHT=$(date +%s.%3N)
+        say "  CAUGHT at +${ELAPSED}s (t=${T_CAUGHT}) — SRC=${ACTUAL_SRC} request_id=${FIRST_RID}"
         break 2
       fi
     fi
@@ -368,12 +377,17 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 blue "5. Migrate state to DST: call migrate_in"
 
-MIN_RESP="$(kubectl -n "${NAMESPACE}" exec "${ACTUAL_DST}" -- \
-              curl -sS --max-time 30 -X POST \
-              "http://127.0.0.1:${WORKER_PORT}/migrate_in" \
+DST_LOCAL_PORT="${POD_SIDECAR_PORT[${ACTUAL_DST}]}"
+T_MIN_START=$(date +%s.%3N)
+say "  POST migrate_in to ${ACTUAL_DST} (localhost:${DST_LOCAL_PORT}) at t=${T_MIN_START}"
+MIN_RESP="$(curl -sS --max-time 30 -X POST \
+              "http://127.0.0.1:${DST_LOCAL_PORT}/migrate_in" \
               -H 'Content-Type: application/json' \
               -d "${MOUT_BODY}" | tee "${RUN_DIR}/migrate_in.json" || echo '{"status":"error"}')"
-echo "  migrate_in response: ${MIN_RESP}"
+T_MIN_DONE=$(date +%s.%3N)
+MIN_DURATION_MS=$(python3 -c "print(int((${T_MIN_DONE} - ${T_MIN_START}) * 1000))")
+say "  migrate_in returned at t=${T_MIN_DONE} (round-trip ${MIN_DURATION_MS} ms)"
+say "  migrate_in response: ${MIN_RESP}"
 
 ACTUAL_REPLAY="$(echo "${MIN_RESP}" | python3 -c \
     'import json,sys; d=json.load(sys.stdin); print(d.get("replay_tokens",0))' 2>/dev/null || echo 0)"
@@ -401,12 +415,15 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 blue "6. Wait ${RECOMPUTE_WAIT}s for DST to finish KV recompute"
-echo "  (migrate_in submitted to engine.generate() fire-and-forget — need to drain)"
+say "  (migrate_in submitted to engine.generate() fire-and-forget — need to drain)"
 
 # Wait for background long-inference to settle (it was aborted by migrate_out)
 wait "${INFER_PID}" 2>/dev/null || true
-echo "  Background inference settled."
+T_INFER_DONE=$(date +%s.%3N)
+say "  Background inference settled at t=${T_INFER_DONE}"
 sleep "${RECOMPUTE_WAIT}"
+T_RECOMPUTE_DONE=$(date +%s.%3N)
+say "  Recompute drain window done at t=${T_RECOMPUTE_DONE}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 blue "7. Post-migration KV metric snapshots"
@@ -511,13 +528,16 @@ else
   warn "[A] KV cache usage = ${S2_PRE_KV}% before switch_role (still finishing recompute?)"
 fi
 
-echo "  Calling switch_role decode→prefill on ${ACTUAL_DST}…"
-SWITCH_RESP="$(kubectl -n "${NAMESPACE}" exec "${ACTUAL_DST}" -- \
-    curl -sS --max-time 30 -X POST \
-    "http://127.0.0.1:${WORKER_PORT}/switch_role" \
+T_SW_START=$(date +%s.%3N)
+say "  Calling switch_role decode→prefill on ${ACTUAL_DST} at t=${T_SW_START}…"
+SWITCH_RESP="$(curl -sS --max-time 30 -X POST \
+    "http://127.0.0.1:${DST_LOCAL_PORT}/switch_role" \
     -H 'Content-Type: application/json' \
     -d '{"target_role":"prefill"}' | tee "${RUN_DIR}/switch-to-prefill.json")"
-echo "  switch_role → prefill: ${SWITCH_RESP}"
+T_SW_DONE=$(date +%s.%3N)
+SW_E2E_MS=$(python3 -c "print(int((${T_SW_DONE} - ${T_SW_START}) * 1000))")
+say "  switch_role → prefill returned at t=${T_SW_DONE} (round-trip ${SW_E2E_MS} ms)"
+say "  switch_role → prefill: ${SWITCH_RESP}"
 
 SW_STATUS="$(echo "${SWITCH_RESP}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","?"))' 2>/dev/null || echo "?")"
 SW_NEW_ROLE="$(echo "${SWITCH_RESP}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("new_role","?"))' 2>/dev/null || echo "?")"
@@ -539,12 +559,15 @@ else
   FAILURES=$((FAILURES+1))
 fi
 
-echo "  Restoring: switch_role prefill→decode…"
-RESTORE_RESP="$(kubectl -n "${NAMESPACE}" exec "${ACTUAL_DST}" -- \
-    curl -sS --max-time 30 -X POST \
-    "http://127.0.0.1:${WORKER_PORT}/switch_role" \
+T_RST_START=$(date +%s.%3N)
+say "  Restoring: switch_role prefill→decode at t=${T_RST_START}…"
+RESTORE_RESP="$(curl -sS --max-time 30 -X POST \
+    "http://127.0.0.1:${DST_LOCAL_PORT}/switch_role" \
     -H 'Content-Type: application/json' \
     -d '{"target_role":"decode"}' | tee "${RUN_DIR}/switch-to-decode.json")"
+T_RST_DONE=$(date +%s.%3N)
+RST_E2E_MS=$(python3 -c "print(int((${T_RST_DONE} - ${T_RST_START}) * 1000))")
+say "  restore switch_role returned at t=${T_RST_DONE} (round-trip ${RST_E2E_MS} ms)"
 RESTORE_STATUS="$(echo "${RESTORE_RESP}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","?"))' 2>/dev/null || echo "?")"
 RESTORE_ROLE="$(echo "${RESTORE_RESP}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("new_role","?"))' 2>/dev/null || echo "?")"
 check "[D] restore switch_role → decode ok" "$([ "${RESTORE_STATUS}" == "ok" ] && echo 0 || echo 1)"
