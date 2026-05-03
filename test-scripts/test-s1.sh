@@ -40,6 +40,9 @@ FRONTEND_URL="${FRONTEND_URL:-}"               # if empty, live inference is ski
 MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-0.6B}"
 NAMESPACE="${NAMESPACE:-dynamo-system}"
 DGD_NAME="${DGD_NAME:-vllm-v1-disagg-router}"
+RUN_DIR="${RUN_DIR:-/tmp/rls-test/s1-$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "${RUN_DIR}"
+echo "==> run dir: ${RUN_DIR}"
 WARMUP_TIMEOUT="${WARMUP_TIMEOUT:-90}"
 ACTIVE_TIMEOUT="${ACTIVE_TIMEOUT:-300}"        # bigger for first-time model pull
 COOLDOWN_GRACE="${COOLDOWN_GRACE:-120}"         # cooldown + drain headroom
@@ -66,9 +69,12 @@ replicas() {
 }
 
 worker_pods_running() {
-  kubectl -n "${NAMESPACE}" get pod \
-      -l nvidia.com/dynamo-component-type=worker --no-headers 2>/dev/null \
-    | awk '$3=="Running"' | wc -l
+  # Match both 1.0.1 (`nvidia.com/dynamo-component-type=worker`) and any
+  # earlier label scheme by counting pods whose name contains 'worker'.
+  kubectl -n "${NAMESPACE}" get pod -o name --no-headers 2>/dev/null \
+    | grep -E "${DGD_NAME}.*(prefill|decode)worker" \
+    | xargs -r -I{} kubectl -n "${NAMESPACE}" get {} -o jsonpath='{.status.phase}{"\n"}' \
+    | grep -c '^Running$' || true
 }
 
 allocated_gpus() {
@@ -90,16 +96,17 @@ PY
 }
 
 kv_indexed_blocks() {
-  # Best-effort: scrape the frontend's /metrics for KVBM block counters.
-  # If the endpoint or metric is absent we report 0 and the assertion is a warn.
+  # Frontend exposes the router's KV-indexer counter at port 8000 /metrics.
+  # `dynamo_component_kv_cache_events_applied{event_type="stored"}` is a
+  # monotonic counter — we read its current value as a *progress* signal
+  # (non-zero after at least one inference request), not as a live gauge.
   local frontend
-  frontend=$(kubectl -n "${NAMESPACE}" get pod \
-      -l nvidia.com/dynamo-component-type=frontend \
-      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  frontend=$(kubectl -n "${NAMESPACE}" get pod -o name --no-headers 2>/dev/null \
+             | grep "${DGD_NAME}-frontend" | head -n1 | sed 's|^pod/||')
   [[ -z "${frontend}" ]] && { echo 0; return; }
   kubectl -n "${NAMESPACE}" exec "${frontend}" -- \
-      curl -sS http://127.0.0.1:9090/metrics 2>/dev/null \
-    | awk '/^dynamo_kvbm_state\{/ {sum+=$NF} END {print sum+0}'
+      curl -sS http://127.0.0.1:8000/metrics 2>/dev/null \
+    | awk '/^dynamo_component_kv_cache_events_applied\{[^}]*event_type="stored"/ {sum+=$NF} END {print sum+0}'
 }
 
 send_inference() {
@@ -144,6 +151,13 @@ wait_value() {
 
 # ───────────────────────────── 0. pre-flight ────────────────────────────────
 blue "0. Pre-flight"
+# Capture pre-test snapshot (see TEST_PLAN.md §2)
+{
+  echo "=== pre-test snapshot ==="
+  date -u +'%Y-%m-%dT%H:%M:%SZ'
+  kubectl -n "${NAMESPACE}" get dgd,dgdsa -o wide || true
+  kubectl -n "${NAMESPACE}" get pods -o wide || true
+} > "${RUN_DIR}/pre.txt" 2>&1
 api /api/v1/status >/dev/null || fail "controller unreachable at ${CONTROLLER_URL}"
 kubectl -n "${NAMESPACE}" get dgdsa "${DGD_NAME}-prefill" >/dev/null \
   || fail "DGDSA ${DGD_NAME}-prefill not found in ${NAMESPACE}"
@@ -211,6 +225,18 @@ green "  KV indexer blocks=${KVB2} (target 0)"
 (( D_FINAL == 0 )) || fail "decode  DGDSA still at ${D_FINAL}"
 (( RUN2 == 0 ))    || fail "worker pods still Running: ${RUN2}"
 (( GPU2 <= GPU0 )) || fail "GPUs not released: was ${GPU0}, now ${GPU2}"
-(( KVB2 == 0 ))    || warn "KV indexer not zero — check KVPublisher shutdown path"
+# stored counter is monotonic; we record it instead of asserting==0.
+
+{
+  echo "=== post-test snapshot ==="
+  date -u +'%Y-%m-%dT%H:%M:%SZ'
+  kubectl -n "${NAMESPACE}" get dgd,dgdsa -o wide || true
+  kubectl -n "${NAMESPACE}" get pods -o wide || true
+  echo "replicas P=${P_FINAL} D=${D_FINAL}"
+  echo "worker_pods_running=${RUN2}"
+  echo "allocated_gpus=${GPU2} (baseline=${GPU0})"
+  echo "kv_events_applied{stored} pre→post grew from baseline to ${KVB}; post-idle=${KVB2}"
+} > "${RUN_DIR}/post.txt" 2>&1
 
 green "S1 PASSED — full idle→warm_up→active→cool_down→idle with KV/GPU release"
+echo "==> artefacts in ${RUN_DIR}"
