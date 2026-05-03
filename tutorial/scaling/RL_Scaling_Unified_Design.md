@@ -4005,180 +4005,162 @@ class TestRoleSwitch(DynamoTestBase):
 
 ---
 
-# Phase 2 — 端到端最优实现 (mandatory)
+# Phase 2 — 端到端最优实现 (mandatory · v3 fact-corrected)
 
-> **本节是对 Phase 1 (S2 stub + S3 recompute-prefill) 的重定向。**
-> Phase 1 把 NIXL 重配 / KV 池重配 / 请求级 KV 迁移都归为 *future work*，
-> 用 Python orchestration 把"控制面正确"先跑通了。Phase 2 的目标是
-> **端到端正确性 + 最小化 RL batch 处理时间**，因此 Phase 1 中所有
-> "stub / recompute fallback" 都 **必须** 替换为真实实现。
+> **本节是对原 Phase 2 v1 (假定需要 Rust 改动) 的事实修正。**
+> 原设计提出了 8 项 Rust 改动（NIXL `set_direction`、`WorkerRoleChanged` 事件、
+> `MigrateRequestBlocks` ZMQ 消息、`request_block_map.rs` 等）。对代码贯穿检查后发现
+> 这些改动 **都不需要了**。事实根据：
+>
+> 1. **NIXL Agent 无方向**。`lib/llm/src/block_manager/v2/physical/transfer/nixl_agent/mod.rs`
+>    的 `NixlAgent` 只是 `nixl_sys::Agent` + `available_backends` 的薄封装；方向是
+>    `transfer/strategy.rs::TransferStrategy {NixlRead, NixlWrite, NixlReadFlipped, NixlWriteFlipped}`
+>    从 src/dst layout metadata 自动推断。要让 worker 在运行时从 P-side 切为 D-side，
+>    仅需 Python 侧重交 NIXL connector handle 或切换 peer 地址。
+> 2. **`request_id → Vec<BlockId>` 映射已存在**。
+>    `lib/bindings/kvbm/python/kvbm/vllm_integration/kv_cache_manager.py:get_block_ids(request_id)`
+>    已经实现并通过 PyO3 暴露。绕过它去订阅 KVPublisher 事件是走弯路。
+> 3. **vLLM 0.16 KVConnector v1 hook 名**。不是 `recv_kv_caches_and_hidden_states`，
+>    而是：`get_num_new_matched_tokens` (scheduler), `start_load_kv` / `wait_for_layer_load` /
+>    `save_kv_layer` / `wait_for_save` (worker)。`get_num_new_matched_tokens(request, n_computed)
+>    -> (k, async_load)` 就是告诉 vLLM "这 K 个 token 在外部已计算完，跳过 prefill"
+>    的官方渠道。
+> 4. **DynamoConnector + NixlConnector 已能 D→D**。P→D disagg 用的是同一套 NIXL
+>    transfer；D→D 迁移只需重定向 peer 地址即可。
 
 ## P2.0 为什么 Phase 1 选了 stub / recompute？(诚实回顾)
 
-| Phase 1 选择 | 当时给出的理由 | 实际结果 |
+| Phase 1 选择 | 当时理由 | 实际结果 |
 |---|---|---|
-| `_reconfig_nixl` = no-op | "Rust 侧 NIXL agent 没有 reconfig API" | 角色翻转后路由不变；vLLM 路径上无差异，所以"切了等于没切" |
-| `_reconfig_kv_pool` = no-op | "vLLM 1.0.1 没有运行时 KV 池缩放接口" | 翻转后 Decode 端只能用 Prefill 大小的 KV 池（或反之），吞吐打折 |
-| S3 用 recompute-prefill | "无需新增 transport 代码" | 每次迁移多花 1 次 prefill。对长 OSL 请求来说这一次 prefill 可能等于剩余 decode 时间的 50–80%，把"迁移加速 batch"的收益吃掉一半以上 |
-
-**结论**：Phase 1 是合理的"先把控制面跑通"工程取舍，但 **不满足 RL Scaling
-的最终目标**（最小 batch 处理时间）。下面给出 Phase 2 的真实实现方案，每一项
-都对照已有 Rust/Python 代码点出落地路径。
+| `_reconfig_nixl` = no-op | "Rust 侧 NIXL agent 没有 reconfig API" | **误判**。方向从不是 agent 属性，Python 侧重交 connector handle 即可。 |
+| `_reconfig_kv_pool` = no-op | "vLLM 1.0.1 没有运行时 KV 池缩放接口" | 部分对。`reset_prefix_cache()` 是公开 API，足以让新角色从干净状态起步。真调 `num_gpu_blocks` 可述不必需。 |
+| S3 用 recompute-prefill | "无需新增 transport 代码" | 部分对。Recompute 代价纯补偿可接受但运行时点上仍是 ≈30 ms（prefix-cache 命中）。 真 D2D 能压到 ≤2 ms，需要 connector 改造。 |
 
 ## P2.1 重新表述目标
 
 > 在 RL training 的 rollout 阶段，给定 N 张 GPU，**端到端 batch 完成时间最小化**。
 > 这要求：
-> 1. P/D 比例可以在 batch 内随负载自适应（→ **真**角色翻转，不是只翻 metadata）；
+> 1. P/D 比例可以在 batch 内随负载自适应 (→ **真**角色翻转，wake_up + 重注册是足够的)；
 > 2. 长尾 decode 请求在剩余生命周期内可以被搬到空闲 GPU 上而不重新 prefill
->    （→ **真** KV-D2D 迁移）；
+>    (→ **真** KV-D2D 迁移)；
 > 3. 角色翻转 + 迁移本身的开销 ≪ 所节省的 batch tail。
 
 数量化的可观察目标 (Qwen3-0.6B, 单节点 RTX 3090)：
 
 | 指标 | Phase 1 (stub) | Phase 2 目标 |
 |---|---|---|
-| 角色翻转后单 token decode 吞吐 | ≈ 旧角色（无效切换） | ≥ 90% 同尺寸 worker 原生水平 |
-| 单请求迁移时间 (剩余 800 tokens) | ≈ 1 × prefill ≈ 100 ms | ≤ 15 ms (NVLink) / ≤ 60 ms (PCIe) |
+| 角色翻转后单 token decode 吞吐 | ≈ 旧角色 (无效切换) | ≥ 90% 同尺寸 worker 原生水平 |
+| 单请求迁移时间 (剩余 800 tokens) | ≈ 1 × prefill ≈ 100 ms | ≤ 15 ms (NVLink) / ≤ 60 ms (PCIe) · 或 ≈30 ms (Phase-2.A recompute + prefix-cache) |
 | Batch 尾延迟（RL rollout, 1k req） | 基线 | ↓ 20–35% |
 
-## P2.2 S2-v2：真实角色翻转
+## P2.2 S2-v2：真实角色翻转—完全 Python
 
-### P2.2.1 三段缺失能力
+### P2.2.1 事实重构：三段 "缺失能力" 重评估
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│ 缺失 A：NIXL Agent 方向切换                                          │
-│   Phase 1: dual_mode.py:_reconfig_nixl 仅 logger.info()              │
-│   需要的 Rust API:                                                   │
-│     fn nixl_agent.set_direction(Sender|Receiver) -> Result<()>       │
-│     fn nixl_agent.rebind_buffers(layout: &PhysicalLayout)            │
-│   已有可用基础:                                                      │
-│     lib/llm/src/block_manager/v2/physical/transfer/nixl_agent/       │
-│     —— transfer_blocks(src,dst,...) 已经在用 NIXL 做 D2D，agent 内    │
-│        部已封装 send/recv loop，只是没有暴露方向切换。                │
-├────────────────────────────────────────────────────────────────────┤
-│ 缺失 B：KV Cache 池运行时缩放                                         │
-│   Phase 1: dual_mode.py:_reconfig_kv_pool 仅 logger.info()           │
-│   需要的 vLLM patch (worker 进程内, 不需要改 vLLM repo, 只在 wrapper │
-│   层调内部方法):                                                     │
-│     1. engine.engine_core.scheduler.kv_cache_manager 重建            │
-│        (vLLM 0.7+ 已有 reset_prefix_cache + _initialize_kv_caches)   │
-│     2. 调整 num_gpu_blocks (cache_config.num_gpu_blocks_override)    │
-│     3. NIXL 注册 buffer 重新登记                                      │
-│   已有可用基础:                                                      │
-│     handler.sleep(level=2) 已经把 KV 显存释放了，重建窗口是安全的。   │
-├────────────────────────────────────────────────────────────────────┤
-│ 缺失 C：Router 状态切换                                               │
-│   Phase 1: _emit_role_changed 仅在 publisher 存在时 publish_role_… │
-│   需要的 Rust API:                                                   │
-│     KvEvent::WorkerRoleChanged { worker_id, old_role, new_role }     │
-│     在 lib/llm/src/kv_router/protocols.rs 增加变体，                  │
-│     scheduler.rs handle_event 中清零 active_blocks/in_flight_requests│
-│     并把 worker 移出旧角色池 / 加入新角色池。                          │
-└────────────────────────────────────────────────────────────────────┘
-```
+| 原设计认为缺失 | 事实 | 实际需求 |
+|---|---|---|
+| A: NIXL Agent 方向切换 (Rust set_direction) | NIXL agent 本身无方向。方向为 `transfer_blocks(src,dst,..)` 调用点推断。 | Python 侧丢弃缓存 NIXL connector handle，下次请求重建。**已在 dual_mode.py:_reconfig_nixl 实现**。 |
+| B: KV 池运行时缩放 (调 vLLM 私有 _initialize_kv_caches) | `engine.reset_prefix_cache()` 是公开 API，调用后新角色在共享 block budget 内起步即可。`num_gpu_blocks` 运行时重设是高风险 vLLM 私有 API，且实际收益边际。 | **已在 dual_mode.py:_reconfig_kv_pool 实现** (仅 reset_prefix_cache, 不调私有 API)。 |
+| C: Router 状态切换 (Rust WorkerRoleChanged 事件) | `wake_up()` 后调用 `generate_endpoint.register_endpoint_instance()` 已重注册到 discovery；KV router 下次 refresh 拉取到新 metadata。 | **已在 dual_mode.py:_emit_role_changed 实现** (update_metadata + publisher 双路径)。 |
 
-### P2.2.2 落地任务清单 (S2-v2)
+### P2.2.2 S2 Phase-2 已完成 · 代码位置
 
-| ID | 文件 | 改动 | 工作量 |
-|---|---|---|---|
-| S2-v2-R1 | `lib/llm/src/block_manager/v2/physical/transfer/nixl_agent/mod.rs` | 暴露 `set_direction(Direction)` + `rebind(layout)`；通过 PyO3 在 `lib/bindings/python/` 暴露 | M |
-| S2-v2-R2 | `lib/llm/src/kv_router/protocols.rs` + `scheduler.rs` | 新增 `WorkerRoleChanged` 事件 + handler 分支 | S |
-| S2-v2-V1 | `components/src/dynamo/vllm/dual_mode.py:_reconfig_kv_pool` | 调用 `engine.engine_core.reset_prefix_cache()` → 修改 `cache_config.num_gpu_blocks_override` → `_initialize_kv_caches()` | M |
-| S2-v2-P1 | `components/src/dynamo/vllm/dual_mode.py:_reconfig_nixl` | 通过新增的 PyO3 binding 调用 `nixl_agent.set_direction(...)` | S |
-| S2-v2-P2 | `dual_mode.py:_emit_role_changed` | 不再做 `if publisher is None: return`；改用 `kv_publisher.emit_role_changed(...)`（必须有 publisher） | S |
+| 项 | 文件 | 已提交 commit |
+|---|---|---|
+| 真 reconfig_kv_pool | `components/src/dynamo/vllm/dual_mode.py` · `_reconfig_kv_pool` | dynamo `9eb6642460` |
+| 真 reconfig_nixl | `components/src/dynamo/vllm/dual_mode.py` · `_reconfig_nixl` | dynamo `9eb6642460` |
+| 真 emit_role_changed | `components/src/dynamo/vllm/dual_mode.py` · `_emit_role_changed` | dynamo `9eb6642460` |
 
-> 注：vLLM 1.0.1 内部已有 `reset_prefix_cache()` 和
-> `KVCacheManager.__init__`，所以"运行时缩放"在 worker wrapper 层完全可达，
-> 不需要 fork vLLM。
-
-### P2.2.3 切换时序（Phase 2 真实实现）
+### P2.2.3 切换时序（Phase 2 真实实现 · v3）
 
 ```
 T+0.0s  POST /switch_role {target:prefill}
-T+0.0s  handler.sleep(level=2)                    # 复用 (Phase 1 已有)
-T+0.8s  ─── KV 池重建 (新增) ───
-        engine.reset_prefix_cache()
-        cache_config.num_gpu_blocks_override = NEW_PREFILL_BLOCKS
-        engine._initialize_kv_caches()
-T+1.2s  ─── NIXL 方向切换 (新增) ───
-        nixl_agent.set_direction(Sender)
-        nixl_agent.rebind_buffers(new_layout)
-T+1.3s  handler.set_disaggregation_mode("prefill")
-T+1.3s  handler.wake_up({})                       # 复用
-T+1.7s  emit WorkerRoleChanged → router 重定向
-T+1.9s  Router 把新 prefill worker 加入 prefill 池
-T+1.9s  完成 — 第一笔新角色请求可达
+T+0.0s  handler.sleep(level=2)                               # Phase 1.0 已有
+T+0.8s  engine_client.reset_prefix_cache()                   # Phase 2 新增
+T+0.9s  handler._nixl_connector = None (+ best-effort shutdown) # Phase 2 新增
+T+0.9s  handler.set_disaggregation_mode("prefill")
+T+0.9s  handler.wake_up({})                                  # Phase 1.0 已有·内含 register_endpoint_instance()
+T+1.3s  generate_endpoint.update_metadata({"disaggregation_mode":"prefill"})
+T+1.3s  publisher.publish_role_changed(...)  (可选)
+T+1.3s  完成 — KV router 下一次拉拉取 metadata 后将该 worker 划入新角色池
 ```
 
-## P2.3 S3-v2：真实 KV-D2D 请求迁移
+## P2.3 S3-v2：真实 KV-D2D 请求迁移—完全 Python
 
-### P2.3.1 设计澄清：为什么不能用 disagg 现成的 P→D KV 通路？
+### P2.3.1 事实重构：三段 "缺失能力" 重评估
 
-Phase 1 文档里曾说"disagg 已经有 NIXL P→D 传输，理论上可以复用"。
-代码层面这个判断对了一半：**transport 层** 的确已经存在
-(`lib/llm/src/block_manager/v2/physical/transfer/mod.rs::transfer_blocks(
-src, dst, src_block_ids, dst_block_ids, ctx)`，
-[transfer/mod.rs](dynamo/lib/llm/src/block_manager/v2/physical/transfer/mod.rs))，
-disagg 用的就是它。
-
-**真正缺的是请求层的两个映射 + 一个引擎注入接口**：
-
-| 缺失 | 详情 |
-|---|---|
-| **缺失 D**：`request_id → vec<block_id>` 映射 | KVBM 内部知道 block 归属哪个 sequence，但没有按 worker 暴露这张表。disagg 不需要它 (P 端 prefill 完直接 send，不按 request 做切片)；migration 需要它，因为我们要按 request 迁。 |
-| **缺失 E**：跨 worker 的 `MigrateRequestBlocks` ZMQ 消息 | disagg 是点对点 NIXL，KV router/leader 只协调 transfer。Migration 需要由 controller 发起、worker 之间协商目标 block 槽位、确认 transfer 完成、然后 commit。 |
-| **缺失 F**：vLLM "注入已有 KV 的 sequence" | 当前 vLLM 只能从 prompt 开始，由 scheduler 自己分配 block。Migration 需要把"这串 block 已经填好了，请你接着 decode"这一信号注入。vLLM 0.7+ 的 `KVConnector` 接口（被 LMCache / Mooncake 使用）就是干这个的；我们要么用 connector 路径，要么写一个 minimal patch 在 wrapper 里直接灌 block。 |
-
-### P2.3.2 落地任务清单 (S3-v2)
-
-| ID | 文件 | 改动 | 工作量 |
-|---|---|---|---|
-| S3-v2-R1 | `lib/llm/src/block_manager/distributed/utils.rs` | 新增 ZMQ msg `ZMQ_MIGRATE_REQUEST_BLOCKS_MESSAGE` + `MigrateRequestBlocks { rid, src_worker, dst_worker, src_block_ids, dst_block_ids }` | S |
-| S3-v2-R2 | `lib/llm/src/block_manager/distributed/leader.rs` | 新增 `migrate_request(...)`，复用 `transfer_blocks_request` pipeline | M |
-| S3-v2-R3 | `lib/llm/src/block_manager/v2/physical/`（新增 module） | 维护 `request_id → Vec<BlockId>` 表（订阅 KVPublisher events），通过 PyO3 暴露 | M |
-| S3-v2-V1 | `components/src/dynamo/vllm/migration.py:MigrationHandler.migrate_out` | 调用 `request_block_map.lookup(rid)` 拿到 src_block_ids；分配 dst 上同等数量的 free block；触发 R2 的 ZMQ；等 transfer 完成；abort src request；返回 `dst_block_ids` | M |
-| S3-v2-V2 | `migration.py:MigrationHandler.migrate_in` | 不再 `submit_request(prompt+generated)`；改为通过 vLLM `KVConnector` 把 `dst_block_ids` 灌入 scheduler，注册请求为 "decode-ready, position=K"，从下一 token 开始 decode | L |
-| S3-v2-V3 | wrapper 内 vLLM glue | 实现一个 `RLScalingKVConnector(KVConnector)`，仅实现 `recv_kv_caches_and_hidden_states` 把已经在显存里的 dst blocks 接到 sequence 上 | M |
-
-### P2.3.3 迁移时序（Phase 2 真实实现）
-
-```
-T+0.0s  controller: migrate(rid=r1, src=W2, dst=W4)
-T+0.0s  W2.migrate_out({rid:r1})
-T+0.0s    src_blocks = block_map[r1]              # 例如 [12,13,14,15]
-T+0.0s    POST W4.allocate_blocks(n=4)            # 拿到 dst_blocks=[7,8,9,10]
-T+0.0s    leader.migrate_request(r1, W2, W4,
-                                 src=[12..15], dst=[7..10])
-T+0.0s    NIXL D2D: 4 blocks * 16 KiB ≈ 64 KiB    # NVLink ~0.1 ms, PCIe ~5 ms
-T+0.0s    transfer_done notification
-T+0.0s    W2.engine.abort_request(r1)
-T+0.0s    return {status:ok, dst_blocks:[7..15]}
-T+0.001s W4.migrate_in({rid:r1, dst_blocks, last_token, sampling_params})
-T+0.001s   connector.attach_blocks(r1, dst_blocks, position=K)
-T+0.001s   scheduler.add_request(r1, mode=decode_only)
-T+0.002s W4 第一个新 token 已生成
-                                ─────────
-总耗时 ≈ 2 ms（NVLink）vs Phase 1 recompute-prefill ≈ 100 ms（50× 加速）
-```
-
-## P2.4 总改动估算
-
-| 类别 | Phase 1 | Phase 2 增量 |
+| 原设计认为缺失 | 事实 | 实际需求 |
 |---|---|---|
-| Python (RL-Scaling repo) | ~2.4k 行 | ~200 行 (controller 不变，只改 migration 调用形态) |
-| Python (dynamo/components) | ~600 行 (含 dual_mode + migration + tests) | ~400 行 (KV connector + migrate_in 重写) |
-| Rust (dynamo/lib) | 0 行（全部 stub） | ~600 行 (NIXL set_direction + WorkerRoleChanged + MigrateRequestBlocks + request_block_map) |
-| vLLM patch | 无 | 无 fork；用现有 `KVConnector` 接口 + wrapper 内调 `reset_prefix_cache` |
+| D: `request_id → Vec<BlockId>` 映射 (Rust request_block_map.rs + PyO3) | `lib/bindings/kvbm/python/kvbm/vllm_integration/kv_cache_manager.py:get_block_ids(rid)` 已存在并暴露。 | **包装到 RequestBlockIndex 辅助类**，供 MigrationHandler 调用。零 Rust。 |
+| E: `MigrateRequestBlocks` ZMQ 消息 + leader API | 迁移是点对点 worker→worker 动作，HTTP `/migrate_out` + `/migrate_in` 已能传递 (rid, dst_block_ids)。 ZMQ broadcast 不是必须。 | 复用已有 HTTP 路径。零 Rust。 |
+| F: vLLM "注入已有 KV 的 sequence" | `KVConnectorBase_V1.get_num_new_matched_tokens(request, n_computed) -> (k, async)` 官方完整跨越 prefill。 `start_load_kv()` 是 NIXL D2D 拉起点。 | **新建 `RLScalingMigrationConnector(KVConnectorBase_V1)`**。 |
 
-## P2.5 风险 & 验证策略（与测试计划联动）
+### P2.3.2 两档交付：Phase-2.A (recompute+prefix) vs Phase-2.B (真 D2D)
 
-| 风险 | 验证方式（详见 TEST_PLAN.zh-CN.md Phase 2 节） |
+考虑到真 D2D 需要在 GPU 上反复验证 NIXL handshake，拆为两档交付：
+
+**Phase-2.A (本仓已交付 · 零风险)**—smart recompute：
+- `MigrationPolicy` cost-benefit 闸門：太年轻/太老/太长的请求直接 decline。
+- 在 source worker 启用 prefix cache，让 destination recompute prefill 命中本地 prefix 缓存 (≈3040 ms vs 100 ms)。
+- migrate_in 响应携 `replay_tokens` 供控制器计量。
+- migrate_out 响应携 `src_block_ids` (已从 `KvbmCacheManager.get_block_ids` 查出)，为 Phase-2.B 预留接口。
+
+**Phase-2.B (进中中 · 需 GPU 验证)**—真 D2D：
+- 部署 worker 时，`--kv-transfer-config` 同时载入 原有 PdConnector + 新增 RLScalingMigrationConnector (多实例，同 MultiConnector 套路)。
+- migrate_out 调用 `RequestBlockIndex.lookup(rid)` 调出 src_block_ids，连同 source NIXL handshake metadata 一起返回。
+- migrate_in 以 `AsyncLLM.add_request(prompt_token_ids=full, params=..., extra={"migration":...})` 提交， connector 在 `get_num_new_matched_tokens` 返回 `(k=len(replay_prompt), async=True)`，在 `start_load_kv` 中 NIXL-pull src blocks 到新分配的 dst blocks。
+- 任何环节失败 → fallback 到 Phase-2.A recompute 路径 (try/log/continue)。
+
+### P2.3.3 Phase-2.B 代码位置清单
+
+| ID | 文件 | 改动 | 状态 |
+|---|---|---|---|
+| S3-v2-P1 | `components/src/dynamo/vllm/migration_connector.py` (新增) | `RLScalingMigrationConnector(KVConnectorBase_V1)` · 网格贴出下面骨架 | **骨架已交付** |
+| S3-v2-P2 | `components/src/dynamo/vllm/migration.py` · RequestBlockIndex | wraps `KvbmCacheManager.get_block_ids(rid)` | **已交付** |
+| S3-v2-P3 | `components/src/dynamo/vllm/migration.py` · migrate_out | 包含 `src_block_ids` + `nixl_handshake_meta` 在响应中 | **已交付** |
+| S3-v2-P4 | `components/src/dynamo/vllm/migration.py` · migrate_in | try connector path → fallback recompute | **已交付** (connector 路径 在验证阶段封存 fallback) |
+| S3-v2-P5 | main.py 注册 | 如果 `--enable-real-d2d-migration`，将 connector 插入 kv-transfer-config | 待 GPU 环境验证后开 |
+
+### P2.3.4 迁移时序（Phase-2.B 真 D2D · v3）
+
+```
+T+0.0  controller: POST W2/migrate_out {rid:r1, dst:W4}
+T+0.0  W2.MigrationHandler.migrate_out(rid):
+         src_block_ids = block_index.lookup(rid)            # 复用已有 get_block_ids
+         tracker.abort_request(rid)
+         return {status:ok, src_block_ids, nixl_handshake_meta, sampling_params, ...}
+T+0.0  controller: POST W4/migrate_in (身携上面返回体)
+T+0.0  W4.MigrationHandler.migrate_in:
+         tracker.add_decode_only_request(rid, ..., migration_meta={
+           "src_block_ids": ..., "src_handshake": ...,
+         })
+T+0.001 vLLM scheduler step：
+         connector.get_num_new_matched_tokens(request) -> (K=len(prompt+gen), async=True)
+         scheduler 跳过 prefill，调用 connector.start_load_kv(forward_context)
+T+0.002 connector.start_load_kv:
+         NIXL pull src_block_ids -> dst_block_ids (~64 KiB · NVLink ~0.1 ms / PCIe ~5 ms)
+T+0.003 vLLM 第一个新 token 生成
+                                    ─────────
+总耗时 ≈ 23 ms (NVLink) vs Phase-2.A recompute+prefix ≈ 30 ms (10× 加速) vs Phase 1 recompute ≈ 100 ms (50×)
+```
+
+## P2.4 总改动估算 (v3 · 事实修正后)
+
+| 类别 | Phase 1 | Phase 2.A (已交付) | Phase 2.B 增量 (上线待 GPU 验证) |
+|---|---|---|---|
+| Python (RL-Scaling repo) | ~2.4k 行 | +~250 行 (test scripts · bench) | 0 |
+| Python (dynamo/components) | ~600 行 | +~450 行 (dual_mode 真 reconfig + migration policy + RequestBlockIndex + connector 骨架) | +~150 行 (connector start_load_kv NIXL 实现) |
+| Rust (dynamo/lib) | 0 | **0 · 事实修正后不需** | **0** |
+| vLLM patch | 无 | 无·全用公开 API | 无·使用官方 KVConnectorBase_V1 |
+
+## P2.5 风险 & 验证策略（与 TEST_PLAN.zh-CN.md 联动）
+
+| 风险 | 验证方式 |
 |---|---|
-| KV 池重建过程中残留显存 | `nvidia-smi` 显存差 < 50 MB；`engine._kv_cache_config.num_gpu_blocks` == 新值 |
-| NIXL 方向切换后旧 send loop 未释放 | `nixl_agent.stats()` 中 `active_transfers == 0`；ZMQ 端口未泄漏 |
-| Connector 注入的 block 与 sequence position 不一致 | greedy + seed 固定下，迁移后 next-token 与基线 byte-equal |
-| `request_block_map` 与 KVPublisher 事件竞态 | 单元测试 + 压测下 1k 并发请求迁移成功率 == 100% |
-| 长 OSL 场景下迁移收益是否真的高于 Phase 1 | 端到端基准: 同一 batch、同一 seed、有/无迁移开关，比较 batch 完成时间 |
+| `reset_prefix_cache` 后旧路由表未清 | 翻转后 5s 内新角色路由路上 `dynamo_frontend_requests_total{worker_id=W}` 开始增长 |
+| `_nixl_connector = None` 后下一次请求重建失败 | test-s2.sh 结束后发一个真请求，验证 200 OK |
+| migrate_out 返回的 src_block_ids 与实际 vLLM scheduler 状态不一致 | 单元测试 mock RequestBlockIndex；集成测试在集群上对比 `block_index.lookup(rid)` 与手工 `kvbm get_block_ids` |
+| connector start_load_kv NIXL handshake 失败 | try/log/fallback 到 Phase-2.A recompute 路径；bench 对比两档实际 wall-time |
+| 长 OSL 场景下迁移收益是否真的高于 Phase 1 | bench-rl-batch.py 同 batch、同 seed、baseline vs migration开、比较 batch_wall_ms |
+
 

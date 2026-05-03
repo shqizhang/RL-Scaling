@@ -252,36 +252,48 @@ NAMESPACE=dynamo-system DGD_NAME=vllm-v1-disagg-router bash test-scripts/test-s3
 
 ---
 
-# Phase 2 测试计划 — 端到端最优实现
+# Phase 2 测试计划 — 端到端最优实现 (v3 · fact-corrected)
 
 > 配套设计文档：`RL_Scaling_Unified_Design.md` 中的 **Phase 2** 章节
-> (P2.0–P2.5) + `dynamo/RL_SCALING_RUST_CHANGES.md`。
+> (P2.0–P2.5, v3) + `dynamo/RL_SCALING_PYTHON_CHANGES.md`。
 >
-> Phase 1 测试只验证"控制面正确"。当 Rust + vLLM wrapper 的 Phase 2 改动落地后，
-> 我们额外验证 **数据面正确 + 性能达标**。Phase 1 的脚本 (test-s2.sh /
-> test-s3.sh) 中那些 "stub 是预期" 的断言会被 **取反**。
+> v3 修正：Phase 2 **不需 Rust 改动**，按两档交付：
+>   - **Phase-2.A** (已交付 · 零风险)：smart recompute-prefill，靠
+>     `MigrationPolicy` 带 cost-benefit 闸門 + prefix-cache 命中将迁移代价
+>     压到 ~30 ms；`migrate_out` 额外变为携 `src_block_ids` (复用现有
+>     `KvbmCacheManager.get_block_ids` PyO3 API)为 Phase-2.B 预留接口。
+>   - **Phase-2.B** (骨架已交付 · 待 GPU 环境验证)：真 KV-D2D 迁移。
+>     `RLScalingMigrationConnector` 实现了 vLLM 0.16 KVConnectorBase_V1 的
+>     `get_num_new_matched_tokens` / `start_load_kv` 等 hooks；NIXL pull 环节
+>     以 `feature_enabled=False` 默认关闭，遇任何异常自动 fallback 到
+>     Phase-2.A 路径。
+>
+> Phase 1 脚本中那些 "stub 是预期" 的断言在 Phase 2 中被取反，新增
+> Phase-2.A 新路径的实际事实验证。
 
 ## P2.0 适用前提
 
-只有当以下镜像 tag 上线后才执行：
-- `dynamo-vllm-runtime:rl-scaling-phase2-*`（包含 R1/R2/R3 + V1/V2/V3）
-- worker 启动参数追加：`--dual-mode --enable-migration --kv-connector rl-scaling`
-- decode replicas ≥ 2（同 Phase 1 §5）
+**Phase-2.A** 在现有镜像 `dynamo-vllm-runtime:rl-scaling-6e4a559+` 上可运行，
+无额外启动参数。与 Phase 1 同一套部署。
 
-如果上述任一不满足，跳到 Phase 1 章节运行回退测试，并在 `summary.md` 中
-注明 "Phase 2 not applicable: <原因>"。
+**Phase-2.B** 需要：
+- worker 启动参数追加：`--enable-real-d2d-migration`
+- `--kv-transfer-config` 额外加载 `RLScalingMigrationConnector`
+- decode replicas ≥ 2
+- 在 GPU 上验证 NIXL handshake 可达后，将 `feature_enabled` 翻为 True
 
-## P2.1 S2-v2 验收（真实角色翻转）
+如果 Phase-2.B 不具备，跳过 §P2.2.B、以 §P2.2.A 为主验收。
+
+## P2.1 S2-v2 验收（真实角色翻转 · 全 Python）
 
 | 步骤 | 真实数据来源 | Grafana / PromQL | PASS 条件 |
 |---|---|---|---|
-| 翻转后旧角色池实时排空 | `dynamo_frontend_requests_total{worker_id=W,role="<old>"}` | Dynamo 仪表盘 *Frontend per-worker RPS* | 翻转后 5s 内增量 = 0 |
+| 翻转后旧角色池实时排空 | `dynamo_frontend_requests_total{worker_id=W,role="<old>"}` | Dynamo *Frontend per-worker RPS* | 翻转后 5s 内增量 = 0 |
 | 翻转后新角色池接入 | `dynamo_frontend_requests_total{worker_id=W,role="<new>"}` | 同上 | 翻转后 30s 内有非零增量 |
-| KV 池真实缩放 | worker `/metrics` 中 `vllm:cache_config_num_gpu_blocks` | Dynamo *KV pool size* (新增 panel) | 与目标角色比例相符 (±5%) |
-| NIXL 方向已切 | worker `/role` 返回 `nixl_direction` 字段 | curl | 与新角色匹配 (sender↔prefill / receiver↔decode) |
-| 无残留 transfer | `nixl_agent.stats().active_transfers` | Disagg 仪表盘 *NIXL transfers in flight* | 翻转完成后 1s 内归 0 |
-| `WorkerRoleChanged` 路由器收到 | controller 日志 + `dynamo_router_role_changes_total` (新增 metric) | Dynamo *Role changes* | 每次翻转 +1 |
-| Phase 1 stub 标记不应再出现 | worker 日志 | `kubectl logs` | **不应**有 `stubbed; no Rust reconfig API` |
+| `reset_prefix_cache` 被调用 | worker 日志 `[DualMode] reset_prefix_cache invoked` | `kubectl logs` | 每次翻转 +1 |
+| NIXL connector handle 被丢弃 | worker 日志 `[DualMode] dropped cached NIXL connector` | `kubectl logs` | 每次翻转 +1 |
+| `update_metadata` 被推送到 generate endpoint | worker 日志 `[DualMode] update_metadata pushed disaggregation_mode` | `kubectl logs` | 每次翻转 +1 |
+| Phase 1 stub 标记不应出现 | worker 日志 | `kubectl logs` | **不应**有 `stubbed; no Rust reconfig API` |
 
 **回归断言**：把 `test-scripts/test-s2.sh` 中
 ```
@@ -296,26 +308,33 @@ if grep -qiE 'stubbed; no Rust reconfig API' "${RUN_DIR}/worker-flip.log"; then
 fi
 ```
 
-## P2.2 S3-v2 验收（真实 KV-D2D 迁移）
+## P2.2.A S3-v2.A 验收（smart recompute-prefill · 已交付 · 零风险）
 
-| 步骤 | 真实数据来源 | Grafana / PromQL | PASS 条件 |
-|---|---|---|---|
-| 真实 D2D 传输发生 | `kvbm_offload_blocks_d2d` 或新增 `kvbm_migrate_request_blocks_total` | KVBM 仪表盘 (新 panel) | 每个迁移请求贡献 ≥ 1 个 block |
-| **没有** recompute-prefill 发生 | 新增 `dynamo_request_recompute_prefill_total` | Dynamo *Recompute prefill* | 增量 = 0 |
-| 单请求迁移耗时 | controller 日志 `migrate_request done in N ms` | Dynamo *Migration time histogram* | NVLink: p99 ≤ 15 ms / PCIe: p99 ≤ 60 ms |
-| 端到端 batch 加速 | wall-clock，开/关迁移对比 | 自定义脚本 (见 §P2.3) | 加速比 ≥ 1.20× |
-| 输出确定性 | greedy + 固定 seed | sha256sum | 与基线 byte-equal |
-| KVBM 块数守恒 | `kvbm_total_blocks` 在迁移前后 | KVBM 仪表盘 | 不变（只是搬位置） |
-| `request_block_map` 一致性 | worker 日志，每次 migrate_out 末尾打印 src_blocks 数 | 日志 | == migrate_in dst_blocks 数 |
+| 步骤 | 真实数据来源 | PASS 条件 |
+|---|---|---|
+| `MigrationPolicy` decline 路径生效 | controller 日志 `migrate_in declined for X: <reason>` | 对 too-young/too-old/too-large 请求返回 `status:declined` |
+| `MigrationPolicy` accept 路径生效 | migrate_in 响应为 `{status:ok, path:"recompute", replay_tokens:N}` | `replay_tokens == prompt+gen` |
+| `migrate_out` 响应携 `src_block_ids` (需 KvbmCacheManager) | migrate_out 响应 JSON | 如启用 KVBM，`src_block_ids` 为非空列表；否则字段缺省 |
+| Prefix cache 命中节省 prefill 时间 | dst worker `vllm:gpu_prefix_cache_hit_rate` | 权重 ≥ 0.9 在迁移连发场景下 |
+| 迁移后单请求总时间 (recompute prefix-hit) | controller 日志 · prometheus | 在启用 prefix cache 的 7B 模型上 p95 ≤ 50 ms (vs Phase 1 ≈100 ms) |
+| MigrationHandler prefix-cache 警告 | worker 启动日志 | 如 enable_prefix_caching=False 必须出现警告 |
 
-**回归断言**：把 `test-scripts/test-s3.sh` 中"KVBM 计数器应保持平稳"改为
-**"应增长且增长量 == 迁移块数"**：
-```bash
-# Phase 2 expectation: D2D counter MUST increase
-if [[ "${KVBM_D2D_DELTA:-0}" -lt "${EXPECTED_BLOCKS}" ]]; then
-  fail "Phase 2 regression: kvbm D2D delta ${KVBM_D2D_DELTA} < expected ${EXPECTED_BLOCKS}"
-fi
-```
+**脚本增强**：`test-scripts/test-s3.sh` 现已发送足够老的请求以示 too-young decline 路径；需新增一轮发送中等老的请求验证 accept 路径 + `replay_tokens` 返回与 prefix-hit-rate 上升。
+
+## P2.2.B S3-v2.B 验收（真 KV-D2D connector · 待 GPU 验证）
+
+| 步骤 | 真实数据来源 | PASS 条件 |
+|---|---|---|
+| `RLScalingMigrationConnector` 被加载 | worker 日志 `[MigrationConnector] feature_enabled=True` | 需 worker 启动 `--enable-real-d2d-migration` |
+| `migrate_out` 响应携 `nixl_handshake_meta` | controller 接收到的 JSON | 字段存在且不为 null |
+| `migrate_in` 走 connector 路径 | migrate_in 响应 `{status:ok, path:"connector"}` | path 字段 = `connector` |
+| `get_num_new_matched_tokens` 被调用 | nvtx range / dst worker 日志 | 返回 `(K, True)`，K == replay_token_count |
+| `start_load_kv` 发起 NIXL pull | dst worker 日志 / nixl agent stats | active_transfers 瞬时 ≥ 1 |
+| 真实 D2D 传输发生 | `kvbm_offload_blocks_d2d` 或 nixl byte counters | 增量 ≥ 迁移块数 × block_size |
+| **没有** recompute-prefill 发生 | dst worker `vllm:num_prompt_tokens_total` | connector 路径的迁移不贡献 |
+| 单请求迁移耗时 (真 D2D) | controller 日志 | NVLink p99 ≤ 15 ms / PCIe p99 ≤ 60 ms |
+| Connector fallback 路径生效 | 人为注入错误 handshake 后 migrate_in 响应 | `path:"recompute"` + worker 警告 `connector path failed` |
+| 输出确定性 | greedy + 固定 seed | 与基线 sha256sum byte-equal |
 
 ## P2.3 端到端 batch 加速基准
 
