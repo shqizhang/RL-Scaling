@@ -1,0 +1,42 @@
+[34m== 0. Discover workers and establish port-forward ==[0m
+  Decode A : vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f42h77g
+  Decode B : vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f4fcxd5
+  Frontend : vllm-v1-disagg-router-frontend-5546cbcc66-nkndq
+  Run dir  : /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/kv-e2e-20260503-135146
+[32m  Frontend reachable at localhost:18004[0m
+[34m== 1. Pre-test KV metric snapshots ==[0m
+  [Decode A pre-test]
+    prompt_tokens_total     = 189
+    generation_tokens_total = 2248
+    kv_cache_usage_perc     = 0%
+    num_requests_running    = 0
+    total_kv_blocks         = 11426
+    tokens_by_source.local_compute   = 125
+    tokens_by_source.external_kv_xfr = 0
+  [Decode B pre-test]
+    prompt_tokens_total     = 170
+    generation_tokens_total = 574
+    kv_cache_usage_perc     = 0%
+    num_requests_running    = 0
+    total_kv_blocks         = 11426
+    tokens_by_source.local_compute   = 106
+    tokens_by_source.external_kv_xfr = 0
+  frontend migration counter: 0
+[34m== 2. Determinism baseline: two identical requests must produce identical text ==[0m
+  Submitting reference run A (max_tokens=30)…
+  A → prompt_tokens=33 completion_tokens=30
+  A text (first 80 chars): <think>
+Okay, the user wants me to count from 1 to 1000, one number per line, an
+  Submitting reference run B (same params)…
+  B text (first 80 chars): <think>
+Okay, the user wants me to count from 1 to 1000, one number per line, an
+[32m  [✓] [J] Determinism: A == B — model output is deterministic at temp=0[0m
+[34m== 3. Live migration: submit long request, catch mid-flight, migrate ==[0m
+  Submitting long request (max_tokens=1500) in background…
+  Polling both decode workers for an active request (timeout=60s)…
+[33mWARN: timeout after 60s — no active request found mid-flight[0m
+[33mWARN: Possible cause: request completed before poll could catch it.[0m
+[33mWARN: Try increasing max_tokens or decreasing RECOMPUTE_WAIT.[0m
+[31mFAIL: Could not catch a live request via migrate_out — see section 3 WARN above.[0m
+port-forward cleaned up
+=== DONE RC=1 ===

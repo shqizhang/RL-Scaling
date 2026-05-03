@@ -1,0 +1,17 @@
+==> target pod: vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f42h77g
+==> run dir:    /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s2-data-20260503-131138
+[34m== 0. Probe /switch_role on vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f42h77g ==[0m
+{"status": "ok", "message": "already in target role", "new_role": "decode", "switch_time_ms": 0.0}
+HTTP=200
+[32m  worker accepts /switch_role (dual-mode is live)[0m
+[32m  current=decode → flipping to prefill[0m
+[34m== 1. POST /switch_role decode → prefill ==[0m
+{"status": "ok", "new_role": "prefill", "switch_time_ms": 133.54284409433603}
+[32m  flip status=ok new_role=prefill[0m
+[34m== 2. Verify orchestrated sequence in worker log ==[0m
+[32m  orchestration markers present: sleep _reconfig_nixl _reconfig_kv_pool wake[0m
+[32m  Phase-2 marker: engine.reset_prefix_cache reached (real KV-pool reconfig)[0m
+[34m== 3. Flip back prefill → decode ==[0m
+{"status": "ok", "new_role": "decode", "switch_time_ms": 70.38041006308049}
+[32m  flip-back ok[0m
+[32mS2 PASSED — see /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s2-data-20260503-131138/summary.md[0m

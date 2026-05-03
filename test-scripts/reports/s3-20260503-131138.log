@@ -1,0 +1,24 @@
+[34m== 0. Discover decode workers ==[0m
+==> SRC=vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f42h77g
+==> DST=vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f4fcxd5
+==> run dir: /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s3-data-20260503-131138
+  /migrate_out probe: SRC HTTP=200  DST HTTP=200
+[34m== 1. Capture pre-test metric snapshots ==[0m
+[32m  pre dynamo_frontend_model_migration_total=0[0m
+[34m== 2. Synthetic migration: migrate_in probe on SRC and DST, migrate_out (best-effort) ==[0m
+{"status": "ok", "request_id": "s3-1777814313", "path": "recompute", "replay_tokens": 22}
+[32m  SRC migrate_in ok[0m
+{"status": "error", "message": "no active requests"}
+[33mWARN: migrate_out: no active requests on SRC (engine idle) — chain not exercised[0m
+{"status": "ok", "request_id": "s3-dst-1777814314", "path": "recompute", "replay_tokens": 25}
+[32m  DST migrate_in ok[0m
+[34m== 2b. Phase-2 cost-benefit gate (too-large /migrate_in is declined) ==[0m
+{"status": "declined", "reason": "replay_total=9017 exceeds max_replay_tokens=8192 (recompute prefill too expensive)", "request_id": "s3-large-1777814314"}
+[32m  cost-benefit gate works (over-large body declined)[0m
+[34m== 3. Capture post-test snapshots and verify invariants ==[0m
+[32m  KVBM block-transfer counters flat on both sides (recompute-prefill ✓)[0m
+[34m== 4. Phase-2.B connector-path probe (skipped if connector_enabled=False) ==[0m
+{"status": "error", "message": "no active requests"}
+[33m  migrate_out did not carry kv_transfer_params — set DYNAMO_RL_CONNECTOR_ENABLED=1 on the SRC worker to enable Phase-2.B.[0m
+[33mWARN: frontend migration counter unchanged (expected for synthetic test, would tick in real e2e)[0m
+[32mS3 PASSED — see /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s3-data-20260503-131138/summary.md[0m

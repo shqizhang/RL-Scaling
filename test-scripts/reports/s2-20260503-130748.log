@@ -1,0 +1,6 @@
+==> target pod: vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f42h77g
+==> run dir:    /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s2-data-20260503-130748
+[34m== 0. Probe /switch_role on vllm-v1-disagg-router-vllmdecodeworker-d1af44b0-7975f6c5f42h77g ==[0m
+{"status": "ok", "message": "already in target role", "new_role": "decode", "switch_time_ms": 0.0}
+HTTP=200
+[32m  worker accepts /switch_role (dual-mode is live)[0m
