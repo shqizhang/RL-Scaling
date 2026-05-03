@@ -249,3 +249,132 @@ NAMESPACE=dynamo-system DGD_NAME=vllm-v1-disagg-router bash test-scripts/test-s3
 
 每次运行结束，归档运行目录，并在顶层 `tutorial/scaling/test-runs.md` 账本中
 追加一行（日期、镜像 SHA、场景、结果、`summary.md` 链接）。
+
+---
+
+# Phase 2 测试计划 — 端到端最优实现
+
+> 配套设计文档：`RL_Scaling_Unified_Design.md` 中的 **Phase 2** 章节
+> (P2.0–P2.5) + `dynamo/RL_SCALING_RUST_CHANGES.md`。
+>
+> Phase 1 测试只验证"控制面正确"。当 Rust + vLLM wrapper 的 Phase 2 改动落地后，
+> 我们额外验证 **数据面正确 + 性能达标**。Phase 1 的脚本 (test-s2.sh /
+> test-s3.sh) 中那些 "stub 是预期" 的断言会被 **取反**。
+
+## P2.0 适用前提
+
+只有当以下镜像 tag 上线后才执行：
+- `dynamo-vllm-runtime:rl-scaling-phase2-*`（包含 R1/R2/R3 + V1/V2/V3）
+- worker 启动参数追加：`--dual-mode --enable-migration --kv-connector rl-scaling`
+- decode replicas ≥ 2（同 Phase 1 §5）
+
+如果上述任一不满足，跳到 Phase 1 章节运行回退测试，并在 `summary.md` 中
+注明 "Phase 2 not applicable: <原因>"。
+
+## P2.1 S2-v2 验收（真实角色翻转）
+
+| 步骤 | 真实数据来源 | Grafana / PromQL | PASS 条件 |
+|---|---|---|---|
+| 翻转后旧角色池实时排空 | `dynamo_frontend_requests_total{worker_id=W,role="<old>"}` | Dynamo 仪表盘 *Frontend per-worker RPS* | 翻转后 5s 内增量 = 0 |
+| 翻转后新角色池接入 | `dynamo_frontend_requests_total{worker_id=W,role="<new>"}` | 同上 | 翻转后 30s 内有非零增量 |
+| KV 池真实缩放 | worker `/metrics` 中 `vllm:cache_config_num_gpu_blocks` | Dynamo *KV pool size* (新增 panel) | 与目标角色比例相符 (±5%) |
+| NIXL 方向已切 | worker `/role` 返回 `nixl_direction` 字段 | curl | 与新角色匹配 (sender↔prefill / receiver↔decode) |
+| 无残留 transfer | `nixl_agent.stats().active_transfers` | Disagg 仪表盘 *NIXL transfers in flight* | 翻转完成后 1s 内归 0 |
+| `WorkerRoleChanged` 路由器收到 | controller 日志 + `dynamo_router_role_changes_total` (新增 metric) | Dynamo *Role changes* | 每次翻转 +1 |
+| Phase 1 stub 标记不应再出现 | worker 日志 | `kubectl logs` | **不应**有 `stubbed; no Rust reconfig API` |
+
+**回归断言**：把 `test-scripts/test-s2.sh` 中
+```
+if grep -qiE 'stubbed; no Rust reconfig API' "${RUN_DIR}/worker-flip.log"; then
+  green "  NIXL/KV-pool stubs reached as expected"
+fi
+```
+改为
+```
+if grep -qiE 'stubbed; no Rust reconfig API' "${RUN_DIR}/worker-flip.log"; then
+  fail "Phase 2 regression: stub message present, real reconfig not wired"
+fi
+```
+
+## P2.2 S3-v2 验收（真实 KV-D2D 迁移）
+
+| 步骤 | 真实数据来源 | Grafana / PromQL | PASS 条件 |
+|---|---|---|---|
+| 真实 D2D 传输发生 | `kvbm_offload_blocks_d2d` 或新增 `kvbm_migrate_request_blocks_total` | KVBM 仪表盘 (新 panel) | 每个迁移请求贡献 ≥ 1 个 block |
+| **没有** recompute-prefill 发生 | 新增 `dynamo_request_recompute_prefill_total` | Dynamo *Recompute prefill* | 增量 = 0 |
+| 单请求迁移耗时 | controller 日志 `migrate_request done in N ms` | Dynamo *Migration time histogram* | NVLink: p99 ≤ 15 ms / PCIe: p99 ≤ 60 ms |
+| 端到端 batch 加速 | wall-clock，开/关迁移对比 | 自定义脚本 (见 §P2.3) | 加速比 ≥ 1.20× |
+| 输出确定性 | greedy + 固定 seed | sha256sum | 与基线 byte-equal |
+| KVBM 块数守恒 | `kvbm_total_blocks` 在迁移前后 | KVBM 仪表盘 | 不变（只是搬位置） |
+| `request_block_map` 一致性 | worker 日志，每次 migrate_out 末尾打印 src_blocks 数 | 日志 | == migrate_in dst_blocks 数 |
+
+**回归断言**：把 `test-scripts/test-s3.sh` 中"KVBM 计数器应保持平稳"改为
+**"应增长且增长量 == 迁移块数"**：
+```bash
+# Phase 2 expectation: D2D counter MUST increase
+if [[ "${KVBM_D2D_DELTA:-0}" -lt "${EXPECTED_BLOCKS}" ]]; then
+  fail "Phase 2 regression: kvbm D2D delta ${KVBM_D2D_DELTA} < expected ${EXPECTED_BLOCKS}"
+fi
+```
+
+## P2.3 端到端 batch 加速基准
+
+新增脚本 `test-scripts/bench-rl-batch.py`（待实现，列入 todo）：
+
+```
+输入: HF dataset 'OpenAssistant/oasst1' 前 256 条 (avg ISL≈400, OSL 0–800)
+固定: temperature=0, seed=42, model=Qwen3-0.6B
+配置:
+  baseline-A: 2x decode worker, no migration, no role switch
+  baseline-B: 2x decode worker, role switch enabled, migration disabled
+  treatment: 2x decode worker, role switch + migration both enabled
+指标:
+  - wall-clock for whole batch
+  - p50/p95/p99 per-request latency
+  - GPU utilization (DCGM)
+  - 总 NIXL D2D bytes
+报表:
+  Markdown 表 + 4 张 PNG（latency CDF, GPU util, throughput, batch time bar）
+```
+
+PASS 条件（最终业务目标）：`treatment.wall_clock` ≤ `baseline-A.wall_clock × 0.80`
+（即 **batch 处理时间 ↓ 20% 以上**），且各请求输出 sha256 与 baseline-A 一致。
+
+## P2.4 测试运行顺序
+
+```
+# 0. 部署 Phase 2 镜像
+bash deploy/RL-Scaling/deploy-dynamo.sh --router \
+     --image-tag rl-scaling-phase2-<sha> \
+     --extra-worker-args "--dual-mode --enable-migration --kv-connector rl-scaling"
+
+# 1. 回归 Phase 1 脚本（验证向下兼容）
+bash test-scripts/test-s1.sh
+bash test-scripts/test-s2.sh   # 此时 Phase 1 stub 断言会变成"未发现 stub"
+bash test-scripts/test-s3.sh
+
+# 2. Phase 2 增强断言版本
+PHASE=2 bash test-scripts/test-s2.sh
+PHASE=2 bash test-scripts/test-s3.sh
+
+# 3. 端到端 batch 基准
+python test-scripts/bench-rl-batch.py \
+     --baseline A,B --treatment full \
+     --out /tmp/rls-bench-$(date +%Y%m%d-%H%M%S)/
+```
+
+## P2.5 当前状态 (cutoff: this commit)
+
+| 任务 | 状态 |
+|---|---|
+| Phase 1 控制面 (S1+S2 stub+S3 recompute) | ✅ 已部署、smoke 通过 |
+| Phase 2 Rust (S2-v2-R1/R2, S3-v2-R1/R2/R3) | ⏳ 待实现 |
+| Phase 2 vLLM wrapper (S2-v2-V1, S3-v2-V1/V2) | ⏳ 待实现 |
+| Phase 2 测试脚本 `test-s{2,3}.sh` 加 PHASE=2 分支 | ⏳ 待实现 |
+| `test-scripts/bench-rl-batch.py` | ⏳ 待实现 |
+
+> 实现顺序建议：先做 S3-v2-R1/R2/R3（risk 最低，已有 transfer_blocks
+> 基础设施）→ S3-v2-V1/V2（vLLM connector，是真正的"未知数"，可能需要
+> 升级到 vLLM 1.1+）→ S2-v2-R1/R2（小改动）→ S2-v2-V1（KV 池缩放，
+> 跟 vLLM 内部 API 强耦合，最容易踩坑）。
+
