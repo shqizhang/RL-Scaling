@@ -1,0 +1,22 @@
+[Unit]
+Description=RL-Scaling auto-rollout watcher (poll GHA, kubectl patch DGD)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust paths if the repo lives elsewhere.
+Environment=POLL_INTERVAL_SECS=60
+Environment=IMAGE_REPO=ghcr.io/shqizhang/dynamo-vllm-runtime
+Environment=NAMESPACE=dynamo-system
+Environment=DGD_NAME=vllm-v1-disagg-router
+Environment=DECODE_REPLICAS=2
+Environment=PREFILL_REPLICAS=1
+ExecStart=%h/IP/RL-Scaling/deploy/auto-rollout/watch-and-rollout.sh
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
