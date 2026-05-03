@@ -31,7 +31,7 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-dynamo-system}"
 DGD_NAME="${DGD_NAME:-vllm-v1-disagg-router}"
-WORKER_PORT="${WORKER_PORT:-9090}"
+WORKER_PORT="${WORKER_PORT:-9091}"
 RUN_DIR="${RUN_DIR:-/tmp/rls-test/s2-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "${RUN_DIR}"
 
@@ -65,8 +65,8 @@ fi
 
 # Detect current role from the probe response (already-in-target reply
 # contains \"new_role\")
-CUR_ROLE="$(echo "${PROBE_OUT}" | grep -oE '"new_role":"(prefill|decode)"' \
-            | head -n1 | sed 's/.*:"\(.*\)"/\1/')"
+CUR_ROLE="$(echo "${PROBE_OUT}" | grep -oE '"new_role":[[:space:]]*"(prefill|decode)"' \
+            | head -n1 | grep -oE '(prefill|decode)')"
 [[ -n "${CUR_ROLE}" ]] || fail "could not parse current role from probe response"
 TARGET_ROLE="prefill"; [[ "${CUR_ROLE}" == "prefill" ]] && TARGET_ROLE="decode"
 green "  current=${CUR_ROLE} → flipping to ${TARGET_ROLE}"
@@ -84,8 +84,8 @@ T1="$(date +%s%3N)"
 echo "${RESP}" | tee "${RUN_DIR}/flip-response.json"
 echo "wall-clock ms: $((T1-T0))" >> "${RUN_DIR}/flip-response.json"
 
-STATUS="$(echo "${RESP}" | grep -oE '"status":"[^"]+"' | head -n1 | cut -d'"' -f4)"
-NEW_ROLE="$(echo "${RESP}" | grep -oE '"new_role":"[^"]+"' | head -n1 | cut -d'"' -f4)"
+STATUS="$(echo "${RESP}" | grep -oE '"status":[[:space:]]*"[^"]+"' | head -n1 | grep -oE '"[^"]+\"$' | tr -d '"')"
+NEW_ROLE="$(echo "${RESP}" | grep -oE '"new_role":[[:space:]]*"[^"]+"' | head -n1 | grep -oE '"[^"]+"$' | tr -d '"')"
 [[ "${STATUS}" == "ok" ]] || fail "flip status=${STATUS}, expected ok"
 [[ "${NEW_ROLE}" == "${TARGET_ROLE}" ]] || fail "new_role=${NEW_ROLE}, expected ${TARGET_ROLE}"
 green "  flip status=ok new_role=${NEW_ROLE}"
@@ -122,7 +122,7 @@ RESP2="$(kubectl -n "${NAMESPACE}" exec "${TARGET_POD}" -- \
     -H 'Content-Type: application/json' \
     -d "{\"target_role\":\"${CUR_ROLE}\"}" || echo "EXEC_FAIL")"
 echo "${RESP2}" | tee "${RUN_DIR}/flip-back.json"
-NR2="$(echo "${RESP2}" | grep -oE '"new_role":"[^"]+"' | head -n1 | cut -d'"' -f4)"
+NR2="$(echo "${RESP2}" | grep -oE '"new_role":[[:space:]]*"[^"]+"' | head -n1 | grep -oE '"[^"]+"$' | tr -d '"')"
 [[ "${NR2}" == "${CUR_ROLE}" ]] || fail "flip-back new_role=${NR2}, expected ${CUR_ROLE}"
 green "  flip-back ok"
 
