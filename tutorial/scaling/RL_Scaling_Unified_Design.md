@@ -4085,7 +4085,15 @@ T+1.3s  publisher.publish_role_changed(...)  (可选)
 T+1.3s  完成 — KV router 下一次拉拉取 metadata 后将该 worker 划入新角色池
 ```
 
-## P2.3 S3-v2：真实 KV-D2D 请求迁移—完全 Python
+## P2.3 S3-v2：真实 KV-D2D 请求迁移—完全 Python (v3.5)
+
+> **v3.5 取代 v3 自写 connector 的设计。** 经 vLLM 0.16 源码贯穿 (见
+> `nixl_connector.py:177-220, 2063-2371` 与 `multi_connector.py:116-118`)
+> 与 dynamo `handlers.py:1577` disagg-PD 路径事实核对：vLLM 自带的
+> `NixlConnector` 已经实现了「按 `kv_transfer_params` 拉远端 KV」的全部逻辑，
+> dynamo `handlers.py` 也已经在用同一套字典做 prefill→decode KV 移交。
+> **migrate_in 唯一需要做的就是把 `kv_transfer_params` 注入到
+> `sampling_params.extra_args`**——零自定义 connector 代码。
 
 ### P2.3.1 事实重构：三段 "缺失能力" 重评估
 
@@ -4093,9 +4101,9 @@ T+1.3s  完成 — KV router 下一次拉拉取 metadata 后将该 worker 划入
 |---|---|---|
 | D: `request_id → Vec<BlockId>` 映射 (Rust request_block_map.rs + PyO3) | `lib/bindings/kvbm/python/kvbm/vllm_integration/kv_cache_manager.py:get_block_ids(rid)` 已存在并暴露。 | **包装到 RequestBlockIndex 辅助类**，供 MigrationHandler 调用。零 Rust。 |
 | E: `MigrateRequestBlocks` ZMQ 消息 + leader API | 迁移是点对点 worker→worker 动作，HTTP `/migrate_out` + `/migrate_in` 已能传递 (rid, dst_block_ids)。 ZMQ broadcast 不是必须。 | 复用已有 HTTP 路径。零 Rust。 |
-| F: vLLM "注入已有 KV 的 sequence" | `KVConnectorBase_V1.get_num_new_matched_tokens(request, n_computed) -> (k, async)` 官方完整跨越 prefill。 `start_load_kv()` 是 NIXL D2D 拉起点。 | **新建 `RLScalingMigrationConnector(KVConnectorBase_V1)`**。 |
+| F: vLLM "注入已有 KV 的 sequence" | vLLM 0.16 自带 `NixlConnector` 已经从 `request.kv_transfer_params` 读 `{do_remote_prefill, remote_engine_id, remote_block_ids, remote_host, remote_port, remote_request_id}` 并自动 NIXL READ pull。 `dynamo handlers.py:1577` 已在用同样字典做 disagg-PD。 | **复用 vLLM NixlConnector + 既有 handlers.py 透传路径**。零自写 connector。 |
 
-### P2.3.2 两档交付：Phase-2.A (recompute+prefix) vs Phase-2.B (真 D2D)
+### P2.3.2 两档交付：Phase-2.A (recompute+prefix) vs Phase-2.B (真 D2D · v3.5)
 
 考虑到真 D2D 需要在 GPU 上反复验证 NIXL handshake，拆为两档交付：
 
@@ -4105,43 +4113,62 @@ T+1.3s  完成 — KV router 下一次拉拉取 metadata 后将该 worker 划入
 - migrate_in 响应携 `replay_tokens` 供控制器计量。
 - migrate_out 响应携 `src_block_ids` (已从 `KvbmCacheManager.get_block_ids` 查出)，为 Phase-2.B 预留接口。
 
-**Phase-2.B (进中中 · 需 GPU 验证)**—真 D2D：
-- 部署 worker 时，`--kv-transfer-config` 同时载入 原有 PdConnector + 新增 RLScalingMigrationConnector (多实例，同 MultiConnector 套路)。
-- migrate_out 调用 `RequestBlockIndex.lookup(rid)` 调出 src_block_ids，连同 source NIXL handshake metadata 一起返回。
-- migrate_in 以 `AsyncLLM.add_request(prompt_token_ids=full, params=..., extra={"migration":...})` 提交， connector 在 `get_num_new_matched_tokens` 返回 `(k=len(replay_prompt), async=True)`，在 `start_load_kv` 中 NIXL-pull src blocks 到新分配的 dst blocks。
+**Phase-2.B (协议层已交付 · feature flag 默认关 · 需 GPU 验证 + 块持留机制)**—真 D2D via vLLM NixlConnector：
+- 集群部署的 worker 已通过 `KvTransferConfig` 加载 `[DynamoConnector, NixlConnector]` (即 dynamo 的 PD-disagg 配置)，**不需要再加新 connector**。
+- `MigrationHandler` 接受 `nixl_meta_provider` 回调，由 `main.py` 从 `engine.vllm_config.kv_transfer_config` 抽出 `{engine_id, host, port}`。
+- migrate_out 用 `RequestBlockIndex.lookup(rid)` 拿 `src_block_ids`，配合 NIXL coords 组装 `kv_transfer_params` 字段返回。
+- migrate_in 把上述 `kv_transfer_params` 字段塞进重投递 payload；handlers 透传到 `sampling_params.extra_args["kv_transfer_params"]`；vLLM scheduler 调度时，`NixlConnectorScheduler.add_new_req_to_recv` 自动把 rid 加入 `reqs_to_recv`，下一个 worker step 触发 `start_load_kv → _read_blocks → make_prepped_xfer("READ", ...)`。
 - 任何环节失败 → fallback 到 Phase-2.A recompute 路径 (try/log/continue)。
+- **当前默认 `connector_enabled=False`**: 因为 migrate_out 现在直接 `abort_request`，源端 KV 块在 dst NIXL READ 完成前就被释放。正确做法是让源端 connector 进入"延迟释放"状态（参考 vLLM disagg-PD 的 `request_finished -> (True, None)` + `get_finished` 模式，dynamo `connector_leader.py:226-244` 已实现），等到 NIXL send-completion notification 后才释放。该机制需要 GPU 在线验证后才能开闸。
 
-### P2.3.3 Phase-2.B 代码位置清单
+### P2.3.3 Phase-2.B 代码位置清单 (v3.5)
 
 | ID | 文件 | 改动 | 状态 |
 |---|---|---|---|
-| S3-v2-P1 | `components/src/dynamo/vllm/migration_connector.py` (新增) | `RLScalingMigrationConnector(KVConnectorBase_V1)` · 网格贴出下面骨架 | **骨架已交付** |
-| S3-v2-P2 | `components/src/dynamo/vllm/migration.py` · RequestBlockIndex | wraps `KvbmCacheManager.get_block_ids(rid)` | **已交付** |
-| S3-v2-P3 | `components/src/dynamo/vllm/migration.py` · migrate_out | 包含 `src_block_ids` + `nixl_handshake_meta` 在响应中 | **已交付** |
-| S3-v2-P4 | `components/src/dynamo/vllm/migration.py` · migrate_in | try connector path → fallback recompute | **已交付** (connector 路径 在验证阶段封存 fallback) |
-| S3-v2-P5 | main.py 注册 | 如果 `--enable-real-d2d-migration`，将 connector 插入 kv-transfer-config | 待 GPU 环境验证后开 |
+| S3-v2-P1 | `components/src/dynamo/vllm/migration.py` · RequestBlockIndex | wraps `KvbmCacheManager.get_block_ids(rid)` | **已交付** |
+| S3-v2-P2 | `components/src/dynamo/vllm/migration.py` · migrate_out | 包含 `src_block_ids` + `kv_transfer_params` (vLLM 0.16 schema) 在响应中 | **已交付 (v3.5)** |
+| S3-v2-P3 | `components/src/dynamo/vllm/migration.py` · migrate_in | 当 `connector_enabled` 且 body 含 `kv_transfer_params` 时注入到 payload，触发 vLLM NixlConnector READ | **已交付 (v3.5)** |
+| S3-v2-P4 | `components/src/dynamo/vllm/main.py` | 把 `nixl_meta_provider=lambda: {...}` 注入 MigrationHandler；从 `engine.vllm_config.kv_transfer_config.{engine_id, nixl_side_channel_host, nixl_side_channel_port}` 抽 | ⚠️ 集群侧装配 |
+| S3-v2-P5 | `components/src/dynamo/vllm/handlers.py` 提交路径 | 透传 `payload["kv_transfer_params"]` → `sampling_params.extra_args["kv_transfer_params"]` (复用 line 1577 已有逻辑) | ⚠️ 需 generate handler 验证复用 |
+| S3-v2-P6 | 源端块持留 | 替换 `abort_request` 为 "mark_for_migration" 状态；改 `connector_leader.py` 加 migration-pinned slot；NIXL completion 才真正释放 | ⏳ GPU 验证后实现 |
 
-### P2.3.4 迁移时序（Phase-2.B 真 D2D · v3）
+❌ **作废**: `components/src/dynamo/vllm/migration_connector.py` —— v3 中的自写
+`RLScalingMigrationConnector(KVConnectorBase_V1)`。已删除。理由：vLLM
+0.16 的 `NixlConnector` 已含全部 NIXL READ pull 逻辑。
+
+### P2.3.4 迁移时序（Phase-2.B 真 D2D · v3.5 · 当 connector_enabled=True 且 GPU 验证后）
 
 ```
 T+0.0  controller: POST W2/migrate_out {rid:r1, dst:W4}
 T+0.0  W2.MigrationHandler.migrate_out(rid):
-         src_block_ids = block_index.lookup(rid)            # 复用已有 get_block_ids
-         tracker.abort_request(rid)
-         return {status:ok, src_block_ids, nixl_handshake_meta, sampling_params, ...}
+         src_block_ids = block_index.lookup(rid)            # 复用 get_block_ids
+         nixl_coords  = nixl_meta_provider()                # 从 KvTransferConfig 取
+         tracker.mark_for_migration(rid)                     # ⏳ 待实现 (P6)；当前是 abort_request
+         return {
+           status:ok, sampling_params,
+           src_block_ids,
+           kv_transfer_params: {do_remote_prefill:true,
+                                remote_engine_id:..., remote_block_ids:...,
+                                remote_host:..., remote_port:..., remote_request_id:r1}
+         }
 T+0.0  controller: POST W4/migrate_in (身携上面返回体)
 T+0.0  W4.MigrationHandler.migrate_in:
-         tracker.add_decode_only_request(rid, ..., migration_meta={
-           "src_block_ids": ..., "src_handshake": ...,
-         })
-T+0.001 vLLM scheduler step：
-         connector.get_num_new_matched_tokens(request) -> (K=len(prompt+gen), async=True)
-         scheduler 跳过 prefill，调用 connector.start_load_kv(forward_context)
-T+0.002 connector.start_load_kv:
-         NIXL pull src_block_ids -> dst_block_ids (~64 KiB · NVLink ~0.1 ms / PCIe ~5 ms)
-T+0.003 vLLM 第一个新 token 生成
+         payload["kv_transfer_params"] = body["kv_transfer_params"]
+         tracker.submit_request(rid, payload)
+                ↓ handlers.py 把 kv_transfer_params 装入 sampling_params.extra_args
+                ↓ engine.add_request(...)
+T+0.001 vLLM scheduler step:
+         MultiConnector.get_num_new_matched_tokens(req) →
+           NixlConnectorScheduler 看 do_remote_prefill=True →
+           返回 (prompt_len, async=True), 把 rid 加 reqs_to_recv
+T+0.002 NixlConnectorWorker.start_load_kv:
+         _read_blocks_for_req(rid, RemoteMeta(block_ids=src, host, port, engine_id, req_id))
+         → nixl_wrapper.make_prepped_xfer("READ", desc_lists, notif_msg)
+         → NIXL pulls src_block_ids → dst_block_ids (~64 KiB · NVLink ~0.1 ms / PCIe ~5 ms)
+T+0.003 W2 NixlConnector 收到 NIXL completion notif → request_finished(True, None) 释放约束
+T+0.003 vLLM 在 W4 上跑 forward pass、生成第一个新 token
                                     ─────────
-总耗时 ≈ 23 ms (NVLink) vs Phase-2.A recompute+prefix ≈ 30 ms (10× 加速) vs Phase 1 recompute ≈ 100 ms (50×)
+总耗时 ≈ 23 ms (NVLink) vs Phase-2.A recompute+prefix ≈ 30 ms (10×) vs Phase 1 recompute ≈ 100 ms (50×)
 ```
 
 ## P2.4 总改动估算 (v3 · 事实修正后)

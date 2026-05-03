@@ -257,16 +257,23 @@ NAMESPACE=dynamo-system DGD_NAME=vllm-v1-disagg-router bash test-scripts/test-s3
 > 配套设计文档：`RL_Scaling_Unified_Design.md` 中的 **Phase 2** 章节
 > (P2.0–P2.5, v3) + `dynamo/RL_SCALING_PYTHON_CHANGES.md`。
 >
-> v3 修正：Phase 2 **不需 Rust 改动**，按两档交付：
+> v3.5 修正：Phase 2 **不需 Rust 改动 · 不需自写 KVConnector**，按两档交付：
 >   - **Phase-2.A** (已交付 · 零风险)：smart recompute-prefill，靠
 >     `MigrationPolicy` 带 cost-benefit 闸門 + prefix-cache 命中将迁移代价
 >     压到 ~30 ms；`migrate_out` 额外变为携 `src_block_ids` (复用现有
 >     `KvbmCacheManager.get_block_ids` PyO3 API)为 Phase-2.B 预留接口。
->   - **Phase-2.B** (骨架已交付 · 待 GPU 环境验证)：真 KV-D2D 迁移。
->     `RLScalingMigrationConnector` 实现了 vLLM 0.16 KVConnectorBase_V1 的
->     `get_num_new_matched_tokens` / `start_load_kv` 等 hooks；NIXL pull 环节
->     以 `feature_enabled=False` 默认关闭，遇任何异常自动 fallback 到
->     Phase-2.A 路径。
+>   - **Phase-2.B** (协议层已交付 · feature flag 默认关 · 待 GPU 验证)：
+>     **复用 vLLM 0.16 自带 `NixlConnector`**；migrate_out 响应携
+>     `kv_transfer_params` 字段（vLLM 0.16 schema：`do_remote_prefill`,
+>     `remote_engine_id`, `remote_block_ids`, `remote_host`, `remote_port`,
+>     `remote_request_id`），migrate_in 把字典注入到
+>     `sampling_params.extra_args["kv_transfer_params"]`，由 vLLM
+>     `NixlConnectorScheduler.add_new_req_to_recv` 自动处理 → worker
+>     `start_load_kv` 中 `_read_blocks` 发起 NIXL READ。
+>     `MigrationHandler.connector_enabled=False` 是默认安全闸门，因为源端
+>     `abort_request` 当前不延迟释放 block——必须先实现 src-side
+>     block-hold (类比 disagg-PD `request_finished -> (True, None)` +
+>     `get_finished` 模式) 才可在生产打开。
 >
 > Phase 1 脚本中那些 "stub 是预期" 的断言在 Phase 2 中被取反，新增
 > Phase-2.A 新路径的实际事实验证。
@@ -277,12 +284,18 @@ NAMESPACE=dynamo-system DGD_NAME=vllm-v1-disagg-router bash test-scripts/test-s3
 无额外启动参数。与 Phase 1 同一套部署。
 
 **Phase-2.B** 需要：
-- worker 启动参数追加：`--enable-real-d2d-migration`
-- `--kv-transfer-config` 额外加载 `RLScalingMigrationConnector`
+- worker 启动参数包含 `--kv-transfer-config` 把 `[DynamoConnector,
+  NixlConnector]` 串成 `MultiConnector` (即当前 dynamo PD-disagg 配置；不需要
+  额外 connector)
+- `MigrationHandler` 启动时 `connector_enabled=True` 且 `nixl_meta_provider`
+  非空（由 `main.py` 从 `engine.vllm_config.kv_transfer_config.engine_id` /
+  `nixl_side_channel_host` / `nixl_side_channel_port` 抽出）
 - decode replicas ≥ 2
-- 在 GPU 上验证 NIXL handshake 可达后，将 `feature_enabled` 翻为 True
+- **block-hold 机制已实现并 GPU 验证通过**（`MigrationHandler` 不再立即
+  `abort_request`，改为 `mark_for_migration`；源端 connector 在 NIXL
+  send-completion notification 后才释放 block）
 
-如果 Phase-2.B 不具备，跳过 §P2.2.B、以 §P2.2.A 为主验收。
+如果 Phase-2.B 任一前提不具备，跳过 §P2.2.B、以 §P2.2.A 为主验收。
 
 ## P2.1 S2-v2 验收（真实角色翻转 · 全 Python）
 
@@ -321,19 +334,22 @@ fi
 
 **脚本增强**：`test-scripts/test-s3.sh` 现已发送足够老的请求以示 too-young decline 路径；需新增一轮发送中等老的请求验证 accept 路径 + `replay_tokens` 返回与 prefix-hit-rate 上升。
 
-## P2.2.B S3-v2.B 验收（真 KV-D2D connector · 待 GPU 验证）
+## P2.2.B S3-v2.B 验收（vLLM-native KV-D2D · 待 GPU 验证）
 
 | 步骤 | 真实数据来源 | PASS 条件 |
 |---|---|---|
-| `RLScalingMigrationConnector` 被加载 | worker 日志 `[MigrationConnector] feature_enabled=True` | 需 worker 启动 `--enable-real-d2d-migration` |
-| `migrate_out` 响应携 `nixl_handshake_meta` | controller 接收到的 JSON | 字段存在且不为 null |
+| `MigrationHandler` 以 `connector_enabled=True` 启动 | worker 启动日志 / Python 内省 | `MigrationHandler._connector_enabled is True` |
+| `nixl_meta_provider` 返回正确坐标 | worker 启动日志（一次性回显 engine_id/host/port） | host 可 ping 通，port 在 NixlConnector 监听端口范围内 |
+| `migrate_out` 响应携 `kv_transfer_params` | controller 接收到的 JSON | 必含 `do_remote_prefill=true`, `remote_engine_id`, `remote_block_ids`(非空), `remote_host`, `remote_port`, `remote_request_id` 全部字段 |
 | `migrate_in` 走 connector 路径 | migrate_in 响应 `{status:ok, path:"connector"}` | path 字段 = `connector` |
-| `get_num_new_matched_tokens` 被调用 | nvtx range / dst worker 日志 | 返回 `(K, True)`，K == replay_token_count |
-| `start_load_kv` 发起 NIXL pull | dst worker 日志 / nixl agent stats | active_transfers 瞬时 ≥ 1 |
-| 真实 D2D 传输发生 | `kvbm_offload_blocks_d2d` 或 nixl byte counters | 增量 ≥ 迁移块数 × block_size |
-| **没有** recompute-prefill 发生 | dst worker `vllm:num_prompt_tokens_total` | connector 路径的迁移不贡献 |
+| dst worker 把 kv_transfer_params 装进 sampling_params | dst worker debug 日志 | request 提交时日志含 `extra_args.kv_transfer_params` |
+| `NixlConnectorScheduler.add_new_req_to_recv` 被触发 | dst worker 日志 / nvtx | 当 step 看到 `do_remote_prefill=True` 的 req 时，rid 加入 `reqs_to_recv` |
+| `start_load_kv → _read_blocks` 发起 NIXL READ | dst worker 日志 `[NixlConnector] _read_blocks_for_req` 或 nixl agent stats | active_transfers 瞬时 ≥ 1，方向为 READ |
+| 真实 D2D 字节传输发生 | nixl agent byte counters / `kvbm_offload_blocks_d2d` | 增量 ≥ `len(remote_block_ids)` × block_size |
+| **没有** recompute-prefill 发生 | dst worker `vllm:num_prompt_tokens_total` | connector 路径的迁移不贡献 prompt token 计数 |
 | 单请求迁移耗时 (真 D2D) | controller 日志 | NVLink p99 ≤ 15 ms / PCIe p99 ≤ 60 ms |
-| Connector fallback 路径生效 | 人为注入错误 handshake 后 migrate_in 响应 | `path:"recompute"` + worker 警告 `connector path failed` |
+| Connector fallback 路径生效 | 人为：dst 侧 `connector_enabled=False` 后再 migrate_in | `path:"recompute"` |
+| 源端 block-hold 不释放 | 源端 worker 日志 + KVBM block usage gauge | migrate_out 后该 rid 的 block 在 NIXL completion notif 之前不下落（**该测试需在 P6 实现后才有效**） |
 | 输出确定性 | greedy + 固定 seed | 与基线 sha256sum byte-equal |
 
 ## P2.3 端到端 batch 加速基准
