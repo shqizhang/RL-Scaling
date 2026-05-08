@@ -1,2 +1,0 @@
-<think>
-Okay, the user wants me to count from 1 to 1000, one number per line, and only write the numbers

@@ -1,6 +1,0 @@
-==> target pod: vllm-v1-disagg-router-vllmdecodeworker-2ebef696-65f988c9cb9cnkv
-==> run dir:    /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s2-data-20260503-130316
-[34m== 0. Probe /switch_role on vllm-v1-disagg-router-vllmdecodeworker-2ebef696-65f988c9cb9cnkv ==[0m
-Route not found
-HTTP=404
-[31mFAIL: /switch_role not registered on worker — re-deploy with --dual-mode[0m

@@ -1,2 +1,0 @@
-<think>
-Okay, the user wants me to list numbers 1 through 50, one per line, without any text or explanations. Let me
