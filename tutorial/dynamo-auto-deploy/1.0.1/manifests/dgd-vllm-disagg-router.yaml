@@ -1,30 +1,33 @@
 # ============================================================
 # dgd-vllm-disagg-router.yaml — Dynamo 1.0.1 disagg + KV router
 #
-# 直接基于官方示例 (复用):
-#   dynamo/examples/backends/vllm/deploy/disagg_router.yaml @ tag v1.0.1
+# Architecture:
+#   Frontend → KV Router (DYN_ROUTER_MODE=kv)
+#     ├── VllmPrefillWorker (1 GPU, --disaggregation-mode prefill)
+#     └── VllmDecodeWorker  (1 GPU, --disaggregation-mode decode,
+#                            DYNAMO_RL_DUAL_MODE=1 → can flip to prefill
+#                            at runtime via the in-process aiohttp
+#                            sidecar's POST /switch_role).
 #
-# 架构:
-#   Frontend → KV Router (内置 in Frontend, DYN_ROUTER_MODE=kv)
-#     ├── VllmPrefillWorker (1 GPU each, --disaggregation-mode prefill)
-#     └── VllmDecodeWorker  (1 GPU each, --disaggregation-mode decode)
+# RL-Scaling additions on the decode worker:
+#   * DYNAMO_RL_DUAL_MODE=1
+#       Tells dynamo.vllm to wire a Reregistrar + a partner prefill
+#       endpoint so /switch_role can re-publish this worker's MDC under
+#       the prefill URI (true E2E routing flip, not just in-process role
+#       state).
+#   * --kv-transfer-config '{"kv_connector":"NixlConnector",...}'
+#       vLLM 0.16 fixes the kv_transfer connector at engine construction;
+#       it cannot be added later. Wire it at startup so the engine can
+#       act as either decode or prefill after a flip.
+#   * --kv-events-config zmq publisher
+#       Lets the KV router know about cache events from this worker.
 #
-# 1.0.1 正确格式 (与 0.7.1 / 我们旧模板的差异):
-#   ① resources.limits.gpu 在 SERVICE 顶层 (不在 extraPodSpec.mainContainer)
-#   ② 必须显式 command: [python3, -m, dynamo.vllm]
-#   ③ workingDir: /workspace/examples/backends/vllm
-#   ④ Router 模式: env DYN_ROUTER_MODE=kv (不是 DYNAMO_DISAGG_ROUTER_MODE)
-#   ⑤ 仅 Prefill 配置 --kv-transfer-config (kv_role=kv_both 单边模式)
-#   ⑥ --kv-events-config 字段名: publisher / topic / endpoint / enable_kv_cache_events
-#   ⑦ envFromSecret 在 SERVICE 顶层
-#   ⑧ 移除 dynamoNamespace (不存在了)
-#
-# 模板变量 (envsubst):
-#   ${NAMESPACE}         K8s 命名空间
-#   ${RELEASE_VERSION}   Dynamo 镜像 tag (eg 1.0.1)
-#   ${MODEL_NAME}        HF 模型 ID (eg Qwen/Qwen3-0.6B)
-#   ${PREFILL_REPLICAS}  Prefill Worker 副本数
-#   ${DECODE_REPLICAS}   Decode Worker 副本数
+# Template variables (envsubst):
+#   ${NAMESPACE}         K8s namespace
+#   ${RELEASE_VERSION}   Image tag (eg. rl-scaling-844302352d)
+#   ${MODEL_NAME}        HF model id  (eg. Qwen/Qwen3-0.6B)
+#   ${PREFILL_REPLICAS}  Prefill replicas
+#   ${DECODE_REPLICAS}   Decode replicas
 # ============================================================
 apiVersion: nvidia.com/v1alpha1
 kind: DynamoGraphDeployment
@@ -33,7 +36,6 @@ metadata:
   namespace: ${NAMESPACE}
 spec:
   services:
-    # ── Frontend (含 KV Router) ──────────────────────────────
     Frontend:
       componentType: frontend
       replicas: 1
@@ -43,24 +45,32 @@ spec:
       extraPodSpec:
         imagePullSecrets:
           - name: nvcr-imagepullsecret
+          - name: ghcr-imagepullsecret
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          image: ghcr.io/shqizhang/dynamo-vllm-runtime:${RELEASE_VERSION}
           imagePullPolicy: IfNotPresent
 
-    # ── VllmDecodeWorker ────────────────────────────────────
-    # --disaggregation-mode decode: 仅接收 Prefill 完成的 KV 后启动 decode
     VllmDecodeWorker:
       envFromSecret: hf-token-secret
       componentType: worker
       replicas: ${DECODE_REPLICAS}
+      envs:
+        # RL-Scaling: turn on the dual-mode partner endpoint so
+        # /switch_role truly re-registers this worker's MDC under the
+        # prefill URI (not just in-process state).
+        - name: DYNAMO_RL_DUAL_MODE
+          value: "1"
+        - name: DYNAMO_RL_SIDECAR_PORT
+          value: "9091"
       resources:
         limits:
           gpu: "1"
       extraPodSpec:
         imagePullSecrets:
           - name: nvcr-imagepullsecret
+          - name: ghcr-imagepullsecret
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          image: ghcr.io/shqizhang/dynamo-vllm-runtime:${RELEASE_VERSION}
           imagePullPolicy: IfNotPresent
           workingDir: /workspace/examples/backends/vllm
           command:
@@ -72,11 +82,14 @@ spec:
             - ${MODEL_NAME}
             - --disaggregation-mode
             - decode
+            # vLLM 0.16 fixes kv_transfer at engine construction; wire
+            # NixlConnector now so the engine can also act as prefill
+            # after a hot role flip.
+            - --kv-transfer-config
+            - '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
+            - --kv-events-config
+            - '{"publisher":"zmq","topic":"kv-events","endpoint":"tcp://*:20080","enable_kv_cache_events":true}'
 
-    # ── VllmPrefillWorker ───────────────────────────────────
-    # --disaggregation-mode prefill: 仅执行 prefill 后将 KV Cache 推送
-    # NixlConnector kv_role=kv_both: 在 1.0.1 + NIXL 单边语义下 prefill 端配置即可
-    # ZMQ KV Events: 广播槽位/容量给 KV Router
     VllmPrefillWorker:
       envFromSecret: hf-token-secret
       componentType: worker
@@ -87,8 +100,9 @@ spec:
       extraPodSpec:
         imagePullSecrets:
           - name: nvcr-imagepullsecret
+          - name: ghcr-imagepullsecret
         mainContainer:
-          image: nvcr.io/nvidia/ai-dynamo/vllm-runtime:${RELEASE_VERSION}
+          image: ghcr.io/shqizhang/dynamo-vllm-runtime:${RELEASE_VERSION}
           imagePullPolicy: IfNotPresent
           workingDir: /workspace/examples/backends/vllm
           command:
