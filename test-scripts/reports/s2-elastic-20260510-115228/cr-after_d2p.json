@@ -1,0 +1,64 @@
+{
+    "apiVersion": "nvidia.com/v1alpha1",
+    "kind": "DynamoWorkerMetadata",
+    "metadata": {
+        "creationTimestamp": "2026-05-10T07:31:11Z",
+        "generation": 7,
+        "name": "vllm-v1-disagg-router-vllmdecodeworker-f5d52951-597f6997d5wmrpf",
+        "namespace": "dynamo-system",
+        "ownerReferences": [
+            {
+                "apiVersion": "v1",
+                "blockOwnerDeletion": false,
+                "controller": true,
+                "kind": "Pod",
+                "name": "vllm-v1-disagg-router-vllmdecodeworker-f5d52951-597f6997d5wmrpf",
+                "uid": "585a31f1-fe1f-4d80-94c4-25b1f8ab3fb2"
+            }
+        ],
+        "resourceVersion": "8509439",
+        "uid": "10311e0e-2520-4bab-8e9a-5008897de042"
+    },
+    "spec": {
+        "data": {
+            "endpoints": {
+                "dynamo-system-vllm-v1-disagg-router-f5d52951/backend/clear_kv_blocks/189c6807add364": {
+                    "component": "backend",
+                    "endpoint": "clear_kv_blocks",
+                    "instance_id": 6927370060419940,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-f5d52951",
+                    "transport": {
+                        "tcp": "10.244.0.118:45609/189c6807add364/clear_kv_blocks"
+                    },
+                    "type": "Endpoint"
+                },
+                "dynamo-system-vllm-v1-disagg-router-f5d52951/backend/generate/189c6807add364": {
+                    "component": "backend",
+                    "endpoint": "generate",
+                    "instance_id": 6927370060419940,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-f5d52951",
+                    "transport": {
+                        "tcp": "10.244.0.118:45609/189c6807add364/generate"
+                    },
+                    "type": "Endpoint"
+                }
+            },
+            "event_channels": {
+                "dynamo-system-vllm-v1-disagg-router-f5d52951//kv_metrics/189c6807add364": {
+                    "component": "",
+                    "instance_id": 6927370060419940,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-f5d52951",
+                    "topic": "kv_metrics",
+                    "transport": {
+                        "config": {
+                            "subject_prefix": "namespace.dynamo-system-vllm-v1-disagg-router-f5d52951"
+                        },
+                        "kind": "Nats"
+                    },
+                    "type": "EventChannel"
+                }
+            },
+            "model_cards": {}
+        }
+    }
+}
