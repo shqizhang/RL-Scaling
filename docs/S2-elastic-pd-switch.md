@@ -44,28 +44,52 @@ chat attribution via Prometheus counters).
 
 ### 2.1 What `switch_role` is and is not
 
-The current implementation does **decode-pool elasticity** — it flips a
-decoder pod between "in the chat WorkerSet" and "out of the chat
-WorkerSet". It is **not** a true PD identity swap (prefill <-> decode)
-because:
+The current implementation supports two operating modes, selected at
+deploy-time per-pod by `DYNAMO_RL_DUAL_PARTNER_PREFILL`:
 
 | capability                                              | this build |
 |---------------------------------------------------------|------------|
 | Re-publish/withdraw the decode `ModelCard` at runtime    | yes        |
 | Pause and resume the engine; free GPU KV (sleep=2)       | yes        |
 | Reset prefix cache to keep KV consistent post-resume     | yes        |
-| Serve as a *first-class* prefill worker after switch     | gated, default OFF |
+| Serve as a *first-class* prefill worker after switch     | yes (when `DYNAMO_RL_DUAL_PARTNER_PREFILL=1`) |
 
-The "partner-prefill" path that would let a freshly switched pod accept
-prefill traffic via the `PrefillRouter` is gated behind
-`DYNAMO_RL_DUAL_PARTNER_PREFILL=1` (default off) because vLLM 0.16
-running with `kv_role=kv_both` and a decode-booted engine returns
-`disaggregated_params=None`, which the prefill router rejects with HTTP
-500 ("No disaggregated params in prefill response"). This was diagnosed
-during S2 bring-up and locked behind an env flag (commit `dbdcdc9c1d`).
+When `DYNAMO_RL_DUAL_PARTNER_PREFILL=1`, the pod boots with vLLM's
+`kv_role=kv_both` NixlConnector, registers a prefill `ModelCard` in
+addition to the decode one, and after `switch_role -> prefill`
+actually serves prefill traffic dispatched by the frontend's
+`PrefillRouter` (see test PASS_PREFILL_SERVING in §5).
 
-For S2 we therefore only need to prove the **chat WorkerSet flip**
-behavior, which is what the test asserts.
+Getting partner-prefill to work end-to-end required two fixes against
+vLLM 0.16 and dynamo's TCP request plane respectively:
+
+1. **Multi-chunk consolidation (commit `a82816c3d6`).** vLLM's
+   `NixlConnector.request_finished()` publishes `kv_transfer_params`
+   only on the FINAL `RequestOutput` chunk, but Rust
+   `kv_router/prefill_router.rs::execute_prefill` reads
+   `disaggregated_params` from the FIRST chunk only. The wrapper
+   `_partner_prefill_generate` consumes the entire stream, captures
+   the last `kv_transfer_params` it sees, and yields ONE consolidated
+   chunk so the router observes the field on chunk #1.
+2. **Single TCP slot dispatcher (commit `fe78f1b652`).** dynamo's
+   `SharedTcpServer` (`lib/runtime/src/pipeline/network/ingress/`
+   `shared_tcp_endpoint.rs`) keys handlers by
+   `{connection_id:x}/{endpoint_name}` where `connection_id` is
+   process-scoped. Registering both `<ns>.backend.generate` (decode)
+   and `<ns>.prefill.generate` (partner-prefill) in the same process
+   collides at key `cid/generate`; the second `handlers.insert(...)`
+   silently overwrites the first via `DashMap`. The MDC TransportType
+   built in `component/endpoint.rs` also encodes only
+   `host:port/{cid:x}/{endpoint_name}`, so the prefill MDC ended up
+   pointing at the same TCP slot as the decode MDC -- and the decode
+   handler (which has no concept of `kv_transfer_params`) ended up
+   serving prefill requests, returning HTTP 500. The fix registers
+   exactly ONE `generate` handler per `(cid, endpoint_name)` and
+   dispatches at request time based on `dual_mode.current_role`.
+
+The `_dual_partner_endpoint` Endpoint object is still constructed (the
+MDC publishing path in `VllmReregistrar.register('prefill')` still uses
+it) but no separate `serve_endpoint` call is made on it.
 
 ### 2.2 Discovery is K8s-CRD-based, not etcd-based
 
@@ -173,12 +197,16 @@ Four pass conditions, all of which must hold for OVERALL=true:
 |--------|----------------------------------------------------------------------------------------------------------------------|
 | `PASS_CR_D2P`  | `kubectl get dynamoworkermetadata <target>` loses the `*/backend/generate/*` `model_card` key after switch -> prefill |
 | `PASS_CR_P2D`  | the same CR regains the `*/backend/generate/*` `model_card` key after revert -> decode                                |
-| `PASS_PROBE`   | 30 chat probes after the switch attribute **0** to TARGET and **>0** to PEER                                          |
-| `PASS_LOAD`    | a background 2 RPS / 30 s chat load spanning the whole switch+revert sequence sees `error_count <= 2`                |
+| `PASS_PROBE`           | 30 chat probes after the switch attribute **0** to TARGET and **>0** to PEER                                          |
+| `PASS_PREFILL_SERVING` | TARGET's `vllm:prompt_tokens_total` grows during the post-switch probe window (proves partner-prefill is actually serving)  |
+| `PASS_LOAD`            | a background 2 RPS / 30 s chat load spanning the whole switch+revert sequence sees `error_count <= 2`                |
 
-The CR assertion is the new one — it does not rely on any inference of
-behavior from chat-routing observations; it reads the discovery
-ground truth straight from the API server.
+The CR assertion gives ground-truth visibility into the discovery layer.
+`PASS_PREFILL_SERVING` is the one that proves the role-aware dispatcher
+fix actually works end-to-end: a positive vLLM `prompt_tokens` delta on
+the target while it is in prefill role can only come from
+`partner_prefill_handler.generate` (because the chat WorkerSet has
+already withdrawn the decode `ModelCard`).
 
 ---
 
@@ -189,25 +217,28 @@ Test environment:
 - single-node K8s 1.34.1 on `gpu14`, namespace `dynamo-system`
 - DGD `vllm-v1-disagg-router`, model `Qwen/Qwen3-0.6B`
 - 1 frontend, 2 decoders, 1 prefill (all `Running`)
-- image `ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-f817b8e5d5`
+- decoder pods launched with `DYNAMO_RL_DUAL_MODE=1` AND
+  `DYNAMO_RL_DUAL_PARTNER_PREFILL=1`
+- image `ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-fe78f1b652`
+  (single-TCP-slot dispatcher fix)
 
 ### 5.1 Switch latency
 
 |                              | decode -> prefill | prefill -> decode |
 |------------------------------|-------------------|-------------------|
-| client wall-clock (ms)       | 270.2             | 516.6             |
-| server total `switch_time_ms`| 229.9             | 479.6             |
-| `sleep`                      | 56.4              | 63.3              |
-| `unregister_mdc`             | 36.8              | 0.1               |
-| `reconfig_nixl`              | 0.2               | 0.1               |
-| `reset_prefix_cache`         | 4.1               | 2.4               |
-| `register_mdc`               | 0.1               | 276.5             |
-| `wake`                       | 132.1             | 137.1             |
+| client wall-clock (ms)       | 433.3             | 457.6             |
+| server total `switch_time_ms`| 388.1             | 418.4             |
+| `sleep`                      | 55.4              | 87.1              |
+| `unregister_mdc`             | 8.0               | 10.2              |
+| `reconfig_nixl`              | 0.1               | 0.2               |
+| `reset_prefix_cache`         | 2.5               | 2.5               |
+| `register_mdc`               | 296.4             | 290.1             |
+| `wake`                       | 25.6              | 28.3              |
 
-The cost difference comes from `register_mdc`: publishing a new
-`ModelCard` into the CR incurs a kube apply round-trip (~280ms in our
-single-node cluster) while the unregister-only direction skips that
-write.
+Both directions now publish a fresh `ModelCard` (the d->p direction
+publishes the prefill MDC; the p->d direction publishes the decode
+MDC), so both round-trips include `register_mdc` cost (~290ms in our
+single-node cluster).
 
 ### 5.2 Router awareness (CR diff on the target)
 
@@ -227,40 +258,52 @@ exactly as required.
 
 After switch -> prefill (target should be 0, peer >0):
 
-- `vllmdecodeworker-...-wmrpf` (TARGET) -> **0**
-- `vllmdecodeworker-...-zh2df` (PEER)   -> **30**
+- `vllmdecodeworker-...-ccjp8x` (TARGET) -> **0**
+- `vllmdecodeworker-...-cntvq8` (PEER)   -> **30**
 
 After revert -> decode (target should be >0, peer >0):
 
-- TARGET -> **19**
-- PEER   -> **11**
+- TARGET -> **17**
+- PEER   -> **13**
 
-The post-revert split (19/11 instead of 15/15) reflects the KvRouter's
-prefix-aware decision: TARGET's prefix cache is empty after the reset,
-so the router prefers TARGET for fresh prompts to balance cache
-warmness across the pool.
+The post-revert split reflects the KvRouter's prefix-aware decision:
+TARGET's prefix cache is empty after the reset, so the router prefers
+TARGET for fresh prompts to balance cache warmness across the pool.
 
-### 5.4 Sustained-load impact (2 RPS, 30 s, spans the whole switch+revert)
+### 5.4 Partner-prefill serving (the fix's smoking gun)
+
+| sample on TARGET                | `vllm:prompt_tokens_total` |
+|---------------------------------|---------------------------:|
+| pre-switch baseline             | 16                         |
+| post 30 prefill probes          | 1265                       |
+| **delta**                       | **1249**                   |
+
+A positive delta during a window in which the chat WorkerSet has
+withdrawn the target's decode `ModelCard` (PASS_CR_D2P=true) can only
+come from `_partner_prefill_generate` being invoked by
+`PrefillRouter`. Combined with PASS_PROBE (30 chat probes returned
+HTTP 200, attributed entirely to PEER) this proves end-to-end that the
+switched pod is now a real prefill worker.
+
+### 5.5 Sustained-load impact (2 RPS, 30 s, spans the whole switch+revert)
 
 | metric                 | value     |
 |------------------------|-----------|
-| total chat completions | 57        |
-| HTTP 200               | 57        |
+| total chat completions | 58        |
+| HTTP 200               | 58        |
 | HTTP non-200           | **0**     |
 | error rate             | 0.00 %    |
-| p50 latency            | 0.070 s   |
-| p99 latency            | 0.585 s   |
+| p50 latency            | 0.069 s   |
+| p99 latency            | 0.721 s   |
 
-Zero errors during a flip+revert cycle. The p99 captures the brief
-window where the switching pod is asleep and the router converges onto
-the survivor; it is bounded under one round-trip.
+Zero errors during a flip+revert cycle.
 
 ### 5.5 Overall
 
-**PASS** — all four conditions hold.
+**PASS** — all five conditions hold.
 
 Raw artifacts:
-[reports/s2-elastic-20260510-115228/REPORT.md](../test-scripts/reports/s2-elastic-20260510-115228/REPORT.md),
+[reports/s2-elastic-20260511-020123/REPORT.md](../test-scripts/reports/s2-elastic-20260511-020123/REPORT.md),
 plus `cr-before.json`, `cr-after_d2p.json`, `cr-after_p2d.json`,
 `switch_d2p.json`, `switch_p2d.json`, `load.csv`,
 `probes_post_d2p.csv`, `probes_post_p2d.csv` in the same directory.
@@ -269,14 +312,16 @@ plus `cr-before.json`, `cr-after_d2p.json`, `cr-after_p2d.json`,
 
 ## 6. Limitations (what S2 explicitly does not claim)
 
-1. **Not a true PD swap.** The "partner-prefill" path is gated off; the
-   pod becomes "asleep + advertising prefill role label" but cannot
-   accept prefill traffic from the `PrefillRouter` until the vLLM 0.16
-   `kv_role=kv_both` decode-engine prefill issue is resolved upstream.
-2. **In-flight requests on the switched pod are aborted.** The S3 work
+1. **In-flight requests on the switched pod are aborted.** The S3 work
    ([S3-request-consolidation.md](S3-request-consolidation.md))
    addresses the orthogonal problem of moving in-flight long requests
    off a pod that is about to switch or be drained.
-3. **Single-node measurements.** Switch latency is dominated by the
+2. **Single-node measurements.** Switch latency is dominated by the
    local kube-apiserver round-trip; multi-node clusters with remote
    apiservers will see proportionally higher `register_mdc` cost.
+3. **Partner-prefill is per-pod opt-in.** A decoder pod must be
+   launched with `DYNAMO_RL_DUAL_MODE=1` AND
+   `DYNAMO_RL_DUAL_PARTNER_PREFILL=1` AND a `kv_both` kv-transfer
+   config to use the role-aware dispatcher; otherwise `switch_role`
+   only flips the chat WorkerSet membership and the pod sleeps idle
+   while in the prefill role.

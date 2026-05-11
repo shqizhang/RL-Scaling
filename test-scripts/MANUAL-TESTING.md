@@ -123,7 +123,7 @@ curl -s localhost:19191/v1/role
 ```bash
 curl -s -X POST localhost:19191/switch_role \
      -H 'content-type: application/json' \
-     -d '{"role":"prefill"}' | jq .
+     -d '{"target_role":"prefill"}' | jq .
 ```
 
 The response returns `status:"ok"` and a per-step duration breakdown (`sleep_ms`, `unregister_mdc_ms`, `reconfig_nixl_ms`, `reset_prefix_cache_ms`, `set_disaggregation_mode_ms`, `register_mdc_ms`, `wake_ms`, `emit_role_changed_ms`).
@@ -152,7 +152,7 @@ echo "TARGET delta = $((TGT_AFTER-TGT_BEFORE))   PEER delta = $((PEER_AFTER-PEER
 ### 3.4 Revert (prefill -> decode)
 
 ```bash
-curl -s -X POST localhost:19191/switch_role -H 'content-type: application/json' -d '{"role":"decode"}' | jq .
+curl -s -X POST localhost:19191/switch_role -H 'content-type: application/json' -d '{"target_role":"decode"}' | jq .
 
 # CR should regain the "/backend/generate" entry
 kubectl -n dynamo-system get dynamoworkermetadatas.nvidia.com \

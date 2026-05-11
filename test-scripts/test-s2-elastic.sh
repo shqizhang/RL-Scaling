@@ -17,7 +17,10 @@
 # Pass criteria:
 #   PASS_CR_D2P:  CR.spec.data.model_cards loses "*/backend/generate/*" after switch
 #   PASS_CR_P2D:  CR.spec.data.model_cards regains "*/backend/generate/*" after revert
-#   PASS_PROBE:   30 chat probes after switch attribute 0 to target, >0 to peer
+#   PASS_PROBE:   30 chat probes after switch attribute 0 to target (chat-decode), >0 to peer
+#   PASS_PREFILL: switched target's vllm:prompt_tokens_total grew during the
+#                 post-switch probe window (proves the partner-prefill role-aware
+#                 dispatcher is actually serving prefill, not just registered)
 #   PASS_LOAD:    sustained 2 rps load over 30 s sees zero HTTP 500 attributable
 #                 to the routing transition (transient sleep window allowed)
 # ============================================================================
@@ -178,6 +181,14 @@ sleep 5
 
 # ----------------------------------------------------------- switch
 log "==== Phase 1: switch_role decode->prefill"
+# Snapshot target's prompt-tokens counter immediately before the switch
+# so PASS_PREFILL_SERVING measures only partner-prefill-attributable
+# growth during the post-switch probe window. Once the role flips to
+# prefill, the chat WorkerSet excludes the target (PASS_CR_D2P), so any
+# subsequent vllm:prompt_tokens delta on the target is by definition
+# served by partner_prefill_handler.generate.
+TARGET_PROMPT_TOKENS_BEFORE=$(read_pod_chat_count "${TARGET_POD}")
+log "target vllm:prompt_tokens_total pre-switch baseline = ${TARGET_PROMPT_TOKENS_BEFORE}"
 T0=$(date +%s.%N)
 SW1=$(curl -fsS -m 60 -X POST -H "Content-Type: application/json" \
   --data '{"target_role":"prefill"}' \
@@ -212,6 +223,24 @@ TARGET_HITS_AFTER="${POST_HITS[$TARGET_POD]}"
 PEER_HITS_AFTER="${POST_HITS[$PEER_POD]}"
 PASS_PROBE="false"
 [[ "${TARGET_HITS_AFTER}" -eq 0 && "${PEER_HITS_AFTER}" -gt 0 ]] && PASS_PROBE="true"
+
+# ---- PASS_PREFILL_SERVING ---------------------------------------------
+# Re-sample target's vllm:prompt_tokens_total AFTER the prefill-phase
+# probes. Compare against the value sampled just before the switch; the
+# delta must be > 0, which proves the role-aware dispatcher routed traffic
+# through partner_prefill_handler.generate (not the decode handler) on
+# the switched pod. Without the fix, the switched pod silently dropped
+# every prefill request -> 500 from PrefillRouter -> delta would still be
+# nonzero only if the buggy decode path served them, but then the chat
+# layer would have HTTP-errored out (PrefillRouter rejects no-kv chunks
+# with HTTP 500). Combined with the 30/30 200-OK from PASS_PROBE, a
+# positive prompt_tokens delta on TGT proves end-to-end partner-prefill
+# serving.
+TARGET_PROMPT_TOKENS_AFTER=$(read_pod_chat_count "${TARGET_POD}")
+TARGET_PROMPT_DELTA=$(( TARGET_PROMPT_TOKENS_AFTER - TARGET_PROMPT_TOKENS_BEFORE ))
+log "target vllm:prompt_tokens_total: pre-switch=${TARGET_PROMPT_TOKENS_BEFORE}  post-prefill-probe=${TARGET_PROMPT_TOKENS_AFTER}  delta=${TARGET_PROMPT_DELTA}"
+PASS_PREFILL_SERVING="false"
+[[ "${TARGET_PROMPT_DELTA}" -gt 0 ]] && PASS_PREFILL_SERVING="true"
 
 # ----------------------------------------------------------- revert
 log "==== Phase 2: revert prefill->decode"
@@ -264,7 +293,8 @@ PASS_LOAD="false"; [[ "${N200}" -gt 0 && "${NERR}" -le 2 ]] && PASS_LOAD="true"
 # ----------------------------------------------------------- report
 PASS="false"
 [[ "${PASS_CR_D2P}" == "true" && "${PASS_CR_P2D}" == "true" \
-   && "${PASS_PROBE}" == "true" && "${PASS_LOAD}" == "true" ]] && PASS="true"
+   && "${PASS_PROBE}" == "true" && "${PASS_LOAD}" == "true" \
+   && "${PASS_PREFILL_SERVING}" == "true" ]] && PASS="true"
 
 cat > "${OUT}/REPORT.md" <<REPORT_EOF
 # S2 Elastic PD switch — E2E test report (${TS})
@@ -305,6 +335,22 @@ $(for p in "${DECODE_PODS[@]}"; do echo "- \`${p}\` -> ${REV_HITS[$p]}"; done)
 
 * Routing flipped off target then back: **${PASS_PROBE}**
 
+## Partner-prefill serving (target served real prefill traffic)
+
+When \`DYNAMO_RL_DUAL_PARTNER_PREFILL=1\`, after \`switch_role -> prefill\`
+the target pod must serve prefill requests via
+\`_partner_prefill_generate\`, not the decode handler. We assert this
+by measuring the growth of vLLM's own \`vllm:prompt_tokens_total\`
+counter on the target across the post-switch probe window:
+
+| sample                              | vllm:prompt_tokens_total (target) |
+|-------------------------------------|----------------------------------:|
+| pre-switch baseline                 | ${TARGET_PROMPT_TOKENS_BEFORE}    |
+| post-prefill-probes                 | ${TARGET_PROMPT_TOKENS_AFTER}     |
+| delta (must be > 0)                 | ${TARGET_PROMPT_DELTA}            |
+
+* Switched target served real prefill traffic: **${PASS_PREFILL_SERVING}**
+
 ## Sustained-load impact (${LOAD_RPS} rps, ${LOAD_DUR} s)
 
 | metric                 | value     |
@@ -333,6 +379,6 @@ $(cat "${OUT}/switch_p2d.json")
 REPORT_EOF
 
 log "REPORT: ${OUT}/REPORT.md"
-log "PASS_CR_D2P=${PASS_CR_D2P}  PASS_CR_P2D=${PASS_CR_P2D}  PASS_PROBE=${PASS_PROBE}  PASS_LOAD=${PASS_LOAD}"
+log "PASS_CR_D2P=${PASS_CR_D2P}  PASS_CR_P2D=${PASS_CR_P2D}  PASS_PROBE=${PASS_PROBE}  PASS_LOAD=${PASS_LOAD}  PASS_PREFILL_SERVING=${PASS_PREFILL_SERVING}"
 log "OVERALL=${PASS}"
 [[ "${PASS}" == "true" ]] && exit 0 || exit 1

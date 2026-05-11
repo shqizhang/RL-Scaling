@@ -286,20 +286,21 @@ the per-step ms ends up in the JSON response under `timings_ms`:
 
 |                          | decode -> prefill | prefill -> decode |
 |--------------------------|------------------:|------------------:|
-| sleep                    | 56.4              | 63.3              |
-| unregister_mdc           | 36.8              | 0.1*              |
-| reconfig_nixl            | 0.2               | 0.1               |
-| reset_prefix_cache       | 4.1               | 2.4               |
-| register_mdc             | 0.1*              | 276.5             |
-| wake                     | 132.1             | 137.1             |
-| **server total**         | **229.9**         | **479.6**         |
-| client wall-clock        | 270.2             | 516.6             |
+| sleep                    | 55.4              | 87.1              |
+| unregister_mdc           | 8.0               | 10.2              |
+| reconfig_nixl            | 0.1               | 0.2               |
+| reset_prefix_cache       | 2.5               | 2.5               |
+| register_mdc             | 296.4             | 290.1             |
+| wake                     | 25.6              | 28.3              |
+| **server total**         | **388.1**         | **418.4**         |
+| client wall-clock        | 433.3             | 457.6             |
 
-* The asymmetry comes from `endpoints_by_role`: the prefill role has no
-  local endpoints in this build (partner-prefill is gated off, see §3.6),
-  so `register_mdc` for `prefill` is a no-op log line; it still has to
-  `apply_cr` the *removal* of the decode card, which is what
-  `unregister_mdc` did at step (2).
+With partner-prefill enabled (§3.6) both directions publish a fresh
+`ModelCard` (the d->p direction publishes the prefill MDC; the p->d
+direction publishes the decode MDC), so both round-trips include
+`register_mdc` cost (~290ms in our single-node cluster). Earlier builds
+that ran with partner-prefill gated off had an asymmetric cost profile
+because the `prefill` role had no MDC to publish.
 
 ### 3.5 KV / prefix-cache consistency
 
@@ -320,17 +321,82 @@ So the orchestration **must** reset the prefix cache during the asleep
 window. The cost is small (1-4 ms here) because it is purely an
 in-memory hash map flush.
 
-### 3.6 What this implementation deliberately does NOT do
+### 3.6 Partner-prefill: how a switched pod actually serves prefill
 
-The "switched-to-prefill" pod becomes a **warm spare with the prefill
-role label**, not a serving prefill worker. The reason is a vLLM 0.16
-limitation: with `kv_role=kv_both`, a decode-booted engine returning a
-prefill response synthesizes `disaggregated_params=None`, and Dynamo's
-`PrefillRouter` rejects that with HTTP 500 ("No disaggregated params
-in prefill response"). To prevent this poisoning the prefill router,
-the partner-prefill registration is gated behind
-`DYNAMO_RL_DUAL_PARTNER_PREFILL=1` (default off). This is documented
-in the manifest envs and in [S2-elastic-pd-switch.md §2.1](S2-elastic-pd-switch.md#21-what-switch_role-is-and-is-not).
+With `DYNAMO_RL_DUAL_PARTNER_PREFILL=1`, after `switch_role -> prefill`
+the pod is a **first-class prefill worker** that the frontend's
+`PrefillRouter` will dispatch traffic to. The verified probe shows
+`vllm:prompt_tokens_total` on the switched target growing by 1249
+across 30 chat probes while the chat WorkerSet has the target
+withdrawn (S2 test PASS_PREFILL_SERVING).
+
+Getting this to work end-to-end required two non-obvious fixes:
+
+**(a) Multi-chunk consolidation (commit `a82816c3d6`).**
+vLLM 0.16's `NixlConnector.request_finished()`
+([nixl_connector.py L780-855]) publishes `kv_transfer_params` only on
+the FINAL `RequestOutput` chunk for a request. Dynamo's Rust
+`PrefillRouter::execute_prefill`
+([lib/llm/src/kv_router/prefill_router.rs L376-465]) reads
+`first_output.data.disaggregated_params` from the FIRST chunk only.
+Missing the field -> `NoDisaggregatedParams` -> HTTP 500. The wrapper
+`_partner_prefill_generate` consumes the entire stream, captures the
+last `kv_transfer_params` it observes, and yields ONE consolidated
+chunk so the router sees the field on chunk #1.
+
+**(b) Single TCP slot dispatcher (commit `fe78f1b652`).**
+Dynamo's `SharedTcpServer`
+([lib/runtime/src/pipeline/network/ingress/shared_tcp_endpoint.rs])
+keys handlers in a `DashMap` by
+`endpoint_path = format!("{instance_id:x}/{endpoint_name}")`. The
+`instance_id` is `endpoint.drt().connection_id()`
+([component/endpoint.rs L72]) which is **process-scoped**: every
+endpoint in the same DistributedRuntime sees the same `cid`.
+
+A naive partner-prefill registration would call
+`generate_endpoint.serve_endpoint(handler.generate, ...)` AND
+`_dual_partner_endpoint.serve_endpoint(_partner_prefill_generate, ...)`
+in the same process. Both register at TCP key `{cid:x}/generate`. The
+second `handlers.insert(...)` silently overwrites the first via
+`DashMap`. The MDC `TransportType` built in `component/endpoint.rs`
+also encodes `host:port/{cid:x}/{endpoint_name}` only -- so the
+prefill `ModelCard` published into the discovery layer points at the
+same TCP slot as the decode card. After the switch, prefill traffic
+from `PrefillRouter` arrived at the wrong handler -- usually the plain
+decode handler, which has no concept of `kv_transfer_params` and
+emitted `disaggregated_params=None` on every chunk -> HTTP 500.
+
+The fix: register **exactly ONE** TCP handler per
+`(cid, endpoint_name)` and dispatch at request time:
+
+```python
+async def _generate_dispatch(request, context):
+    dm = getattr(handler, "_rl_dual_mode", None)
+    if (
+        partner_prefill_handler is not None
+        and dm is not None
+        and getattr(dm, "current_role", "decode") == "prefill"
+    ):
+        async for chunk in _partner_prefill_generate(request, context):
+            yield chunk
+        return
+    async for chunk in handler.generate(request, context):
+        yield chunk
+```
+
+The `_dual_partner_endpoint` Endpoint object is still constructed
+(`VllmReregistrar.register('prefill')` needs it to publish the prefill
+MDC via `register_vllm_model`) but no `serve_endpoint` call is made on
+it; the published prefill MDC's transport URL points at
+`{cid:x}/generate`, exactly what the dispatcher handles.
+
+DualMode flips `current_role` inside `DualModeWorker.switch_role`
+between steps (3) `unregister_mdc` and (6) `register_mdc`, so the
+dispatcher routes correctly the moment the new MDC is observable.
+
+When partner-prefill is disabled (`DYNAMO_RL_DUAL_PARTNER_PREFILL`
+unset), the registered handler is plain `handler.generate` and the
+pod behaves as in earlier S2 builds (decode-pool elasticity only).
 
 ---
 
