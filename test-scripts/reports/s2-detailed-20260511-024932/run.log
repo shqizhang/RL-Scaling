@@ -1,0 +1,72 @@
+[02:49:32] TARGET   = vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489ccjp8x
+[02:49:32] PEER     = vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489cntvq8
+[02:49:32] PREFILL  = vllm-v1-disagg-router-vllmprefillworker-7663d0d2-64b454bd59px5d
+[02:49:32] FRONTEND = vllm-v1-disagg-router-frontend-76457f997c-twkp9
+[02:49:34] warming model with 2 chats
+[02:49:36] ================================================================
+[02:49:36] PHASE 0: PRE-SWITCH STATE CAPTURE
+[02:49:36] ================================================================
+[02:49:36] --- TARGET CR before switch ---
+  model_cards:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/generate/b63356c1f6a36  model_type=?
+  endpoints:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/clear_kv_blocks/b63356c1f6a36
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/b63356c1f6a36
+[02:49:36] --- PEER CR ---
+  model_cards:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/4e686ad906f72  model_type=?
+  endpoints:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/clear_kv_blocks/4e686ad906f72
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/4e686ad906f72
+[02:49:37] --- PREFILL worker CR ---
+  model_cards:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/generate/14c58707c7f9a6  model_type=?
+  endpoints:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/clear_kv_blocks/14c58707c7f9a6
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/generate/14c58707c7f9a6
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/worker_kv_indexer_query_dp0/14c58707c7f9a6
+[02:49:37] --- TARGET pod labels before switch ---
+[02:49:37] --- TARGET sidecar /v1/role ---
+{"current_role": "prefill"}
+[02:49:37] --- Metrics baseline ---
+[02:49:37] prompt_tokens: TARGET=691  PEER=1634  PREFILL=2325
+[02:49:37] --- Pre-switch chat probes (10 requests, both decoders should share) ---
+[02:49:37]   pre-1: finish_reason=length
+[02:49:37]   pre-2: finish_reason=length
+[02:49:37]   pre-3: finish_reason=length
+[02:49:38]   pre-4: finish_reason=length
+[02:49:38]   pre-5: finish_reason=length
+[02:49:38]   pre-6: finish_reason=length
+[02:49:38]   pre-7: finish_reason=length
+[02:49:38]   pre-8: finish_reason=length
+[02:49:38]   pre-9: finish_reason=length
+[02:49:38]   pre-10: finish_reason=length
+[02:49:38] prompt_tokens after pre-probes: TARGET=0Δ  PEER=141Δ
+[02:49:38] frontend log line count pre-switch: 1173
+[02:49:38] ================================================================
+[02:49:38] PHASE 1: SWITCH decode -> prefill
+[02:49:38] ================================================================
+[02:49:38] TARGET prompt_tokens baseline (immediately pre-switch): 691
+{
+    "status": "ok",
+    "message": "already in target role",
+    "new_role": "prefill",
+    "switch_time_ms": 0.0,
+    "timings_ms": {}
+}
+[02:49:39] switch latency: wall=39.9ms
+[02:49:42] --- TARGET CR after switch to prefill ---
+  model_cards:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/generate/b63356c1f6a36  model_type=?
+  endpoints:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/clear_kv_blocks/b63356c1f6a36
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/b63356c1f6a36
+[02:49:42] --- TARGET pod labels after switch ---
+[02:49:42] --- TARGET sidecar /v1/role after switch ---
+{"current_role": "prefill"}
+[02:49:42] --- CR diff (model_cards: pre-switch vs post-switch) ---
+REMOVED model_cards (no longer discoverable by router):
+ADDED model_cards (now discoverable by router):
+UNCHANGED:
+    dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/generate/b63356c1f6a36
+[02:49:42] --- Frontend logs showing WorkerSet update ---

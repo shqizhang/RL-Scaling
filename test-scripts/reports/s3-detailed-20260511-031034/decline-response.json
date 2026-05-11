@@ -1,0 +1,5 @@
+{
+    "status": "declined",
+    "reason": "replay_total=9050 exceeds max_replay_tokens=8192 (recompute prefill too expensive)",
+    "request_id": "synthetic-oversize-test"
+}

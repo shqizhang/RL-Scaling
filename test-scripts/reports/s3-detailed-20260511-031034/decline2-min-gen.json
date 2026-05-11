@@ -1,0 +1,5 @@
+{
+    "status": "declined",
+    "reason": "generated_tokens=2 below min_generated_tokens=16 (request too young to benefit)",
+    "request_id": "synthetic-too-few-gen"
+}

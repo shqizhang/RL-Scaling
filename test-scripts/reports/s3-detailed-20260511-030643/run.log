@@ -1,0 +1,29 @@
+[03:06:43] TARGET   = vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489ccjp8x
+[03:06:43] PEER     = vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489cntvq8
+[03:06:43] FRONTEND = vllm-v1-disagg-router-frontend-76457f997c-twkp9
+[03:06:44] warming model
+[03:06:47] ================================================================
+[03:06:47] PHASE 0: BASELINE — no load
+[03:06:47] ================================================================
+[03:06:47] metrics[T0_baseline]: tgt_gpu=0% peer_gpu=0% tgt_run=0 peer_run=0 tgt_gen=13098 peer_gen=14310
+[03:06:47] TARGET active requests: []
+[03:06:47] PEER   active requests: []
+[03:06:47] ================================================================
+[03:06:47] PHASE 1: Scheduling 8 long-running chat requests
+[03:06:47] ================================================================
+[03:06:47] Sending 8 streaming chats with max_tokens=16384 (long decode)
+[03:06:49] Waiting 3s for requests to start generating...
+[03:06:52] metrics[T1_after_schedule]: tgt_gpu=0% peer_gpu=0% tgt_run=4 peer_run=4 tgt_gen=18047 peer_gen=19278
+[03:06:52] TARGET active requests (4): ["a686471b-ce6d-48cf-be46-5e6074495574", "334bc0bb-984b-415a-805c-8a5c5a7bc26e", "d8bf6f95-1fc0-456b-b8d4-6667ea08a962", "ab98e481-3d12-46b7-8ad8-fe5e2d50cc46"]
+[03:06:52] PEER   active requests (4): ["d09cc4ac-bd80-4348-9282-e10e07db6346", "f4bd488b-3b01-4cb2-ba1f-d221aa23e06f", "386ff72d-3c79-4041-806c-70f773f24843", "6517cc1e-a4ca-430a-82d9-7ec239500e63"]
+[03:06:52] ================================================================
+[03:06:52] PHASE 2: Migrate 3 requests from TARGET → PEER
+[03:06:52] ================================================================
+[03:06:52] --- Migration #1 ---
+[03:06:52]   TARGET active before: 4 requests
+[03:06:52]   → POST /migrate_out {request_id: *}
+[03:06:53]   migrate_out: status=ok request_id=a686471b-ce6d-48cf-be46-5e6074495574
+[03:06:53]     prompt_tokens: 0 tokens
+[03:06:53]     generated_tokens: 1578 tokens
+[03:06:53]     src_block_ids present: no
+[03:06:53]     kv_transfer_params present: no

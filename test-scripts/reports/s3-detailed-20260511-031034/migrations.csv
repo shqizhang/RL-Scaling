@@ -1,0 +1,4 @@
+iter,phase,status,request_id,prompt_len,generated_len,path,replay_tokens,reason
+1,in,ok,72557043-7fce-4bbb-8274-387f85d9ba38,0,1539,recompute,1539,
+2,in,ok,74233113-9ebf-412a-9078-9d93b1fd1973,0,1857,recompute,1857,
+3,in,ok,8a58b7c0-df4c-4f48-af2c-0a7e8f092e84,0,2119,recompute,2119,

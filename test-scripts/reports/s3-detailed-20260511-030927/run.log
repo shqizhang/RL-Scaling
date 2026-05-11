@@ -1,0 +1,71 @@
+[03:09:28] TARGET   = vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489ccjp8x
+[03:09:28] PEER     = vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489cntvq8
+[03:09:28] FRONTEND = vllm-v1-disagg-router-frontend-76457f997c-twkp9
+[03:09:29] warming model
+[03:09:31] ================================================================
+[03:09:31] PHASE 0: BASELINE — no load
+[03:09:31] ================================================================
+[03:09:32] metrics[T0_baseline]: tgt_gpu=0% peer_gpu=0% tgt_run=0 peer_run=0 tgt_gen=27912 peer_gen=32457
+[03:09:32] TARGET active requests: []
+[03:09:32] PEER   active requests: []
+[03:09:32] ================================================================
+[03:09:32] PHASE 1: Scheduling 8 long-running chat requests
+[03:09:32] ================================================================
+[03:09:32] Sending 8 streaming chats with max_tokens=16384 (long decode)
+[03:09:33] Waiting 3s for requests to start generating...
+[03:09:37] metrics[T1_after_schedule]: tgt_gpu=0% peer_gpu=0% tgt_run=4 peer_run=4 tgt_gen=32821 peer_gen=37433
+[03:09:37] TARGET active requests (4): ["58993797-703b-439e-8c5d-941ebc24d2b3", "02fbe429-23fb-4d7d-9ec5-cc7aa04ff88e", "410b387c-e513-460d-8da4-5949900da78d", "1f4c9f02-3a59-4ac7-bb8a-79090e212868"]
+[03:09:37] PEER   active requests (4): ["85d7e3c9-8abd-4e29-bc22-e81a1a884d6b", "b2547b8a-9751-456b-8b98-a8cd4c061cef", "aa8699ae-dc04-4cca-a0e9-a6c05a1397f5", "bdef08d6-1c66-4ee4-96a2-ae6c8ce9516e"]
+[03:09:37] ================================================================
+[03:09:37] PHASE 2: Migrate 3 requests from TARGET → PEER
+[03:09:37] ================================================================
+[03:09:37] --- Migration #1 ---
+[03:09:37]   TARGET active before: 4 requests
+[03:09:37]   → POST /migrate_out {request_id: *}
+[03:09:37]   migrate_out: status=ok request_id=58993797-703b-439e-8c5d-941ebc24d2b3
+[03:09:37]     prompt_tokens: 0 tokens
+[03:09:37]     generated_tokens: 1498 tokens
+[03:09:37]     src_block_ids present: no
+[03:09:37]     kv_transfer_params present: no
+  Prompt tokens (first 10): []...
+  Generated tokens (first 10): [151667, 198, 32313, 11, 279, 1196, 6801, 264, 1602, 11682]...
+  Generated tokens (last 10): ...[4345, 821, 8692, 13, 576, 3070, 67738, 6673, 334, 572]
+  Sampling params: temperature=0.7, max_tokens=16384, top_p=0.95
+[03:09:37]   TARGET active after migrate_out: 3 (was 4, diff=1)
+[03:09:37]   → POST /migrate_in to PEER (replay on destination)
+[03:09:38]   migrate_in: status=ok path=recompute replay_tokens=1498 reason=
+[03:09:38]   PEER active after migrate_in: 4
+[03:09:39] --- Migration #2 ---
+[03:09:39]   TARGET active before: 2 requests
+[03:09:39]   → POST /migrate_out {request_id: *}
+[03:09:39]   migrate_out: status=ok request_id=02fbe429-23fb-4d7d-9ec5-cc7aa04ff88e
+[03:09:39]     prompt_tokens: 0 tokens
+[03:09:39]     generated_tokens: 1914 tokens
+[03:09:39]     src_block_ids present: no
+[03:09:39]     kv_transfer_params present: no
+  Prompt tokens (first 10): []...
+  Generated tokens (first 10): [151667, 198, 32313, 11, 279, 1196, 6801, 264, 11682, 8895]...
+  Generated tokens (last 10): ...[334, 48758, 304, 279, 220, 17, 15, 16, 15, 82]
+  Sampling params: temperature=0.7, max_tokens=16384, top_p=0.95
+[03:09:39]   TARGET active after migrate_out: 0 (was 2, diff=2)
+[03:09:39]   → POST /migrate_in to PEER (replay on destination)
+[03:09:39]   migrate_in: status=ok path=recompute replay_tokens=1914 reason=
+[03:09:39]   PEER active after migrate_in: 3
+[03:09:40] --- Migration #3 ---
+[03:09:41]   TARGET active before: 0 requests
+[03:09:41]   → POST /migrate_out {request_id: *}
+[03:09:41]   migrate_out: status=error request_id=?
+[03:09:41]     prompt_tokens: 0 tokens
+[03:09:41]     generated_tokens: 0 tokens
+[03:09:41]     src_block_ids present: no
+[03:09:41]     kv_transfer_params present: no
+[03:09:41]   migrate_out failed: no active requests
+[03:09:41] Migration summary: ok=2 declined=0 error=1
+[03:09:41] Waiting 5s for recompute-prefill replays to complete on PEER...
+[03:09:46] metrics[T2_after_migrations]: tgt_gpu=0% peer_gpu=0% tgt_run=0 peer_run=0 tgt_gen=34746 peer_gen=41918
+[03:09:46] ================================================================
+[03:09:46] PHASE 3: Verify migration effects
+[03:09:46] ================================================================
+[03:09:46] TARGET active after migrations: 0 (was 4)
+[03:09:46] PEER   active after migrations: 0 (was 4)
+[03:09:46] --- TARGET logs showing request aborts ---

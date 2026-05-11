@@ -1,0 +1,5 @@
+label,tgt_gpu_pct,peer_gpu_pct,tgt_running,peer_running,tgt_gen_total,peer_gen_total,tgt_prompt_total,peer_prompt_total
+T0_baseline,0,0,0,0,34750,41918,2430,13321
+T1_after_schedule,0,0,4,4,39553,47057,2661,13552
+T2_after_migrations,0,0,0,0,42214,52326,2661,19067
+T3_drained,0,0,0,0,42214,52326,2661,19067
