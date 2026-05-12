@@ -1,0 +1,13 @@
+{
+    "status": "ok",
+    "new_role": "decode",
+    "switch_time_ms": 416.86364519409835,
+    "timings_ms": {
+        "sleep": 76.205,
+        "unregister_mdc": 22.957,
+        "reconfig_nixl": 0.07,
+        "reset_prefix_cache": 1.166,
+        "register_mdc": 294.352,
+        "wake": 22.069
+    }
+}

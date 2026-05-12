@@ -153,6 +153,7 @@ echo "iter,phase,status,path,replay_tokens,reason,request_id" > "${OUT}/migratio
 MIG_OK=0
 MIG_ERR=0
 MIG_DECLINED=0
+MIG_CONNECTOR=0
 for i in $(seq 1 "${MIG_LOOPS}"); do
   pre_active=$(active_count "${TGT_SIDE}")
   if [[ "${pre_active}" -le 0 ]]; then
@@ -182,8 +183,24 @@ for i in $(seq 1 "${MIG_LOOPS}"); do
   i_rsn=$(echo "$in_resp"    | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("reason","-").replace(",",";"))')
   printf '%d,migrate_in,%s,%s,%s,%s,%s\n' "$i" "$i_status" "$i_path" "$i_rep" "$i_rsn" "$o_rid" >> "${OUT}/migrations.csv"
   log "iter ${i}: migrate_in  -> status=${i_status} path=${i_path} replay=${i_rep}"
+
+  # Phase-2.B block-hold ack: if migrate_in succeeded, tell the source
+  # to release the held KV blocks.  The /migration_complete endpoint
+  # only exists when connector_enabled=True on the source; when it is
+  # off (Phase-2.A) the abort already happened in migrate_out, so the
+  # call is a harmless no-op.
+  if [[ "${i_status}" == "ok" ]]; then
+    mc_resp=$(curl -fsS -m 10 -X POST -H "Content-Type: application/json" \
+      --data "{\"request_id\":\"${o_rid}\"}" \
+      "http://127.0.0.1:${TGT_SIDE}/migration_complete" 2>/dev/null || echo '{"status":"http_error"}')
+    mc_status=$(echo "$mc_resp" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("status","?"))' 2>/dev/null || echo "?")
+    log "iter ${i}: migration_complete -> status=${mc_status}"
+  fi
+
   case "$i_status" in
-    ok)       MIG_OK=$((MIG_OK+1)) ;;
+    ok)       MIG_OK=$((MIG_OK+1))
+              [[ "${i_path}" == "connector" ]] && MIG_CONNECTOR=$((MIG_CONNECTOR+1))
+              ;;
     declined) MIG_DECLINED=$((MIG_DECLINED+1)) ;;
     *)        MIG_ERR=$((MIG_ERR+1)) ;;
   esac
@@ -251,6 +268,7 @@ in-flight request) and \`POST /migrate_in\` on PEER.
 | outcome              | count          |
 |----------------------|----------------|
 | migrate_in **ok**    | ${MIG_OK}      |
+| — via connector path | ${MIG_CONNECTOR}|
 | migrate_in declined  | ${MIG_DECLINED}|
 | errors               | ${MIG_ERR}     |
 
@@ -293,7 +311,7 @@ $(head -20 "${OUT}/migrations.csv")
 REPORT_EOF
 
 log "REPORT: ${OUT}/REPORT.md"
-log "MIG_OK=${MIG_OK}  MIG_DECLINED=${MIG_DECLINED}  MIG_ERR=${MIG_ERR}"
+log "MIG_OK=${MIG_OK}  MIG_CONNECTOR=${MIG_CONNECTOR}  MIG_DECLINED=${MIG_DECLINED}  MIG_ERR=${MIG_ERR}"
 log "PASS_MIG_OK=${PASS_MIG_OK}  PASS_NO_ERRORS=${PASS_NO_ERRORS}  PASS_GPU_RELEASE=${PASS_GPU_RELEASE}  PASS_DST_TAKEOVER=${PASS_DST_TAKEOVER}  PASS_DECLINE=${PASS_DECLINE}"
 log "OVERALL=${PASS}"
 [[ "${PASS}" == "true" ]] && exit 0 || exit 1

@@ -599,7 +599,7 @@ Tradeoff:
   100-300 ms for a few-thousand-token replay on Qwen3-0.6B; orders of
   magnitude cheaper than letting the request restart.
 
-### 5.4 Phase-2.B (NIXL connector pull) — wire-protocol-ready, gated off
+### 5.4 Phase-2.B (NIXL connector pull) — three-phase block-hold protocol
 
 The wire protocol is fully implemented: `migrate_out` already returns
 `kv_transfer_params` in the shape vLLM 0.16's NixlConnector expects on
@@ -612,25 +612,28 @@ whose `sampling_params.extra_args["kv_transfer_params"]` is set, and
 the `MultiConnector(DynamoConnector + NixlConnector)` chain on PEER
 will issue an async NIXL READ in the next scheduler step.
 
-Why it is gated off (`MigrationPolicy.connector_enabled = False`):
+The source-side block-hold protocol is implemented as a three-phase
+handshake to prevent the abort/free race:
 
-```
-   T0  /migrate_out called on TARGET
-   T1  block_index.lookup(rid) -> src_block_ids = [42, 87, 122]
-   T2  tracker.abort_request(rid)
-        ── KVBM frees blocks 42, 87, 122 SYNCHRONOUSLY ──
-   T3  response returned with src_block_ids = [42, 87, 122]
-   T4  /migrate_in delivered to PEER over HTTP
-   T5  PEER's NixlConnector schedules NIXL READ from
-        TARGET engine's blocks [42, 87, 122]
-        ── BUT TARGET may have already reused them ──
-```
+1. **`migrate_out`** — when `connector_enabled=True` AND KVBM block IDs
+   AND NIXL coordinates are all available, the source defers
+   `abort_request` and records the `request_id` in
+   `_pending_migrations`. Blocks remain pinned.
+2. **`migrate_in`** — the destination injects `kv_transfer_params` and
+   submits the request. NIXL READ pulls KV from the source's pinned
+   blocks.
+3. **`/migration_complete`** — the orchestrator calls this on the source
+   after `migrate_in` succeeds. The source aborts the original request
+   and releases the blocks.
 
-Fixing 2.B requires a **block-hold/ack handshake** on the source side:
-TARGET must keep blocks pinned until PEER acknowledges that the read
-has completed. That handshake is not yet implemented; we ship the
-recompute path as the safe default and leave the connector wire
-protocol in place for the future drop-in.
+A background sweeper force-aborts held migrations after
+`DYNAMO_RL_MIGRATION_HOLD_TIMEOUT` seconds (default 10) to prevent
+block leaks if the orchestrator fails to call `/migration_complete`.
+
+Phase 2.B is enabled via `DYNAMO_RL_CONNECTOR_ENABLED=1` (env var,
+default off). When any prerequisite is missing (no KVBM, no NIXL
+coordinates), `migrate_out` falls back to immediate abort (Phase 2.A)
+and `/migration_complete` becomes a harmless no-op.
 
 ### 5.5 The cost-benefit gate
 
@@ -639,8 +642,8 @@ MigrationPolicy(
     max_replay_tokens   = 8192,   # recompute prefill too expensive
     min_generated_tokens= 16,     # too young to benefit
     min_remaining_tokens= 32,     # would finish faster than migrate
-    connector_enabled   = False,
 )
+# connector_enabled controlled via DYNAMO_RL_CONNECTOR_ENABLED env var
 ```
 
 `migrate_in` runs the gate **before** scheduling the replay. Rejected
@@ -736,7 +739,9 @@ done
   works, but we don't have a single test that does
   "drain via S3 -> switch via S2 -> verify zero token loss". That belongs
   in a follow-up integration test.
-- **Phase-2.B (NIXL pull)**: gated off; no test, by design.
+- **Phase-2.B (NIXL pull)**: three-phase block-hold protocol implemented
+  and exercised in S3 test (falls back to recompute when KVBM
+  unavailable; see S3 doc §5 for details).
 - **Multi-node**: all measurements are single-host loopback; multi-node
   K8s would proportionally inflate `register_mdc` and HTTP RTT costs.
 
@@ -749,8 +754,8 @@ done
 | One DWMD writer per pod | DWMD name == pod name; only the in-pod runtime ever calls `apply_cr`. |
 | ModelCard withdrawal precedes engine sleep effects on routing | `unregister_mdc` is step 2, before `reset_prefix_cache`/`wake`. |
 | Prefix cache cannot be served from freed blocks | `reset_prefix_cache` is step 4, between `sleep` and `wake`. |
-| migrate_out is at-most-once per request | `tracker.abort_request` is synchronous; the registry entry is gone before the response returns. |
-| migrate_in cannot resurrect a request the source still owns | source aborts BEFORE returning kv_transfer_params; for recompute path nothing on the source side persists. |
+| migrate_out is at-most-once per request | `tracker.abort_request` is synchronous; in Phase 2.A the registry entry is gone before the response returns; in Phase 2.B the request is held in `_pending_migrations` until `/migration_complete`. |
+| migrate_in cannot resurrect a request the source still owns | Phase 2.A: source aborts BEFORE returning. Phase 2.B: source holds blocks until `/migration_complete`; the request stays alive but no new tokens are generated. |
 | Cost-benefit gate never silently drops work | `migrate_in` returns `status=declined` with a reason; the operator/controller MUST treat declined as "leave the request to finish in place" (recall: source has aborted only if the migrate_out call was real, not synthetic). |
 | Switch is idempotent under repeated calls | `switch_role` re-reads `current_role`; switching to the same role is a no-op except for the no-op register/unregister kube apply. |
 

@@ -1,0 +1,5 @@
+label,tgt_gpu_pct,peer_gpu_pct,tgt_running,peer_running,tgt_gen_tot,peer_gen_tot
+T0_pre,,,0.0,0.0,0,4
+T1_after_schedule,,,9.0,6.0,18711,19375
+T2_after_migrations,,,0.0,0.0,20294,21517
+T3_drained,,,0.0,0.0,20294,21517

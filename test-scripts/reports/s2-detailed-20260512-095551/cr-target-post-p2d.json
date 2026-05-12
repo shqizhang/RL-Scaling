@@ -1,0 +1,118 @@
+{
+    "apiVersion": "nvidia.com/v1alpha1",
+    "kind": "DynamoWorkerMetadata",
+    "metadata": {
+        "creationTimestamp": "2026-05-12T09:55:19Z",
+        "generation": 14,
+        "name": "vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489c44q7t",
+        "namespace": "dynamo-system",
+        "ownerReferences": [
+            {
+                "apiVersion": "v1",
+                "blockOwnerDeletion": false,
+                "controller": true,
+                "kind": "Pod",
+                "name": "vllm-v1-disagg-router-vllmdecodeworker-7663d0d2-84dc55489c44q7t",
+                "uid": "aa25583c-b987-4469-803d-0adb27ee76ec"
+            }
+        ],
+        "resourceVersion": "8999042",
+        "uid": "203926f4-e683-4e05-9327-fa4ad70543e5"
+    },
+    "spec": {
+        "data": {
+            "endpoints": {
+                "dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/clear_kv_blocks/67b3ff12c8feb": {
+                    "component": "backend",
+                    "endpoint": "clear_kv_blocks",
+                    "instance_id": 1824364419649515,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-7663d0d2",
+                    "transport": {
+                        "tcp": "10.244.0.154:38601/67b3ff12c8feb/clear_kv_blocks"
+                    },
+                    "type": "Endpoint"
+                },
+                "dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/67b3ff12c8feb": {
+                    "component": "backend",
+                    "endpoint": "generate",
+                    "instance_id": 1824364419649515,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-7663d0d2",
+                    "transport": {
+                        "tcp": "10.244.0.154:38601/67b3ff12c8feb/generate"
+                    },
+                    "type": "Endpoint"
+                }
+            },
+            "event_channels": {
+                "dynamo-system-vllm-v1-disagg-router-7663d0d2//kv_metrics/67b3ff12c8feb": {
+                    "component": "",
+                    "instance_id": 1824364419649515,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-7663d0d2",
+                    "topic": "kv_metrics",
+                    "transport": {
+                        "config": {
+                            "subject_prefix": "namespace.dynamo-system-vllm-v1-disagg-router-7663d0d2"
+                        },
+                        "kind": "Nats"
+                    },
+                    "type": "EventChannel"
+                }
+            },
+            "model_cards": {
+                "dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/67b3ff12c8feb": {
+                    "card_json": {
+                        "context_length": 40960,
+                        "display_name": "Qwen/Qwen3-0.6B",
+                        "gen_config": {
+                            "hf_generation_config_json": {
+                                "checksum": "blake3:18b891ec9627c101a441aec842f39c05d9f13df63b4cfd4226594941d977a9a6",
+                                "path": "hf://Qwen/Qwen3-0.6B/generation_config.json"
+                            }
+                        },
+                        "kv_cache_block_size": 16,
+                        "media_decoder": null,
+                        "media_fetcher": null,
+                        "migration_limit": 0,
+                        "model_info": {
+                            "hf_config_json": {
+                                "checksum": "blake3:d873e9bb2bd54ebf6c4a60732887a57c33881cca4b0d92ec5107e9cc4f023660",
+                                "path": "hf://Qwen/Qwen3-0.6B/config.json"
+                            }
+                        },
+                        "model_input": "Tokens",
+                        "model_type": "Chat | Completions",
+                        "prompt_formatter": {
+                            "hf_tokenizer_config_json": {
+                                "checksum": "blake3:4422061cdcb205f75bc448b09f4017f8f2f92f172aeb2cf0248f4ce2f0f360e6",
+                                "path": "hf://Qwen/Qwen3-0.6B/tokenizer_config.json"
+                            }
+                        },
+                        "runtime_config": {
+                            "data_parallel_size": 1,
+                            "data_parallel_start_rank": 0,
+                            "enable_local_indexer": false,
+                            "max_num_batched_tokens": 2048,
+                            "max_num_seqs": 256,
+                            "reasoning_parser": null,
+                            "tool_call_parser": null,
+                            "total_kv_blocks": 11426
+                        },
+                        "slug": "qwen_qwen3-0_6b",
+                        "source_path": "Qwen/Qwen3-0.6B",
+                        "tokenizer": {
+                            "hf_tokenizer_json": {
+                                "checksum": "blake3:b0cb923fc505fdf0a53f0287654fa26577d3f333d4134350da0a97664b228739",
+                                "path": "hf://Qwen/Qwen3-0.6B/tokenizer.json"
+                            }
+                        }
+                    },
+                    "component": "backend",
+                    "endpoint": "generate",
+                    "instance_id": 1824364419649515,
+                    "namespace": "dynamo-system-vllm-v1-disagg-router-7663d0d2",
+                    "type": "Model"
+                }
+            }
+        }
+    }
+}

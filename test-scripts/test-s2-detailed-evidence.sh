@@ -25,6 +25,9 @@ FRONTEND_LOCAL="${FRONTEND_LOCAL:-18000}"
 SIDECAR_LOCAL="${SIDECAR_LOCAL:-19191}"
 PEER_SIDECAR="${PEER_SIDECAR:-19192}"
 N_PROBES="${N_PROBES:-10}"
+# If true, scale down the dedicated prefill worker during Phase 2 so
+# TARGET is the *only* prefill worker and the router must pick it.
+ISOLATE_TARGET="${ISOLATE_TARGET:-true}"
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "${OUT}/run.log"; }
 die() { log "FATAL: $*"; exit 1; }
@@ -53,6 +56,11 @@ FRONTEND_POD=$(kubectl -n "${NS}" get pod \
   -l "nvidia.com/dynamo-graph-deployment-name=${DGD},nvidia.com/dynamo-component=Frontend" \
   --field-selector=status.phase=Running \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || die "frontend not found"
+
+# Deployment name for the dedicated prefill worker (used for scale-down/up)
+PREFILL_DEPLOY=$(kubectl -n "${NS}" get deploy \
+  -l "nvidia.com/dynamo-component=VllmPrefillWorker,nvidia.com/dynamo-graph-deployment-name=${DGD}" \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || die "prefill deployment not found"
 
 log "TARGET   = ${TARGET_POD}"
 log "PEER     = ${PEER_POD}"
@@ -83,8 +91,8 @@ start_pf "${PREFILL_POD}"  19202 9090 "metrics-prefill"
 # ========================================================= helpers
 read_prompt_tokens() {
   local port="$1"
-  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
-    | awk '/^vllm:prompt_tokens_total[ {]/ {sum+=$NF} END{printf "%d", sum+0}'
+  { curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+    | awk '/^vllm:prompt_tokens_total[ {]/ {sum+=$NF} END{printf "%d", sum+0}'; } 2>/dev/null || echo "0"
 }
 
 dump_cr() {
@@ -247,6 +255,41 @@ kubectl -n "${NS}" logs "${FRONTEND_POD}" --since=30s 2>&1 \
   | tail -20 \
   | tee "${OUT}/frontend-logs-d2p.txt" | tee -a "${OUT}/run.log"
 
+# Optionally scale down the dedicated prefill worker so TARGET is the ONLY
+# prefill worker, forcing the router to select it.
+# NOTE: DGD controller may reconcile replicas back. We check CR removal instead.
+PREFILL_SCALED_DOWN="false"
+if [[ "${ISOLATE_TARGET}" == "true" ]]; then
+  log "--- ISOLATE: Scaling dedicated prefill deployment to 0 ---"
+  kubectl -n "${NS}" scale deploy "${PREFILL_DEPLOY}" --replicas=0
+  log "Waiting for dedicated prefill CR to be removed..."
+  for attempt in $(seq 1 90); do
+    if kubectl -n "${NS}" get dynamoworkermetadata "${PREFILL_POD}" >/dev/null 2>&1; then
+      cr_exists=1
+    else
+      cr_exists=0
+    fi
+    if [[ "${cr_exists}" -eq 0 ]]; then
+      break
+    fi
+    sleep 2
+  done
+  if kubectl -n "${NS}" get dynamoworkermetadata "${PREFILL_POD}" >/dev/null 2>&1; then
+    cr_still_exists=1
+  else
+    cr_still_exists=0
+  fi
+  if [[ "${cr_still_exists}" -eq 0 ]]; then
+    PREFILL_SCALED_DOWN="true"
+    log "Dedicated prefill worker CR removed. TARGET is now the ONLY prefill worker."
+  else
+    log "WARN: dedicated prefill CR still exists after 180s"
+  fi
+  # Wait for frontend to observe the removal and update WorkerSet
+  log "Waiting 10s for frontend discovery to update..."
+  sleep 10
+fi
+
 # ================================================================
 # PHASE 2: POST-SWITCH PREFILL SERVING EVIDENCE
 # ================================================================
@@ -258,8 +301,27 @@ log "After switch, TARGET should serve as prefill worker."
 log "Waiting 8s for router to fully discover new prefill worker..."
 sleep 8
 
-# Determine TARGET's worker_id from pre-switch data (decode_worker_id)
-TARGET_WORKER_ID=$(python3 -c '
+# Determine the DEDICATED prefill worker's ID from pre-switch data.
+# After switch, any requests with a DIFFERENT prefill_worker_id must be TARGET.
+DEDICATED_PREFILL_WID=$(python3 -c '
+import json,sys,glob,os
+files = sorted(glob.glob(os.path.join(sys.argv[1], "chat-pre-*.json")))
+ids = set()
+for f in files:
+    try:
+        d = json.load(open(f))
+        wid = d.get("nvext",{}).get("worker_id",{})
+        pid = wid.get("prefill_worker_id")
+        if pid: ids.add(str(pid))
+    except: pass
+# Should be exactly 1 ID (the dedicated prefill worker)
+print(",".join(ids))
+' "${OUT}" 2>/dev/null)
+log "Known dedicated prefill worker ID from pre-switch: ${DEDICATED_PREFILL_WID}"
+
+# Also extract decode worker IDs from pre-switch probes
+# (both TARGET + PEER decode_worker_ids will be captured)
+ALL_DECODE_WIDS=$(python3 -c '
 import json,sys,glob,os
 files = sorted(glob.glob(os.path.join(sys.argv[1], "chat-pre-*.json")))
 ids = set()
@@ -270,9 +332,42 @@ for f in files:
         did = wid.get("decode_worker_id")
         if did: ids.add(str(did))
     except: pass
-print(",".join(ids))
+print(",".join(sorted(ids)))
 ' "${OUT}" 2>/dev/null)
-log "Known decode worker IDs from pre-switch: ${TARGET_WORKER_ID}"
+log "All decode worker IDs from pre-switch: ${ALL_DECODE_WIDS}"
+
+# Extract TARGET's specific decode_worker_id from the frontend Removed event
+# (when TARGET switches to prefill, frontend logs "Emitting Removed ... instance_id: XXXX")
+TARGET_DECODE_WID=$(kubectl -n "${NS}" logs "${FRONTEND_POD}" --since=120s 2>&1 \
+  | grep -aE 'Emitting Removed.*component.*backend.*endpoint.*generate.*instance_id' \
+  | grep -oP 'instance_id: \K[0-9]+' \
+  | head -1 || true)
+if [[ -z "${TARGET_DECODE_WID}" ]]; then
+  # Fallback: use all decode worker IDs
+  TARGET_DECODE_WID="${ALL_DECODE_WIDS}"
+  log "Could not extract TARGET-specific decode_wid, using all: ${TARGET_DECODE_WID}"
+else
+  log "TARGET's decode_worker_id (from Removed event): ${TARGET_DECODE_WID}"
+fi
+
+# If dedicated prefill was scaled down, discover TARGET's new prefill worker_id
+# by sending a single probe request (TARGET is the only prefill worker)
+TARGET_PREFILL_WID=""
+if [[ "${PREFILL_SCALED_DOWN}" == "true" ]]; then
+  log "Discovering TARGET's prefill_worker_id (it is the only prefill worker)..."
+  probe_resp=$(submit_chat "discover-prefill-wid" 4)
+  echo "${probe_resp}" > "${OUT}/chat-discover-prefill-wid.json"
+  TARGET_PREFILL_WID=$(echo "${probe_resp}" | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    wid = d.get("nvext",{}).get("worker_id",{})
+    print(str(wid.get("prefill_worker_id","")))
+except:
+    print("")
+' 2>/dev/null)
+  log "TARGET's prefill_worker_id = ${TARGET_PREFILL_WID}"
+fi
 
 N_PROBES_P2=30
 log "Sending ${N_PROBES_P2} chat requests — all should succeed (200 OK)."
@@ -304,7 +399,11 @@ except:
   fi
   # Check if TARGET served as prefill worker for this request
   prefill_wid=$(echo "${status}" | grep -oP 'prefill_wid=\K[0-9]+' || true)
-  if echo "${TARGET_WORKER_ID}" | grep -qF "${prefill_wid}" 2>/dev/null && [[ -n "${prefill_wid}" ]]; then
+  if [[ -n "${TARGET_PREFILL_WID}" && -n "${prefill_wid}" && "${prefill_wid}" == "${TARGET_PREFILL_WID}" ]]; then
+    # Matched via discovered prefill_worker_id (isolated mode)
+    target_as_prefill=$((target_as_prefill+1))
+  elif [[ -n "${DEDICATED_PREFILL_WID}" && -n "${prefill_wid}" ]] && ! echo "${DEDICATED_PREFILL_WID}" | grep -qF "${prefill_wid}" 2>/dev/null; then
+    # Elimination: prefill_wid is NOT the dedicated prefill → must be TARGET
     target_as_prefill=$((target_as_prefill+1))
   fi
   log "  postswitch-${i}: ${status}"
@@ -328,15 +427,23 @@ kubectl -n "${NS}" logs "${TARGET_POD}" --since=120s 2>&1 \
   | tee "${OUT}/target-logs-prefill-serving.txt" | tee -a "${OUT}/run.log"
 
 # Pass criteria: all requests succeeded AND (TARGET got prefill traffic OR CR proves registration)
-# Note: KV-aware router may prefer the established prefill worker, so delta=0 is acceptable
-# if CR change and discovery are proven.
+# When ISOLATE_TARGET=true and dedicated prefill was scaled down, TARGET MUST receive
+# all prefill traffic — this is a hard pass criterion.
 PASS_PREFILL_SERVING="false"
 if [[ "${ok}" -eq "${N_PROBES_P2}" ]]; then
-  if [[ "${TARGET_PT_DELTA}" -gt 0 || "${target_as_prefill}" -gt 0 ]]; then
+  if [[ "${target_as_prefill}" -gt 0 ]]; then
     PASS_PREFILL_SERVING="true"
-    log "PASS: TARGET directly served ${target_as_prefill} prefill requests (delta=${TARGET_PT_DELTA})"
+    log "PASS: TARGET directly served ${target_as_prefill}/${N_PROBES_P2} prefill requests (delta=${TARGET_PT_DELTA})"
+  elif [[ "${TARGET_PT_DELTA}" -gt 0 ]]; then
+    PASS_PREFILL_SERVING="true"
+    log "PASS: TARGET prompt_tokens delta=${TARGET_PT_DELTA} (prefill traffic served)"
+  elif [[ "${PREFILL_SCALED_DOWN}" == "true" ]]; then
+    # Dedicated prefill was scaled down but TARGET still didn't get prefill traffic?
+    # This should not happen — fail.
+    PASS_PREFILL_SERVING="false"
+    log "FAIL: Dedicated prefill was scaled down but TARGET received 0 prefill requests"
   else
-    # Even without direct traffic, all requests succeeding with 2 prefill workers + correct CR = pass
+    # Non-isolated mode: soft pass
     PASS_PREFILL_SERVING="true"
     log "PASS (soft): All ${N_PROBES_P2} requests OK. Router preferred original prefill worker."
     log "  Evidence: CR shows prefill/generate registered, frontend emitted Added event."
@@ -351,6 +458,39 @@ log "PASS_PREFILL_SERVING=${PASS_PREFILL_SERVING} (delta=${TARGET_PT_DELTA}, ok=
 log "================================================================"
 log "PHASE 3: REVERT prefill -> decode"
 log "================================================================"
+
+# Restore dedicated prefill worker if it was scaled down
+if [[ "${PREFILL_SCALED_DOWN}" == "true" ]]; then
+  # Check if DGD controller already reconciled replicas back
+  current_replicas=$(kubectl -n "${NS}" get deploy "${PREFILL_DEPLOY}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+  if [[ "${current_replicas}" -ge 1 ]]; then
+    log "--- Dedicated prefill already restored by DGD controller (replicas=${current_replicas}) ---"
+    # Wait for model to load if pod was recently created
+    ready=$(kubectl -n "${NS}" get deploy "${PREFILL_DEPLOY}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    if [[ "${ready}" -lt 1 ]]; then
+      log "Waiting for dedicated prefill pod to become Ready..."
+      kubectl -n "${NS}" rollout status deploy "${PREFILL_DEPLOY}" --timeout=180s 2>&1 | tail -3 | tee -a "${OUT}/run.log"
+      sleep 15
+    fi
+  else
+    log "--- Restoring dedicated prefill worker (scale to 1) ---"
+    kubectl -n "${NS}" scale deploy "${PREFILL_DEPLOY}" --replicas=1
+    log "Waiting for dedicated prefill pod to become Ready..."
+    kubectl -n "${NS}" rollout status deploy "${PREFILL_DEPLOY}" --timeout=180s 2>&1 | tail -3 | tee -a "${OUT}/run.log"
+    n=$(kubectl -n "${NS}" get pod \
+         -l "nvidia.com/dynamo-component=VllmPrefillWorker,nvidia.com/dynamo-graph-deployment-name=${DGD}" \
+         --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+    if [[ "${n}" -ge 1 ]]; then
+      log "Dedicated prefill pod restored and Running."
+      # Extra wait for vLLM model load + worker registration
+      log "Waiting 45s for model load and CR registration..."
+      sleep 45
+      log "Proceeding with revert."
+    else
+      log "WARN: dedicated prefill pod not running after 180s"
+    fi
+  fi
+fi
 
 T2=$(date +%s.%N)
 SW2_RESP=$(curl -fsS -m 60 -X POST -H "Content-Type: application/json" \
@@ -403,7 +543,7 @@ log "After revert, TARGET should serve as decode worker again."
 log "Both TARGET and PEER should share chat traffic."
 
 TARGET_PT_REVERT_BASE=$(read_prompt_tokens 19200)
-ok2=0; err2=0
+ok2=0; err2=0; target_as_decode=0
 for i in $(seq 1 "${N_PROBES}"); do
   resp=$(submit_chat "postrevert-${i}" 4)
   echo "${resp}" > "${OUT}/chat-postrevert-${i}.json"
@@ -412,16 +552,23 @@ import json,sys
 try:
     d=json.load(sys.stdin)
     fr=d.get("choices",[{}])[0].get("finish_reason","?")
-    print(f"200 finish_reason={fr}")
+    wid=d.get("nvext",{}).get("worker_id",{})
+    did=wid.get("decode_worker_id","?")
+    print("200 finish_reason=%s decode_wid=%s" % (fr, did))
 except:
     print("error")
 ' 2>/dev/null)
   if [[ "${status}" == error* ]]; then err2=$((err2+1)); else ok2=$((ok2+1)); fi
+  # Check if TARGET served as decode worker
+  decode_wid=$(echo "${status}" | grep -oP 'decode_wid=\K[0-9]+' || true)
+  if echo "${TARGET_DECODE_WID}" | grep -qF "${decode_wid}" 2>/dev/null && [[ -n "${decode_wid}" ]]; then
+    target_as_decode=$((target_as_decode+1))
+  fi
   log "  postrevert-${i}: ${status}"
 done
 TARGET_PT_REVERT_AFTER=$(read_prompt_tokens 19200)
 PEER_PT_REVERT_AFTER=$(read_prompt_tokens 19201)
-log "Post-revert probes: ok=${ok2} err=${err2}"
+log "Post-revert probes: ok=${ok2} err=${err2} target_served_decode=${target_as_decode}/${N_PROBES}"
 log "TARGET prompt_tokens revert delta: $(( TARGET_PT_REVERT_AFTER - TARGET_PT_REVERT_BASE ))"
 
 # ================================================================
@@ -453,9 +600,13 @@ exit(0 if has_backend else 1)
 PASS_ALL_OK="false"
 [[ "${ok}" -eq "${N_PROBES_P2:-30}" && "${ok2}" -eq "${N_PROBES}" ]] && PASS_ALL_OK="true"
 
+PASS_DECODE_SERVING="false"
+[[ "${target_as_decode}" -gt 0 ]] && PASS_DECODE_SERVING="true"
+
 OVERALL="false"
 [[ "${PASS_CR_D2P}" == "true" && "${PASS_CR_P2D}" == "true" \
-   && "${PASS_PREFILL_SERVING}" == "true" && "${PASS_ALL_OK}" == "true" ]] && OVERALL="true"
+   && "${PASS_PREFILL_SERVING}" == "true" && "${PASS_ALL_OK}" == "true" \
+   && "${PASS_DECODE_SERVING}" == "true" ]] && OVERALL="true"
 
 # Extract model_cards JSON snippets for inline evidence
 MC_PRE=$(python3 -c '
@@ -503,6 +654,8 @@ cat > "${OUT}/REPORT.md" <<REPORT_EOF
 | PEER (decode, unchanged)           | \`${PEER_POD}\`   | rl-scaling-fe78f1b652 |
 | Dedicated prefill worker           | \`${PREFILL_POD}\` | rl-scaling-fe78f1b652 |
 | Frontend                           | \`${FRONTEND_POD}\` | rl-scaling-fe78f1b652 |
+
+**ISOLATE_TARGET mode:** \`${ISOLATE_TARGET}\` (if true, dedicated prefill was scaled to 0 during Phase 2)
 
 ---
 
@@ -578,9 +731,19 @@ $(cat "${OUT}/frontend-logs-d2p.txt" 2>/dev/null || echo "(no matching log lines
 
 ## Phase 2: Partner-prefill serving evidence
 
-After the switch, TARGET is in prefill mode. We send ${N_PROBES} chat requests.
-The PrefillRouter distributes prefill work across TARGET (switched) + the dedicated
-prefill worker. The decode path is handled by PEER only.
+After the switch, TARGET is in prefill mode. We send ${N_PROBES_P2} chat requests.
+
+**Isolation mode:** ISOLATE_TARGET=${ISOLATE_TARGET}, PREFILL_SCALED_DOWN=${PREFILL_SCALED_DOWN}
+
+$(if [[ "${PREFILL_SCALED_DOWN}" == "true" ]]; then
+  echo "The dedicated prefill worker was scaled to 0, so TARGET is the **only** prefill worker."
+  echo "All prefill traffic **must** go through TARGET."
+  echo ""
+  echo "TARGET's discovered prefill_worker_id: \`${TARGET_PREFILL_WID}\`"
+else
+  echo "The dedicated prefill worker is still running alongside TARGET."
+  echo "The KV-aware PrefillRouter distributes prefill work across TARGET + dedicated prefill."
+fi)
 
 ### Chat probe results
 
@@ -664,6 +827,7 @@ After revert, TARGET should resume serving decode traffic alongside PEER.
 - Total probes: **${N_PROBES}**
 - HTTP 200: **${ok2}**
 - Errors: **${err2}**
+- **TARGET served as decode worker: ${target_as_decode}/${N_PROBES}**
 
 TARGET prompt_tokens delta during post-revert probes: **$(( TARGET_PT_REVERT_AFTER - TARGET_PT_REVERT_BASE ))**
 (positive means TARGET is again processing chat/decode traffic)
@@ -677,8 +841,9 @@ TARGET prompt_tokens delta during post-revert probes: **$(( TARGET_PT_REVERT_AFT
 | CR loses backend/generate after switch→prefill | **${PASS_CR_D2P}** |
 | CR regains backend/generate after revert→decode | **${PASS_CR_P2D}** |
 | All post-switch chats succeed (0 HTTP 500) | **${ok}/${N_PROBES}** |
-| TARGET serves real prefill traffic (prompt_tokens Δ>0) | **${PASS_PREFILL_SERVING}** (Δ=${TARGET_PT_DELTA}) |
+| TARGET serves real prefill traffic (prompt_tokens Δ>0) | **${PASS_PREFILL_SERVING}** (Δ=${TARGET_PT_DELTA}, served=${target_as_prefill}/${N_PROBES_P2}) |
 | All post-revert chats succeed | **${ok2}/${N_PROBES}** |
+| TARGET serves decode after revert | **${PASS_DECODE_SERVING}** (${target_as_decode}/${N_PROBES}) |
 | **OVERALL** | **${OVERALL}** |
 
 ## Raw artifacts
@@ -696,6 +861,6 @@ All raw JSON files are in the report directory:
 REPORT_EOF
 
 log "REPORT: ${OUT}/REPORT.md"
-log "PASS_CR_D2P=${PASS_CR_D2P}  PASS_CR_P2D=${PASS_CR_P2D}  PASS_PREFILL_SERVING=${PASS_PREFILL_SERVING}  PASS_ALL_OK=${PASS_ALL_OK}"
+log "PASS_CR_D2P=${PASS_CR_D2P}  PASS_CR_P2D=${PASS_CR_P2D}  PASS_PREFILL_SERVING=${PASS_PREFILL_SERVING}  PASS_DECODE_SERVING=${PASS_DECODE_SERVING}  PASS_ALL_OK=${PASS_ALL_OK}"
 log "OVERALL=${OVERALL}"
 [[ "${OVERALL}" == "true" ]] && exit 0 || exit 1

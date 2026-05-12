@@ -1,0 +1,7 @@
+Forwarding from 127.0.0.1:19202 -> 9090
+Forwarding from [::1]:19202 -> 9090
+Handling connection for 19202
+Handling connection for 19202
+Handling connection for 19202
+E0512 08:53:27.532835 3785936 portforward.go:424] "Unhandled Error" err="an error occurred forwarding 19202 -> 9090: error forwarding port 9090 to pod 5841b7decb15c2aafbdead85ae3364aacc2ceadafc341ad084ae2fdd122855aa, uid : failed to find sandbox \"5841b7decb15c2aafbdead85ae3364aacc2ceadafc341ad084ae2fdd122855aa\" in store: not found"
+error: lost connection to pod

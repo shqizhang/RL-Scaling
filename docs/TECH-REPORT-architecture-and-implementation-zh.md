@@ -465,25 +465,26 @@ S3 的职责：在触发 S2（或缩容）之前，将在途的长请求排空�
 权衡：
 - 目标需要支付"未缓存后缀 prefill"开销——在 Qwen3-0.6B 上对几千 token 的重放通常为 100-300 ms；比让请求重新开始便宜数个数量级。
 
-### 5.4 Phase-2.B（NIXL connector 拉取）——线协议已就绪，暂时门控
+### 5.4 Phase-2.B（NIXL connector 拉取）——三阶段 block-hold 协议
 
 线协议已完整实现：`migrate_out` 已经以 vLLM 0.16 的 NixlConnector 在 decode 侧期望的格式返回 `kv_transfer_params`（`do_remote_prefill: true`、`remote_engine_id`、`remote_block_ids`、`remote_host`、`remote_port`、`remote_request_id`——与 Dynamo 正常 disagg PD 路径在 `handlers.py:1577` 中产生的字典相同）。目标侧的 `MigrationHandler.migrate_in` 会将其直接传给一次提交，该提交的 `sampling_params.extra_args["kv_transfer_params"]` 已被设置，PEER 上的 `MultiConnector(DynamoConnector + NixlConnector)` 链将在下一个调度步骤中发出异步 NIXL READ。
 
-为何门控（`MigrationPolicy.connector_enabled = False`）：
+源侧 block-hold 协议已实现为三阶段握手，以防止 abort/free 竞态：
 
-```
-   T0  /migrate_out called on TARGET
-   T1  block_index.lookup(rid) -> src_block_ids = [42, 87, 122]
-   T2  tracker.abort_request(rid)
-        ── KVBM frees blocks 42, 87, 122 SYNCHRONOUSLY ──
-   T3  response returned with src_block_ids = [42, 87, 122]
-   T4  /migrate_in delivered to PEER over HTTP
-   T5  PEER's NixlConnector schedules NIXL READ from
-        TARGET engine's blocks [42, 87, 122]
-        ── BUT TARGET may have already reused them ──
-```
+1. **`migrate_out`** —— 当 `connector_enabled=True` 且 KVBM block ID 和 NIXL
+   坐标全部可用时，源端延迟 `abort_request`，将 `request_id` 记录在
+   `_pending_migrations` 中。block 保持固定。
+2. **`migrate_in`** —— 目标端注入 `kv_transfer_params` 并提交请求。NIXL READ
+   从源端固定的 block 拉取 KV。
+3. **`/migration_complete`** —— 编排器在 `migrate_in` 成功后在源端调用此接口。
+   源端终止原始请求并释放 block。
 
-修复 2.B 需要一个**源侧 block 保持/确认握手**：TARGET 必须保持 block 固定，直到 PEER 确认读取已完成。该握手尚未实现；我们以重计算路径作为安全默认方案，并保留 connector 线协议以便将来即插即用。
+后台清扫任务在 `DYNAMO_RL_MIGRATION_HOLD_TIMEOUT` 秒（默认 10 秒）后强制终止
+持有的迁移，防止编排器未能调用 `/migration_complete` 时造成 block 泄漏。
+
+Phase 2.B 通过 `DYNAMO_RL_CONNECTOR_ENABLED=1`（环境变量，默认关闭）启用。
+当任何前提条件缺失（无 KVBM、无 NIXL 坐标）时，`migrate_out` 回退到立即终止
+（Phase 2.A 行为），`/migration_complete` 变为无害的空操作。
 
 ### 5.5 成本收益门控
 
@@ -492,8 +493,8 @@ MigrationPolicy(
     max_replay_tokens   = 8192,   # recompute prefill too expensive
     min_generated_tokens= 16,     # too young to benefit
     min_remaining_tokens= 32,     # would finish faster than migrate
-    connector_enabled   = False,
 )
+# connector_enabled 通过 DYNAMO_RL_CONNECTOR_ENABLED 环境变量控制
 ```
 
 `migrate_in` 在调度重放**之前**运行门控检查。被拒绝的请求响应 `{status: "declined", reason: "..."}`。S3 测试通过一个合成的 9000 token body 明确验证此行为并观察到：
@@ -573,7 +574,8 @@ done
 ### 6.3 尚未测试的内容
 
 - **在真实排空工作流中组合 S3 后执行 S2**：手动序列可以工作，但我们没有单个测试执行"通过 S3 排空 -> 通过 S2 切换 -> 验证零 token 丢失"。这应该在后续集成测试中完成。
-- **Phase-2.B（NIXL 拉取）**：门控关闭；设计上无测试。
+- **Phase-2.B（NIXL 拉取）**：三阶段 block-hold 协议已实现，并在 S3 测试中
+  得到验证（当 KVBM 不可用时回退到 recompute；详见 S3 文档 §5）。
 - **多节点**：所有测量均为单主机回环；多节点 K8s 会按比例增加 `register_mdc` 和 HTTP RTT 开销。
 
 ---
@@ -585,8 +587,8 @@ done
 | 每个 pod 只有一个 DWMD 写入者 | DWMD 名称 == pod 名称；仅 pod 内的 runtime 调用 `apply_cr`。 |
 | ModelCard 撤回先于引擎休眠效果影响路由 | `unregister_mdc` 是步骤 2，在 `reset_prefix_cache`/`wake` 之前。 |
 | prefix cache 不会从已释放的 block 提供服务 | `reset_prefix_cache` 是步骤 4，在 `sleep` 和 `wake` 之间。 |
-| migrate_out 对每个请求最多执行一次 | `tracker.abort_request` 是同步的；响应返回前注册表条目已被移除。 |
-| migrate_in 不会复活源端仍持有的请求 | 源端在返回 kv_transfer_params 之前已中止；对于重计算路径，源端不保留任何内容。 |
+| migrate_out 对每个请求最多执行一次 | `tracker.abort_request` 是同步的；Phase 2.A 中响应返回前注册表条目已被移除；Phase 2.B 中请求保持在 `_pending_migrations` 中直到 `/migration_complete`。 |
+| migrate_in 不会复活源端仍持有的请求 | Phase 2.A：源端在返回前已中止。Phase 2.B：源端持有 block 直到 `/migration_complete`；请求存活但不再产生新 token。 |
 | 成本收益门控绝不静默丢弃工作 | `migrate_in` 返回带原因的 `status=declined`；operator/controller **必须**将 declined 视为"让请求在原地完成"（注意：仅当 migrate_out 调用是真实的而非合成的时，源端才已中止）。 |
 | 重复调用切换具有幂等性 | `switch_role` 重新读取 `current_role`；切换到相同角色是一个空操作，除了无操作的 register/unregister kube apply。 |
 
