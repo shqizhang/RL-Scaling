@@ -1,5 +1,0 @@
-REMOVED model_cards (no longer discoverable by router):
-  - dynamo-system-vllm-v1-disagg-router-7663d0d2/backend/generate/b63356c1f6a36
-ADDED model_cards (now discoverable by router):
-  + dynamo-system-vllm-v1-disagg-router-7663d0d2/prefill/generate/b63356c1f6a36
-UNCHANGED:

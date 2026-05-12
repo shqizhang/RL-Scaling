@@ -1,5 +1,0 @@
-  nvidia.com/dynamo-component=VllmDecodeWorker
-  nvidia.com/dynamo-component-type=worker
-  nvidia.com/dynamo-graph-deployment-name=vllm-v1-disagg-router
-  nvidia.com/dynamo-namespace=dynamo-system-vllm-v1-disagg-router
-  nvidia.com/dynamo-worker-hash=7663d0d2
