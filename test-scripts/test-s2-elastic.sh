@@ -148,12 +148,13 @@ submit_chat_code() {
 }
 
 capture_worker_log() {
-  local pod="$1" label="$2" lines="${3:-200}"
-  kubectl -n "${NS}" logs "${pod}" --tail="${lines}" \
+  local pod="$1" label="$2" lines="${3:-500}"
+  kubectl -n "${NS}" logs "${pod}" --since-time="${TEST_START_TIME}" --tail="${lines}" \
     > "${OUT}/workerlog-${label}.txt" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------- pre-state
+TEST_START_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 log "warming model"
 submit_chat warmup-1 4 > /dev/null || true
 sleep 1

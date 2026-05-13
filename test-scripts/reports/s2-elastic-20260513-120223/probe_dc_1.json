@@ -1,0 +1,38 @@
+{
+    "id": "chatcmpl-ef74c052-e07e-4399-826b-9e6dec7d625a",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "content": "<think>\nOkay, the user wrote \"S2 probe dc-1.\" I",
+                "role": "assistant",
+                "reasoning_content": null
+            },
+            "finish_reason": "length"
+        }
+    ],
+    "created": 1778673760,
+    "model": "Qwen/Qwen3-0.6B",
+    "object": "chat.completion",
+    "usage": {
+        "prompt_tokens": 15,
+        "completion_tokens": 16,
+        "total_tokens": 31
+    },
+    "nvext": {
+        "worker_id": {
+            "prefill_worker_id": 6254788034687914,
+            "prefill_dp_rank": 0,
+            "decode_worker_id": 5555771307534771,
+            "decode_dp_rank": 0
+        },
+        "timing": {
+            "request_received_ms": 1778673760659,
+            "prefill_wait_time_ms": 0.9785099999999999,
+            "prefill_time_ms": 19.768002,
+            "ttft_ms": 20.746512000000003,
+            "total_time_ms": 78.85076600000001,
+            "kv_hit_rate": 0.0
+        }
+    }
+}
