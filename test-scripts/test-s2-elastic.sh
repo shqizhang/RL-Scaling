@@ -35,14 +35,25 @@ die() { log "FATAL: $*"; exit 1; }
 cleanup_pids=()
 trap 'for p in "${cleanup_pids[@]:-}"; do kill "$p" 2>/dev/null || true; done' EXIT
 
-# ----------------------------------------------------------- discover pods
+# ----------------------------------------------------------- discover pods (Ready only)
 mapfile -t DECODE_PODS < <(
   kubectl -n "${NS}" get pod \
     -l "nvidia.com/dynamo-component=VllmDecodeWorker,nvidia.com/dynamo-graph-deployment-name=${DGD}" \
     --field-selector=status.phase=Running \
-    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | sort
+    -o json 2>/dev/null \
+    | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for item in data.get("items", []):
+    ready = any(
+        c.get("type") == "Ready" and c.get("status") == "True"
+        for c in item.get("status", {}).get("conditions", [])
+    )
+    if ready:
+        print(item["metadata"]["name"])
+' | sort
 )
-[[ "${#DECODE_PODS[@]}" -ge 2 ]] || die "need >=2 running decode pods (have ${#DECODE_PODS[@]})"
+[[ "${#DECODE_PODS[@]}" -ge 2 ]] || die "need >=2 ready decode pods (have ${#DECODE_PODS[@]})"
 TARGET_POD="${TARGET_POD:-${DECODE_PODS[0]}}"
 PEER_POD=""
 for p in "${DECODE_PODS[@]}"; do [[ "$p" != "$TARGET_POD" ]] && PEER_POD="$p" && break; done

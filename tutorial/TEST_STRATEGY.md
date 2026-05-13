@@ -14,11 +14,11 @@ local dev, and env vars.
 
 ```
           ┌────────────────────┐
-          │   E2E on cluster   │  ← test-scripts/test-s{1,2,3}.sh   (this doc)
+          │   E2E on cluster   │  ← test-scripts/test-s{2,3}*.sh   (this doc)
           ├────────────────────┤
           │ Component / smoke  │  ← deploy-controller.sh + /api/v1/status
           ├────────────────────┤
-          │     Unit tests     │  ← pytest, 78 + 19 = 97 tests, run on every PR
+          │     Unit tests     │  ← pytest, 72 + 68 = 140 tests, run on every PR
           └────────────────────┘
 ```
 
@@ -165,77 +165,66 @@ illegal transitions, idempotent signals, history truncation.
 
 ### 2.2 S2 — Elastic Role Switch
 
-**Goal:** a dual-mode worker can flip from `decode` → `prefill` (or vice
-versa) at runtime, the controller observes the change, and inflight
-generations are routed to the new role.
+**Goal:** a dual-mode decode worker can be switched to prefill role
+(shrinking the decode WorkerSet) and back (re-growing it), all via the
+in-pod sidecar, without losing in-flight requests.
 
-> **Reminder.** The actual NIXL/KV reconfig is stubbed pending the Rust
-> patches in
-> [RL_SCALING_RUST_CHANGES.md](https://github.com/shqizhang/dynamo/blob/RL-Scaling/RL_SCALING_RUST_CHANGES.md).
-> The E2E here therefore validates **orchestration & observability**,
-> not GPU-level memory layout. When the Rust pieces land, only step 4
-> (routing) gains real teeth.
+The test uses the **sidecar** (`POST :9091/switch_role`) directly—it does
+not go through the controller. This isolates the worker-side orchestration.
 
-| Step | Stimulus | Expected | Assertion in [test-s2.sh](test-scripts/test-s2.sh) |
+| Step | Stimulus | Expected | Assertion in [test-s2-elastic.sh](../test-scripts/test-s2-elastic.sh) |
 | ---- | -------- | -------- | -------------------------------------------------- |
-| 0 | `GET worker /v1/role` | initial role reported | `INITIAL_ROLE in {prefill,decode}` |
-| 1 | `GET controller /api/v1/status` | `role_switch_enabled == true` | env-flag check |
-| 2 | `POST worker /v1/role {target_role}` | sleep → reconfig (stub) → wake; `/v1/role` returns new role within 30 s | `worker_role == TARGET_ROLE` |
-| 3 | `GET controller /api/v1/events?type=WorkerRoleChanged` | event recorded with matching `target_role` | python assertion |
-| 4 | new generate request | lands on a worker whose role == `TARGET_ROLE` | `LANDED == TARGET_ROLE` |
-| 5 | flip back | original role restored | `worker_role == INITIAL_ROLE` |
+| 0 | Discover 2 Ready decode pods, 1 frontend | pods exist | label-selector + readiness filter |
+| 1 | `GET :9090/metrics` on both decoders | baseline `generation_tokens_total` captured | `T0_baseline` |
+| 2 | Submit streaming chat workload via frontend `/v1/chat/completions` | requests distributed to both decoders | metrics show `num_requests_running > 0` |
+| 3 | `POST :9091/switch_role {"target_role":"prefill"}` on D1 | D1 sleeps, WorkerSet shrinks, D1 exits routing | response `status=ok`, CR diff shows D1 gone from discovery |
+| 4 | Continue sending requests | only D2 receives new traffic | D1 `num_requests_running=0`, D2 increments |
+| 5 | `POST :9091/switch_role {"target_role":"decode"}` on D1 | D1 wakes, re-joins WorkerSet | response `status=ok`, CR diff shows D1 back |
+| 6 | Final workload burst | D1 receives traffic again | D1 `generation_tokens_total` grows |
+| 7 | Verify all HTTP responses | every streaming request got HTTP 200 | `HTTP_ERRORS == 0` |
 
 **Run:**
 
 ```bash
-CONTROLLER_URL=http://localhost:8080 \
-NAMESPACE=dynamo \
-TARGET_POD=rl-serving-decodeworker-0 \
-./test-scripts/test-s2.sh
+cd test-scripts && bash test-s2-elastic.sh
 ```
-
-**Failure-injection tests** (covered by unit suite
-[`test_dual_mode.py`](https://github.com/shqizhang/dynamo/blob/RL-Scaling/components/src/dynamo/vllm/tests/test_dual_mode.py)):
-sleep failure rolls back; wake failure recovers; idempotent flips do no
-work.
 
 ---
 
 ### 2.3 S3 — Request Consolidation
 
-**Goal:** when a decode worker has been mostly idle for `MIN_BATCH_COMPLETION`
-of the batch and a peer worker is loaded, the controller migrates the
-remaining requests to the peer (recompute-prefill fallback) and scales the
-decode DGDSA down.
+**Goal:** in-flight decode requests migrate from one decoder (D1) to another
+(D2) via the coordinated `POST /migrate` endpoint, preserving KV consistency.
+The test proves per-request ID movement and token continuity.
 
-> **Reminder.** Until NIXL D2D KV-block transfer lands, migration uses
-> recompute-prefill: the decode worker exports `(prompt + generated)` and
-> the target re-prefills. Cost-benefit is bounded by
-> `migration_time = req_count * PER_REQUEST_MIGRATION_OVERHEAD < remaining * 0.5`.
+The test uses the **sidecar** (`POST :9091/migrate`) directly and tracks
+individual request IDs before and after each migration.
 
-| Step | Stimulus | Expected | Assertion in [test-s3.sh](test-scripts/test-s3.sh) |
+| Step | Stimulus | Expected | Assertion in [test-s3-consolidation.sh](../test-scripts/test-s3-consolidation.sh) |
 | ---- | -------- | -------- | -------------------------------------------------- |
-| 0 | (config) | `consolidation_enabled` and `>=2` decode replicas | env+kubectl checks |
-| 1 | run baseline load `seed=42` on worker 0 | capture sha256 of outputs | `/tmp/s3-baseline.sha` |
-| 2 | uneven load: 1 short req on w0, 6 long on w1 | source w0 has low inflight | `worker_inflight` shows gap |
-| 3 | `POST /api/v1/admin/consolidation/tick` | source paired with target | (no direct check; observed via 4) |
-| 4 | wait | `dgdsa-decode.spec.replicas` decremented | `(( D < D0 ))` |
-| 5 | wait for in-flights | all background `wait` returns 0 | shell `wait` |
-| 6 | replay seed=42 | sha256 unchanged when greedy decoding | `diff` |
-| 7 | `GET /api/v1/events?type=ConsolidationCompleted` | event with `migrated_requests >= 1` | python assertion |
+| 0 | Discover 2 Ready decode pods, 1 frontend | pods exist | label-selector + readiness filter |
+| 1 | Submit 80 long-running chats (`max_tokens=8000`) via frontend | 40 on D1, 40 on D2 (router distributes) | `T1 active: D1=40 D2=40` |
+| 2 | For each of 6 migrations: snapshot D1/D2 active request IDs | pre-migration ID lists captured | `get_active_ids()` |
+| 3 | `POST D1:9091/migrate {target_url=D2}` | D1 `migrate_out` → D2 `migrate_in` → `migration_complete` | `status=ok`, `path=recompute` |
+| 4 | Verify request_id left D1’s active list | ID gone from D1 registry | `left_D1=true` |
+| 5 | Verify D2 accepted (via `/migrate` response) | `migrate_in` returned ok | `D2_accepted=true` |
+| 6 | After all migrations: D1 active count decreased | `T1=40 → T2≤34` | `PASS_GPU_RELEASE=true` |
+| 7 | After drain: D2 `generation_tokens_total` grew | Δ > 0 | `PASS_DST_TOKENS=true` |
+| 8 | Synthetic oversize `migrate_in` (9000 tokens) | declined by cost-benefit gate | `status=declined` |
 
 **Run:**
 
 ```bash
-CONTROLLER_URL=http://localhost:8080 \
-NAMESPACE=dynamo \
-DGD_NAME=rl-serving \
-./test-scripts/test-s3.sh
+cd test-scripts && bash test-s3-consolidation.sh
 ```
 
-**Decision-engine tests** ([`test_consolidation.py`](rl-scaling-controller/tests/test_consolidation.py))
-already cover: gating on completion %, two-pointer pairing, min-replicas
-guard, cost-benefit ratio, debounce, disabled flag.
+**Output:** A timestamped `REPORT.md` under `test-scripts/reports/` with:
+- Full D1/D2 active request ID lists at T1
+- Per-migration table (request_id, D1 decoded tokens, remaining, replay, left_D1, D2_accepted)
+- ASCII diagram of the coordinated migration protocol
+- Per-migration token evidence chain
+- D1/D2 worker log excerpts (hold/release/decline events)
+- Overall pass/fail verdict (6 criteria)
 
 ---
 
@@ -245,8 +234,10 @@ guard, cost-benefit ratio, debounce, disabled flag.
 # unit tests only (CI-friendly, no cluster needed)
 ./test-scripts/run-all.sh unit
 
-# E2E only (requires deployed cluster + port-forward)
-./test-scripts/run-all.sh e2e
+# E2E only (requires deployed cluster with dual-mode decode pods)
+cd test-scripts
+bash test-s2-elastic.sh         # S2 role switch
+bash test-s3-consolidation.sh   # S3 migration
 
 # everything
 ./test-scripts/run-all.sh all
@@ -286,10 +277,11 @@ shell scripts assume the metrics endpoints exist.
 | ------- | ------------ | --- |
 | S1 stuck in `WARM_UP`, replicas grew but state never moves | Prometheus URL wrong → metrics collector returns 0 ready workers | Fix `PROMETHEUS_URL`, restart controller |
 | S1 `state = IDLE` ignored signal | sampling_progress < `PRE_WARM_THRESHOLD` | lower threshold or send 0.85+ |
-| S2 worker `/v1/role` 404 | worker not started with `--dual-mode` | redeploy DGD with `extraArgs` |
-| S2 flips role but state did not actually change | stubbed reconfig (expected today) | wait for Rust patches |
-| S3 controller never tries to migrate | `MIN_BATCH_COMPLETION` not yet met | lower it for the test or wait |
-| S3 `migrate_in` 422 | request payload missing `sampling_params` | ensure source is on RL-Scaling branch (commit `e04726ad`) |
+| S2 `switch_role` returns 503 during first ~60s | Worker still loading model (liveness probe returns 503) | Wait for pod to be Ready before starting test |
+| S2 WorkerSet does not shrink | Discovery CR not patched; `DYNAMO_RL_DUAL_MODE=1` not set | Redeploy with dual-mode env vars |
+| S3 `id_on_d2` always false | Migrated requests bypass `InProcessRequestRegistry` | Expected behaviour; use `D2_accepted` from `/migrate` response instead |
+| S3 `migrate_in` returns `declined` | replay_total exceeds `max_replay_tokens=8192` | Use shorter prompts or lower the cost-benefit threshold |
+| S3 pod discovery picks CrashLoopBackOff pods | `--field-selector=status.phase=Running` matches non-Ready pods | Use Python readiness filter (already fixed in test scripts) |
 | RBAC denied on `dgdsa/scale` | wrong ServiceAccount | re-apply [01-rbac.yaml](deploy/manifests/01-rbac.yaml) |
 
 ---
@@ -298,11 +290,10 @@ shell scripts assume the metrics endpoints exist.
 
 A change is "done" when **all** of these are true:
 
-1. `pytest rl-signal-sdk rl-scaling-controller -q` → green (97 tests).
-2. Affected scenario E2E script (`test-s1.sh`/`test-s2.sh`/`test-s3.sh`)
-   exits 0 on a real cluster.
-3. `kubectl logs deploy/rl-scaling-controller` is clean for one full
-   cool-down cycle.
-4. Grafana dashboard shows expected gauges/counters moving.
+1. `pytest rl-signal-sdk rl-scaling-controller -q` → green (72 tests).
+2. `pytest dynamo/components/src/dynamo/vllm/tests/test_{dual_mode,migration,rl_scaling_sidecar}.py -q` → green (68 tests).
+3. Affected scenario E2E script (`test-s2-elastic.sh` / `test-s3-consolidation.sh`)
+   exits with `OVERALL=true` on a real cluster.
+4. `kubectl logs` for all pods are clean during the test run.
 5. The change is committed in the format `shengqi : <work>` (no force-push,
    no remote push without review).

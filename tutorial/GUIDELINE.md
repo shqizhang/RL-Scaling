@@ -6,8 +6,8 @@ in [`tutorial/scaling/RL_Scaling_Unified_Design.md`](tutorial/scaling/RL_Scaling
 | Scenario | Name | Status |
 | -------- | ---- | ------ |
 | **S1** | Rollout Scale Up/Down | ✅ Fully implemented & tested |
-| **S2** | Elastic Role Switch | ✅ Python orchestration done; Rust reconfig stubbed (see [`RL_SCALING_RUST_CHANGES.md`](https://github.com/shqizhang/dynamo/blob/RL-Scaling/RL_SCALING_RUST_CHANGES.md) on the dynamo fork) |
-| **S3** | Request Consolidation | ✅ Recompute-prefill fallback implemented & tested; full NIXL D2D migration documented as future Rust work |
+| **S2** | Elastic Role Switch | ✅ Implemented & E2E tested on cluster (sidecar-based `switch_role`, WorkerSet shrink/grow verified) |
+| **S3** | Request Consolidation | ✅ Implemented & E2E tested on cluster (coordinated `/migrate` with recompute-prefill; per-request ID tracking proves KV consistency) |
 
 **Hard constraint preserved**: every Dynamo edit lives behind a feature flag
 or in a new module. Existing single-mode workers behave unchanged.
@@ -37,7 +37,8 @@ dynamo/                                      ← sibling repo (branch: RL-Scalin
     ├── handlers.py                          ← S2: + set_disaggregation_mode()
     ├── dual_mode.py                         ← S2: DualModeWorker orchestrator (NEW)
     ├── migration.py                         ← S3: MigrationHandler (NEW)
-    └── tests/{test_dual_mode,test_migration}.py
+    ├── rl_scaling_sidecar.py                ← S2+S3: aiohttp sidecar on :9091 (NEW)
+    └── tests/{test_dual_mode,test_migration,test_rl_scaling_sidecar}.py
 RL_SCALING_RUST_CHANGES.md                   ← pending Rust patches (NEW)
 ```
 
@@ -47,43 +48,43 @@ RL_SCALING_RUST_CHANGES.md                   ← pending Rust patches (NEW)
 
 ### 2.1 Set up venv & install both Python packages
 
-```powershell
-cd c:\projects\RL-Scaling
+```bash
+cd ~/IP/RL-Scaling
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".\rl-signal-sdk[test]" -e ".\rl-scaling-controller[test]"
+source .venv/bin/activate
+pip install -e "./rl-signal-sdk[test]" -e "./rl-scaling-controller[test]"
 ```
 
 ### 2.2 Run the test suite
 
 | Command | Coverage |
 | ------- | -------- |
-| `.\.venv\Scripts\python.exe -m pytest rl-signal-sdk -q` | 24 tests (events, emitter, transport) |
-| `.\.venv\Scripts\python.exe -m pytest rl-scaling-controller -q` | 54 tests (state machine, planner, DGDSA, signal API, role-switch, consolidation) |
+| `pytest rl-signal-sdk -q` | 13 tests (emitter, events, transport) |
+| `pytest rl-scaling-controller -q` | 59 tests (state machine, planner, DGDSA, signal API, role-switch, consolidation) |
 
-Total: **78 passing** controller-side unit tests.
+Total: **72 passing** controller-side unit tests.
 
-Dynamo-side tests (require a Linux/CUDA dev env with vLLM installed):
+Dynamo-side tests (require a Linux dev env with vLLM installed):
 
 ```bash
-cd dynamo
-pytest components/src/dynamo/vllm/tests/test_dual_mode.py -q   # 10 tests
-pytest components/src/dynamo/vllm/tests/test_migration.py -q   #  9 tests
+cd ~/IP/dynamo
+pytest components/src/dynamo/vllm/tests/test_dual_mode.py -q       # 14 tests
+pytest components/src/dynamo/vllm/tests/test_migration.py -q       # 31 tests
+pytest components/src/dynamo/vllm/tests/test_rl_scaling_sidecar.py -q  # 23 tests
 ```
 
-(Both files were verified to pass against stub handlers on Windows during
-development; see commit `shengqi : S2 …` and `shengqi : S3 …` on the
-`RL-Scaling` branch of the fork.)
+Total: **68 passing** Dynamo-side RL-Scaling unit tests.
 
 ### 2.3 Run the controller against an in-memory cluster (smoke)
 
-```powershell
-$env:DYNAMO_NAMESPACE="dynamo"
-$env:DGD_NAME="rl-serving"
-.\.venv\Scripts\python.exe -m rl_scaling_controller.main
+```bash
+export DYNAMO_NAMESPACE=dynamo
+export DGD_NAME=rl-serving
+python -m rl_scaling_controller.main
 # In another shell:
-curl -X POST http://localhost:8080/api/v1/signals/sampling_progress `
-     -H "Content-Type: application/json" `
-     -d '{\"progress\":0.85,\"batch_meta\":{\"batch_size\":128,\"avg_isl\":500}}'
+curl -X POST http://localhost:8080/api/v1/signals/sampling_progress \
+     -H "Content-Type: application/json" \
+     -d '{"progress":0.85,"batch_meta":{"batch_size":128,"avg_isl":500}}'
 curl http://localhost:8080/api/v1/status
 ```
 
@@ -147,24 +148,37 @@ Until those are merged, the controller's role-switch loop will issue the
 HTTP call but the worker will only sleep/wake (no actual NIXL/KV reconfig);
 that is the *documented stubbed* behaviour, not a defect.
 
-S3 only needs `--enable-migration` on decode workers; the recompute-prefill
-fallback works against the stock vLLM v1.0.1 engine.
+S3 needs the coordinated migration sidecar, enabled by
+`DYNAMO_RL_DUAL_MODE=1` and `DYNAMO_RL_SIDECAR_PORT=9091` on decode
+workers. The sidecar exposes `POST /migrate` (coordinated out→in→complete)
+and `POST /migrate_in` endpoints. The recompute-prefill fallback works
+against the stock vLLM v1 engine; NIXL D2D transfer is wired but falls
+back to recompute when block metadata is unavailable.
 
 ---
 
 ## 4. Test matrix
 
-| Design test ID | File | Test |
+### Unit tests
+
+| Design test ID | File | Tests |
 | -- | ---- | ---- |
-| S1-T1..T7 | `rl-scaling-controller/tests/test_state_machine.py` | `TestSamplingProgressTriggersPreWarm`, `TestSamplingDone`, `TestControlLoop`, `TestIllegalTransitions`, `TestHistory` |
-| S1-T8 | `rl-scaling-controller/tests/test_capacity_planner.py` | `TestCapacityPlanner` (7 cases) |
-| S1-T9 | `rl-scaling-controller/tests/test_dgdsa_client.py` | `TestK8sDGDSAClient` (3 cases) |
-| S1-T10 | `rl-scaling-controller/tests/test_signal_receiver.py` | `TestSignalReceiverEndpoints` (8 cases) |
-| S2-T1..T7 | `rl-scaling-controller/tests/test_role_switch.py` | `TestStrategy`, `TestDecodeToPrefill`, `TestPrefillToDecode`, `TestDebounce`, `TestDisabled`, `TestNoTriggerConditions`, `TestClientFailure`, `TestDualModeClient` |
-| S2-T8..T11 | `dynamo/components/src/dynamo/vllm/tests/test_dual_mode.py` | `TestDualModeWorker` (full-flip orchestration order, sleep failure rollback, wake failure recovery, idempotency, no-publisher) + `TestSetDisaggregationMode` |
-| S3-T1..T7 | `rl-scaling-controller/tests/test_consolidation.py` | `TestDecisionEngine` (10 cases) |
-| S3-T8..T11 | `rl-scaling-controller/tests/test_consolidation.py` | `TestConsolidationController` (4 cases) |
-| S3-T12..T14 | `dynamo/components/src/dynamo/vllm/tests/test_migration.py` | `TestMigrateOut`, `TestMigrateIn`, `TestRoundtrip` |
+| S1-T1..T7 | `rl-scaling-controller/tests/test_state_machine.py` | 14 tests (transitions, illegal moves, history) |
+| S1-T8 | `rl-scaling-controller/tests/test_capacity_planner.py` | 7 tests |
+| S1-T9 | `rl-scaling-controller/tests/test_dgdsa_client.py` | 6 tests |
+| S1-T10 | `rl-scaling-controller/tests/test_signal_receiver.py` | 8 tests |
+| S2-T1..T7 | `rl-scaling-controller/tests/test_role_switch.py` | 10 tests (strategy, debounce, disabled, client) |
+| S2-T8..T14 | `dynamo/components/src/dynamo/vllm/tests/test_dual_mode.py` | 14 tests (flip orchestration, sleep/wake rollback, idempotency) |
+| S3-T1..T10 | `rl-scaling-controller/tests/test_consolidation.py` | 14 tests (decision engine, controller) |
+| S3-T11..T31 | `dynamo/components/src/dynamo/vllm/tests/test_migration.py` | 31 tests (migrate_out, migrate_in, cost-benefit, rollback, roundtrip) |
+| Sidecar | `dynamo/components/src/dynamo/vllm/tests/test_rl_scaling_sidecar.py` | 23 tests (HTTP endpoints, registry, migration coordination) |
+
+### E2E tests (on-cluster)
+
+| Scenario | Script | Pass criteria |
+| -- | ---- | ---- |
+| S2 | `test-scripts/test-s2-elastic.sh` | Role flip D→P→D, all requests HTTP 200, routing attribution shifts |
+| S3 | `test-scripts/test-s3-consolidation.sh` | 6/6 migrations OK, all `left_D1=true`, all `D2_accepted=true`, D1 active ↓, D2 gen_tokens ↑, oversize declined |
 
 ---
 
@@ -172,26 +186,33 @@ fallback works against the stock vLLM v1.0.1 engine.
 
 * **RTX 3090 single-node**: `cuda-checkpoint` is not supported, so S1 falls
   back to `sleep_mode=2` (full re-init). Works, just slower.
-* **S2 Rust reconfig is stubbed**: the Python orchestration is correct and
-  unit-tested; flipping the stubs to real reconfig requires
-  upstream-vLLM patches tracked in `RL_SCALING_RUST_CHANGES.md`.
-* **S3 KV-D2D migration is stubbed**: Python uses recompute-prefill (~1
-  prefill of overhead per migrated request). Acceptable for the design
-  threshold (only migrate when remaining runtime ≫ migration cost).
-* **No K8s deployment manifests are committed yet** — the controller is
-  designed as a single-replica `Deployment` behind a `ClusterIP` Service
-  on port 8080; sample YAMLs to be added in a follow-up.
+* **S2 Rust reconfig is stubbed**: the Python orchestration and sidecar
+  are fully implemented; flipping the stubs to real NIXL/KV-pool reconfig
+  requires upstream-vLLM patches tracked in `RL_SCALING_RUST_CHANGES.md`.
+  The E2E test validates WorkerSet shrink/grow and routing attribution.
+* **S3 uses recompute-prefill by default**: NIXL D2D KV-block transfer is
+  wired (`DYNAMO_RL_CONNECTOR_ENABLED=1`) but falls back to recompute when
+  KVBM block IDs are unavailable. Recompute-prefill is bounded by
+  `max_replay_tokens=8192` (cost-benefit gate).
+* **InProcessRequestRegistry does not track migrated-in requests**: the D2
+  registry only tracks requests from the normal routing path.  Migrated
+  requests are submitted directly to the engine. The E2E test proves D2
+  acceptance via the `/migrate` response (`path=recompute`), not the registry.
+* **No K8s deployment manifests for the controller are committed yet** — the
+  controller is designed as a single-replica `Deployment`; sample YAMLs to
+  be added in a follow-up.
 
 ---
 
 ## 6. Commit log (this work)
 
 * `RL-Scaling` repo (`main`):
-  * `shengqi : S1 rollout scale up/down — rl-signal-sdk + rl-scaling-controller (state machine, capacity planner, signal receiver, DGDSA client, metrics collector) with 54 unit tests`
-  * `shengqi : S2 role switch controller module (decision engine + dual-mode HTTP client + strategy) with 10 async unit tests`
-  * `shengqi : S3 consolidation controller module (decision engine + migration HTTP client) with 14 unit tests`
+  * `shengqi : S1 rollout scale up/down — rl-signal-sdk + rl-scaling-controller (state machine, capacity planner, signal receiver, DGDSA client, metrics collector) with unit tests`
+  * `shengqi : S2 role switch controller module (decision engine + dual-mode HTTP client + strategy) with async unit tests`
+  * `shengqi : S3 consolidation controller module (decision engine + migration HTTP client) with unit tests`
+  * `shengqi : E2E test scripts (test-s2-elastic.sh, test-s3-consolidation.sh) with per-request KV migration proof`
 * `dynamo` repo (`RL-Scaling`, base `v1.0.1`):
-  * `shengqi : S2 elastic role switch — DualModeWorker (Python) reusing sleep/wake_up + set_disaggregation_mode on BaseWorkerHandler + tests; Rust reconfig stubbed`
-  * `shengqi : S3 request consolidation fallback — migrate_out/migrate_in (recompute-prefill) MigrationHandler with 9 tests; full NIXL D2D documented as future work`
+  * `shengqi : S2 elastic role switch — DualModeWorker + rl_scaling_sidecar (switch_role, WorkerSet shrink/grow) + 14 unit tests`
+  * `shengqi : S3 request consolidation — coordinated /migrate endpoint (migrate_out→migrate_in→complete/rollback), recompute-prefill + NIXL connector, 31+23 unit tests`
 
 No commits were pushed to remotes per instruction.

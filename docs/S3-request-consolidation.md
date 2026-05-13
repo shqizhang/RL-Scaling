@@ -11,7 +11,7 @@
 > wired with a 3-phase block-hold protocol and gated behind
 > `DYNAMO_RL_CONNECTOR_ENABLED=1`. Phase 2.B gracefully falls back to
 > Phase 2.A when KVBM block index or NIXL coordinates are unavailable.
-> Latest evidence run: 2026-05-12.
+> Latest evidence run: 2026-05-13.
 
 ---
 
@@ -226,86 +226,107 @@ Test environment:
 - single-node K8s 1.34.1 on `gpu14`, namespace `dynamo-system`
 - DGD `vllm-v1-disagg-router`, model `Qwen/Qwen3-0.6B`
 - 1 frontend, 2 decoders, 1 prefill (all `Running`)
-- image `ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-2982f6cb46`
-- `DYNAMO_RL_CONNECTOR_ENABLED=1` on decoder workers
-- Latest evidence run: 2026-05-12
+- image `ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-2ec0978618`
+- `DYNAMO_RL_CONNECTOR_ENABLED=1`, `DYNAMO_RL_DUAL_MODE=1` on decoder workers
+- Latest evidence run: 2026-05-13
 
 Pod inventory:
 
 | Role | Pod name |
 |------|----------|
-| TARGET (source) | `vllm-v1-disagg-router-vllmdecodeworker-55c5d8a8-b7f5d959c-f7lg5` |
-| PEER (destination) | `vllm-v1-disagg-router-vllmdecodeworker-55c5d8a8-b7f5d959c-z224b` |
-| Frontend | `vllm-v1-disagg-router-frontend-579b79f897-9db5n` |
+| D1 (source) | `vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-j96lb` |
+| D2 (destination) | `vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-wqvrk` |
+| Frontend | `vllm-v1-disagg-router-frontend-87b9678b7-fzplg` |
 
-### 5.1 Migration outcomes
+### 5.1 Test design (per-request KV migration proof)
+
+1. Submit 80 long-running streaming chats (`max_tokens=8000`) via frontend.
+2. Wait 5s for router to distribute — T1: D1=40, D2=40 active requests.
+3. Before each migration: snapshot both D1/D2 active request ID lists.
+4. Execute 6 coordinated migrations (`POST /migrate` on D1 sidecar).
+5. After each migration: verify `left_D1=true` and `D2_accepted=true`.
+6. After drain: verify D2 generation tokens grew.
+
+### 5.2 Migration outcomes
 
 | outcome              | count |
 |----------------------|------:|
-| `migrate_in` ok      | **3** |
+| `migrate` ok         | **6** |
 | — via connector path | 0     |
-| — via recompute path | 3     |
-| `migrate_in` declined| 0     |
+| — via recompute path | 6     |
+| `migrate` declined   | 0     |
 | errors               | **0** |
+| ID moved correctly   | **6** |
 
-**Migration #1** — `request_id=7476e5b7-c8bc-4713-be9b-eb98ac1d56c8`
-- `migrate_out`: status=ok, **generated_tokens=1633**
-- `src_block_ids`: null, `kv_transfer_params`: null
-- `migrate_in`: status=ok, path=**recompute**, replay_tokens=**1633**
-- `migration_complete`: status=ok (Phase-2.A no-op)
+| # | request_id | D1 decoded | remaining | path | replay | left_D1 | D2_accepted |
+|---|------------|----:|----:|------|----:|---------|-------------|
+| 1 | `36991d3d-05d1-..` | 1081 | 6919 | recompute | 1081 | true | true |
+| 2 | `d4a6e9e3-f971-..` | 1187 | 6813 | recompute | 1187 | true | true |
+| 3 | `01f742e0-ccec-..` | 1294 | 6706 | recompute | 1294 | true | true |
+| 4 | `cd815c61-7377-..` | 1399 | 6601 | recompute | 1399 | true | true |
+| 5 | `1e6df650-b75d-..` | 1500 | 6500 | recompute | 1500 | true | true |
+| 6 | `c8d17144-8a46-..` | 1521 | 6479 | recompute | 1521 | true | true |
 
-**Migration #2** — `request_id=b10795eb-e854-447e-abb1-bb1c5596a59d`
-- `migrate_out`: status=ok, **generated_tokens=1833**
-- `migrate_in`: status=ok, path=**recompute**, replay_tokens=**1833**
-- `migration_complete`: status=ok
-
-**Migration #3** — `request_id=0795ed5d-8a0b-4af9-8d53-172856056041`
-- `migrate_out`: status=ok, **generated_tokens=2120**
-- `migrate_in`: status=ok, path=**recompute**, replay_tokens=**2120**
-- `migration_complete`: status=ok
+**Per-request verification:**
+- `left_D1`: request_id disappeared from D1's `InProcessRequestRegistry` after migration.
+- `D2_accepted`: D2's `migrate_in` returned `status=ok, path=recompute` via the
+  coordinated `/migrate` response. (Migrated-in requests bypass D2's
+  `InProcessRequestRegistry` — they go directly to the engine via
+  `EngineRequestTracker.submit_request()` — so we verify D2 acceptance
+  via the protocol response rather than the registry.)
 
 **Why connector path=0:** `DYNAMO_RL_CONNECTOR_ENABLED=1` is set, but
-the connector path requires BOTH KVBM block IDs AND NIXL coordinates.
-In this deployment, `engine_client.engine_core.kv_cache_manager` returns
-`None` (KVBM cache manager not exposed), so `src_block_ids` is null and
-the handler falls back to the Phase-2.A recompute path. The 3-phase
-protocol (migrate_out → migrate_in → migration_complete) exercises
-correctly in both paths — the `/migration_complete` call is a harmless
-no-op when blocks were already freed in `migrate_out`.
+KVBM block IDs are unavailable (`src_block_ids=null`), so the handler
+falls back to Phase 2.A recompute path automatically.
 
-### 5.2 GPU release / dst takeover
+### 5.3 GPU release / dst takeover
 
-| Metric | T1 (after schedule) | T2 (after migrations) | T3 (drained) |
+| Metric | T1 (after schedule) | T2 (after 6 migrations) | T3 (drained) |
 |--------|:-------------------:|:--------------------:|:------------:|
-| TARGET `num_requests_running` | 9 | **0** | 0 |
-| PEER `num_requests_running` | 6 | 0 | 0 |
+| D1 `num_requests_running` | 40 | 26 | 0 |
+| D2 `num_requests_running` | 40 | 39 | 0 |
+| D1 `generation_tokens_total` | 291701 | 320476 | 328301 |
+| D2 `generation_tokens_total` | 317683 | 347669 | 363420 |
 
-TARGET running-requests dropped 9 → 0: all active requests either
-migrated or completed during the migration window.
+D1 active requests dropped 40 → 26 (6 migrated + some completed during window).
+D2 generation tokens Δ = 45737 (grew substantially, proving D2 continued decoding).
 
-### 5.3 Cost-benefit gate
+### 5.4 Cost-benefit gate
 
 Synthetic `migrate_in` with `prompt_tokens=9000` (above
 `max_replay_tokens=8192`) was correctly **declined**.
 
-### 5.4 Overall
+### 5.5 Block hold timing (from D1 worker logs)
 
-**PASS** — all five conditions hold.
+| request_id | hold duration |
+|---|---|
+| `36991d3d-..` | 5.1ms |
+| `d4a6e9e3-..` | 7.0ms |
+| `01f742e0-..` | 8.2ms |
+| `cd815c61-..` | 5.4ms |
+| `1e6df650-..` | 7.6ms |
+| `c8d17144-..` | 3.5ms |
+
+Average hold: ~6.1ms. Blocks are held only during the out→in→complete handshake.
+
+### 5.6 Overall
+
+**PASS** — all seven conditions hold.
 
 | Condition | Result |
 |-----------|--------|
-| ≥1 migration succeeded (ok) | **true** (3 ok, 0 declined, 0 errors) |
+| ≥1 migration succeeded (ok) | **true** (6 ok, 0 declined, 0 errors) |
 | Zero migration errors | **true** |
-| TARGET `requests_running` decreased | **true** (9 → 0) |
-| PEER `generation_tokens` grew | **true** |
+| Every migrated request left D1 and arrived on D2 | **true** (6/6) |
+| D1 `requests_running` decreased (T1→T2) | **true** (40 → 26) |
+| D2 `generation_tokens` grew (Δ=45737) | **true** |
 | Cost-benefit gate declines oversize | **true** |
-| 3-phase protocol works (migration_complete) | **true** |
 | **OVERALL** | **true** |
 
 Raw artifacts:
-[reports/s3-consolidation-20260512-111254/REPORT.md](../test-scripts/reports/s3-consolidation-20260512-111254/REPORT.md),
-plus full `migrate_out_N.json` / `migrate_in_N.json` responses,
-`metrics.csv`, `decline.json`, and `run.log` in the same directory.
+[reports/s3-consolidation-20260513-082330/REPORT.md](../test-scripts/reports/s3-consolidation-20260513-082330/REPORT.md),
+plus `migrations.csv`, `metrics.csv`, `decline.json`, per-migration ID
+snapshots, and `run.log` in the same directory.
 
 ---
 

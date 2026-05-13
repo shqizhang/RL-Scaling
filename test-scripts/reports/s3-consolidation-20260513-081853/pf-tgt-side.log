@@ -1,0 +1,5 @@
+Forwarding from 127.0.0.1:19191 -> 9091
+Forwarding from [::1]:19191 -> 9091
+Handling connection for 19191
+E0513 08:18:54.605970  180102 portforward.go:424] "Unhandled Error" err="an error occurred forwarding 19191 -> 9091: error forwarding port 9091 to pod 84f9ecca454971d3f0fe864eac2ebf7aec162e01975ddc7159a874b4d1dc2eee, uid : failed to execute portforward in network namespace \"/var/run/netns/cni-90df15b7-98ae-3e7f-121d-97f7e4ba91bb\": failed to connect to localhost:9091 inside namespace \"84f9ecca454971d3f0fe864eac2ebf7aec162e01975ddc7159a874b4d1dc2eee\", IPv4: dial tcp4 127.0.0.1:9091: connect: connection refused IPv6 dial tcp6 [::1]:9091: connect: connection refused "
+error: lost connection to pod

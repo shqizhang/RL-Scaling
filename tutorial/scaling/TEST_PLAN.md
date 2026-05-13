@@ -33,36 +33,33 @@ The controller **must drive the DGDSAs through `idle → warm_up → active → 
 This is the **most observable** scenario: every step has a K8s-level invariant.
 
 ### S2 · Elastic role switch (P ↔ D)
-The controller asks a worker to flip its role. The worker must:
-- accept `POST /switch_role` (registered when launched with `--dual-mode`),
+The sidecar asks a worker to flip its role. The worker must:
+- accept `POST /switch_role` on the in-pod sidecar (port 9091),
 - run the orchestrated *sleep → reconfig → wake* sequence,
-- end up reporting the new role on its handler (`get_disaggregation_mode()`),
-- not lose / corrupt in-flight requests (drained by `sleep(level=2)`).
+- be removed from / re-added to the discovery WorkerSet,
+- not lose / corrupt in-flight requests (drained before sleep).
 
-⚠️ **Known stub:** `_reconfig_nixl()` and `_reconfig_kv_pool()` in
-`components/src/dynamo/vllm/dual_mode.py` log a warning and return — the
-underlying Rust APIs don't exist yet. So "after the flip the worker actually
-serves the new role" can only be observed *logically* (handler field +
-publish-event), not via routing changes in vLLM. We mark this in the test
-expectations explicitly.
+The E2E test (`test-s2-elastic.sh`) validates WorkerSet shrink/grow and
+routing attribution via per-pod Prometheus counters. The actual NIXL/KV
+reconfig step is stubbed pending upstream Rust patches — the test verifies
+the orchestration, not GPU-level memory layout.
 
 ### S3 · Request consolidation
-When two decode workers are unevenly loaded the controller picks `(source, target)`,
-issues `migrate_one("*")` per request, and shrinks the DGDSA. Per-request:
-- source's `RequestTracker.abort_request()` runs (engine drops the request),
-- target receives a **resubmitted prompt = `prompt_tokens + generated_tokens`** (recompute-prefill),
-- generation continues without the client seeing an error,
-- final completion is byte-identical when the model is greedy and the seed is fixed.
+When two decode workers are unevenly loaded, the sidecar's coordinated
+`POST /migrate` endpoint moves an in-flight request from source (D1) to
+target (D2). Per-request:
+- D1 `migrate_out`: snapshot prompt+generated tokens, hold blocks (defer abort),
+- D1 internally calls D2 `POST /migrate_in` with the state snapshot,
+- D2 `migrate_in`: cost-benefit check (`max_replay_tokens=8192`), recompute-prefill,
+- on success: D1 `migration_complete` aborts the held request and frees blocks,
+- on failure: D1 `migration_rollback` releases the hold, request continues on D1.
 
-⚠️ **No KV-block transfer** happens. The recompute-prefill fallback is
-intentional (see design doc S3 feasibility note). Therefore we *do not* track
-individual KV-block IDs during migration — there's nothing to track. We instead
-validate by:
-1. comparing migrated-vs-baseline output hashes (correctness),
-2. confirming `frontend.dynamo_frontend_model_migration_total` increments,
-3. confirming the `kvbm_*` block-tier counters do **not** show D2H/D2D activity
-   attributable to the migration (negative assertion — there should be no KV
-   transfer because we don't move blocks).
+The E2E test (`test-s3-consolidation.sh`) proves per-request KV consistency by:
+1. recording D1/D2 active request ID lists before and after each migration,
+2. verifying `left_D1=true` (ID gone from D1 registry) and `D2_accepted=true`
+   (via `/migrate` response `path=recompute`),
+3. verifying D2 `generation_tokens_total` grew after drain,
+4. testing the cost-benefit gate with an oversize synthetic `migrate_in`.
 
 ---
 
@@ -120,53 +117,48 @@ the **negative** assertion (block-tier counters stay flat during recompute-prefi
 
 ### S2 acceptance matrix
 
-S2 needs `--dual-mode --initial-role decode` set on at least one worker pod.
-The current deployment **does not** have dual-mode workers — they're standard
-disagg-router prefill/decode pods. To run S2 we need to redeploy with that flag
-or override the DGD's worker `command:`. See §5.
+S2 needs dual-mode decode pods (`DYNAMO_RL_DUAL_MODE=1`, `DYNAMO_RL_SIDECAR_PORT=9091`).
 
 | Step | Source of truth | Where to look | Pass criterion |
 |---|---|---|---|
-| Worker reports a role | `GET 127.0.0.1:9090/role` (NEW endpoint to add — see §6) | direct curl | response `{"role":"decode"}` |
-| Controller has `ROLE_SWITCH_ENABLED=true` | `GET /api/v1/status` (NEW field — see §6) | curl | `role_switch_enabled=true` |
-| Flip request returns `ok` | `POST 127.0.0.1:9090/switch_role` (already implemented) | response body | `status=ok`, `switch_time_ms` populated |
-| Worker drained during flip | log line `[DualMode] sleep(level=2)` then `wake_up` | `kubectl logs` | both lines present in order |
-| New role persisted | `GET /role` after flip | curl | reports new role |
-| `WorkerRoleChanged` event published | `_emit_role_changed` log line | logs | one line per flip |
-| **Stub call-out** | NIXL/KV-pool reconfig | logs | warnings present (`stubbed; no Rust reconfig API yet`) — this is *expected*; we only assert the log shows the stub was reached |
-
-Grafana panel for S2: there is no dashboard panel today that shows
-`worker_type` flips. We rely on (a) controller logs and (b) the worker
-`/role` endpoint. (Adding a `dynamo_worker_current_role{role=}` gauge is a
-deferrable improvement.)
+| Discover pods | `kubectl get pod` with readiness filter | test script output | ≥2 decode pods Ready |
+| Baseline metrics | `GET :9090/metrics` per pod | `T0_baseline` | `generation_tokens_total` captured |
+| Role flip D→P | `POST :9091/switch_role {"target_role":"prefill"}` | sidecar response | `status=ok`, `switch_time_ms` populated |
+| WorkerSet shrinks | Discovery CR diff | test script | D1 removed from CR |
+| D1 not receiving traffic | `vllm:num_requests_running` on D1 | metrics | drops to 0 |
+| Role flip P→D | `POST :9091/switch_role {"target_role":"decode"}` | sidecar response | `status=ok` |
+| WorkerSet grows | Discovery CR diff | test script | D1 re-added to CR |
+| D1 receives traffic again | `generation_tokens_total` on D1 | metrics | delta > 0 after re-join |
+| No HTTP errors | all streaming requests | test script | `HTTP_ERRORS == 0` |
 
 ### S3 acceptance matrix
 
-S3 needs `--enable-migration` on decode workers and ≥ 2 decode replicas.
+S3 needs dual-mode decode pods with `DYNAMO_RL_CONNECTOR_ENABLED=1` and ≥ 2 decode replicas.
 
 | Step | Source of truth | Where to look | Pass criterion |
 |---|---|---|---|
-| ≥ 2 decode replicas, both serving | `kubectl get dgdsa` + `vllm:num_requests_running` per pod | Disagg dashboard **inflight per worker** | both > 0 with uneven load |
-| Migration triggered | controller log `consolidation tick: source=...` | logs | one line per planned pair |
-| Source request aborted | `vllm:num_requests_running` on source drops to 0 | dashboard | step-down to 0 |
-| Target receives resubmitted prompt | target log: `migrate_in: replay_prompt_len=…` | logs | length = `prompt + previously_generated` |
-| **Output correctness** | byte-compare baseline vs migrated when seed fixed + greedy | `sha256sum` of completion text | digests match |
-| **No KV transfer occurred** | `kvbm_offload_blocks_d2d`, `kvbm_offload_blocks_d2h`, `kvbm_onboard_blocks_*` | KVBM dashboard | counters do not increase during migration window |
-| Frontend migration counter increments | `dynamo_frontend_model_migration_total{migration_type="ongoing_request"}` | Dynamo dashboard **Frontend migrations** | `Δ ≥ migrated_requests` |
-| DGDSA shrunk | `kubectl get dgdsa -w` | Operator dashboard | decode replicas decrement |
-| Source pod terminated | `kube_pod_status_phase{phase="Succeeded"\|"Failed"}` | Disagg dashboard | source pod gone |
+| ≥ 2 decode replicas, both serving | `kubectl get pod` + `vllm:num_requests_running` | test script | both > 0 after load |
+| Pre-migration ID snapshot | `GET :9091/v1/active_requests` on D1, D2 | test script | ID lists captured |
+| Migration triggered | `POST :9091/migrate {target_url=D2}` on D1 | sidecar response | `status=ok` |
+| Request left D1 | D1 `active_requests` before vs after | test script | `left_D1=true` |
+| D2 accepted | `/migrate` response `path=recompute\|connector` | test script | `D2_accepted=true` |
+| Token state preserved | `/migrate` response `generated_token_count`, `replay_tokens` | test report | replay = prompt + generated |
+| D1 active count decreased | `vllm:num_requests_running` T1→T2 | metrics | D1 count dropped |
+| D2 generation tokens grew | `vllm:generation_tokens_total` T1→T3 | metrics | Δ > 0 |
+| Cost-benefit gate works | synthetic oversize `migrate_in` (9000 tokens) | sidecar response | `status=declined` |
+| Block hold timing | D1 worker logs: `hold` → `releasing` | `kubectl logs` | hold duration < 50ms |
 
 #### About "recording each KV block ID"
-Not applicable — recompute-prefill is the chosen fallback, no KV block is moved
-between workers. The "correctness" question reduces to:
-- Did the destination engine produce the same continuation it would have
-  produced if it had served the request from scratch?
-- Did the client see no error / disconnect?
+Recompute-prefill is the default path. No KV blocks are transferred between
+workers — D2 re-prefills the full prompt+generated sequence. The "correctness"
+question is answered by:
+- `left_D1=true` (D1 released the request),
+- `D2_accepted=true` (D2 accepted and started decoding),
+- D2 `generation_tokens_total` grew (D2 is actually generating tokens),
+- hold time is short (blocks held only during the out→in→complete handshake).
 
-This is exactly what items 5 ("output correctness") and 6 ("no KV transfer")
-above test. A future S3-v2 with NIXL D2D will need block-id-level tracing
-(KVBM emits `kvbm_*` per block move, but per-block IDs aren't currently
-exposed as metric labels — they would need a tracing/event log capture).
+A future phase with NIXL D2D will need block-id-level tracing (KVBM emits
+`kvbm_*` per block move).
 
 ---
 
@@ -184,75 +176,42 @@ After the run, copy the panel time range into the `summary.md` for archival.
 
 ---
 
-## 5. Pre-flight changes needed for S2/S3
+## 5. Pre-flight: deploy with dual-mode decode
 
-Before S2/S3 can be exercised end-to-end the DGD must be re-applied with
-worker flags:
-
-```yaml
-VllmDecodeWorker:
-  args:
-    - --model
-    - ${MODEL_NAME}
-    - --disaggregation-mode
-    - decode
-    - --dual-mode                # NEW (for S2)
-    - --enable-migration         # NEW (for S3)
-  resources: { limits: { gpu: "2" } }   # 2 decode replicas for S3
-```
-
-This is a *deploy-time* change. Use `deploy-dynamo.sh --router` after editing
-`manifests/dgd-vllm-disagg-router.yaml` (overwrite mode is now in place — the
-script will tear down the existing stack first).
-
----
-
-## 6. Test-script gaps & required fixes
-
-The current `test-scripts/test-s{1,2,3}.sh` reference HTTP endpoints that the
-controller does not implement. Concretely:
-
-| Script | Reference | Status | Action |
-|---|---|---|---|
-| test-s1 | `GET /api/v1/status.role_switch_enabled` | absent | not needed for S1 — remove |
-| test-s1 | `dynamo_kvbm_state{}` metric | wrong name; KVBM uses `kvbm_*` and per-tier counters | switch to `dynamo_component_kv_cache_events_applied` (per design-docs/router-design.md) |
-| test-s2 | `GET 127.0.0.1:9090/v1/role` | not implemented | add a `/role` GET on worker (1-line) |
-| test-s2 | `GET /api/v1/events?type=...` on controller | not implemented | replace with controller-log scraping |
-| test-s2 | `POST /api/v1/debug/generate` | not implemented | drop — exercise via real frontend `/v1/completions` |
-| test-s2 | default `NAMESPACE=dynamo` | wrong (workers live in `dynamo-system`) | default to `dynamo-system` |
-| test-s3 | `POST /api/v1/admin/consolidation/tick` | not implemented | trigger via `signals/sampling_done` + tight loop, or expose admin tick (preferred — controller change) |
-| test-s3 | `dynamo-component=decode` label selector | wrong; actual label is `nvidia.com/dynamo-component-type=worker` | update selector |
-| test-s3 | `--pin-worker-index` field on `/api/v1/debug/generate` | endpoint absent | use frontend's `--worker-id` extension or pin via separate decode services |
-
-Acceptance criteria for the script-fix follow-up commit:
-- All scripts use defaults that match the as-deployed cluster (ns, label selectors, image tag).
-- Zero references to non-existent controller endpoints.
-- Each script writes a `summary.md` under `/tmp/rls-test/<scenario>-<ts>/` with PASS/FAIL per row of the matrices in §3.
-
-These edits will land alongside the deploy-time DGD changes from §5.
-
----
-
-## 7. Run order & expected outputs
+Before S2/S3 can be exercised, decode pods must run with dual-mode patches:
 
 ```bash
-# S1 — first, only K8s + DGDSA scaling exercised
-bash test-scripts/test-s1.sh
-# expect: 5 numbered "blue" sections all green, "S1 PASSED"
-
-# Then redeploy with --dual-mode --enable-migration (§5)
-bash deploy/RL-Scaling/deploy-dynamo.sh --router
-
-# S2 — role flip on a single dual-mode decode pod
-TARGET_POD=$(kubectl -n dynamo-system get pod -l ...vllmdecodeworker -o jsonpath='{.items[0].metadata.name}')
-TARGET_POD=$TARGET_POD NAMESPACE=dynamo-system bash test-scripts/test-s2.sh
-# expect: handler.disaggregation_mode flips, /role reports new role, stub log warnings present
-
-# S3 — uneven load + consolidation tick
-NAMESPACE=dynamo-system DGD_NAME=vllm-v1-disagg-router bash test-scripts/test-s3.sh
-# expect: source decode pod drains + DGDSA shrinks; output sha matches baseline; kvbm_* counters flat
+# Apply dual-mode env vars + kv-transfer config on decode workers
+IMAGE=ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-<sha> \
+  ./test-scripts/apply-dual-mode-decode.sh
 ```
 
-After each run, archive the run dir and append a row to a top-level
-`tutorial/scaling/test-runs.md` ledger (date, image SHA, scenario, outcome,
-summary.md link).
+Required env vars on decode pods:
+- `DYNAMO_RL_DUAL_MODE=1`
+- `DYNAMO_RL_SIDECAR_PORT=9091`
+- `DYNAMO_RL_CONNECTOR_ENABLED=1` (for S3 NIXL path, falls back to recompute)
+- `DYN_SYSTEM_PORT=9090`
+
+Verify:
+```bash
+kubectl -n dynamo-system get pod -l nvidia.com/dynamo-graph-deployment-name=vllm-v1-disagg-router -o wide
+# Expect: ≥2 decode pods Ready, 1 prefill pod, 1 frontend
+```
+
+---
+
+## 6. Run order & expected outputs
+
+```bash
+# S2 — role flip on a dual-mode decode pod
+cd test-scripts && bash test-s2-elastic.sh
+# expect: D→P→D flip, all requests HTTP 200, WorkerSet shrink/grow confirmed
+
+# S3 — coordinated migration with per-request tracking
+cd test-scripts && bash test-s3-consolidation.sh
+# expect: 6/6 MIG_OK, OVERALL=true, REPORT.md generated under reports/
+```
+
+After each run, the test generates a timestamped report under
+`test-scripts/reports/` with full evidence (ID lists, per-migration table,
+worker logs, pass/fail verdict).

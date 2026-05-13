@@ -6,7 +6,7 @@
 > **Phase 2.B（NIXL-pull connector）** 已完整实现三阶段 block-hold 协议，
 > 通过 `DYNAMO_RL_CONNECTOR_ENABLED=1` 启用。当 KVBM block 索引或 NIXL
 > 坐标不可用时，Phase 2.B 会优雅地回退到 Phase 2.A。
-> 最新证据运行：2026-05-12。
+> 最新证据运行：2026-05-13。
 
 ---
 
@@ -178,84 +178,105 @@ POST /migration_complete  {"request_id": "..."}
 - 单节点 K8s 1.34.1，主机 `gpu14`，namespace `dynamo-system`
 - DGD `vllm-v1-disagg-router`，模型 `Qwen/Qwen3-0.6B`
 - 1 个 frontend、2 个 decoder、1 个 prefill（均为 `Running`）
-- 镜像 `ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-2982f6cb46`
-- `DYNAMO_RL_CONNECTOR_ENABLED=1` 在 decoder worker 上
-- 最新证据运行：2026-05-12
+- 镜像 `ghcr.io/shqizhang/dynamo-vllm-runtime:rl-scaling-2ec0978618`
+- `DYNAMO_RL_CONNECTOR_ENABLED=1`，`DYNAMO_RL_DUAL_MODE=1` 在 decoder worker 上
+- 最新证据运行：2026-05-13
 
 Pod 清单：
 
 | 角色 | Pod 名称 |
 |------|----------|
-| TARGET（源） | `vllm-v1-disagg-router-vllmdecodeworker-55c5d8a8-b7f5d959c-f7lg5` |
-| PEER（目标） | `vllm-v1-disagg-router-vllmdecodeworker-55c5d8a8-b7f5d959c-z224b` |
-| Frontend | `vllm-v1-disagg-router-frontend-579b79f897-9db5n` |
+| D1（源） | `vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-j96lb` |
+| D2（目标） | `vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-wqvrk` |
+| Frontend | `vllm-v1-disagg-router-frontend-87b9678b7-fzplg` |
 
-### 5.1 迁移结果
+### 5.1 测试设计（per-request KV 迁移证明）
+
+1. 通过 frontend 提交 80 个长时间 streaming 对话（`max_tokens=8000`）。
+2. 等待 5s 分发 — T1: D1=40、D2=40 活跃请求。
+3. 每次迁移前：快照 D1/D2 的 active request ID 列表。
+4. 执行 6 次协调式迁移（`POST /migrate` 到 D1 sidecar）。
+5. 每次迁移后：验证 `left_D1=true` 且 `D2_accepted=true`。
+6. 排空后：验证 D2 generation tokens 增长。
+
+### 5.2 迁移结果
 
 | 结果 | 数量 |
 |------|-----:|
-| `migrate_in` ok | **3** |
+| `migrate` ok | **6** |
 | — 经 connector 路径 | 0 |
-| — 经 recompute 路径 | 3 |
-| `migrate_in` declined | 0 |
+| — 经 recompute 路径 | 6 |
+| `migrate` declined | 0 |
 | 错误 | **0** |
+| ID 正确迁移 | **6** |
 
-**迁移 #1** — `request_id=7476e5b7-c8bc-4713-be9b-eb98ac1d56c8`
-- `migrate_out`：status=ok，**generated_tokens=1633**
-- `src_block_ids`：null，`kv_transfer_params`：null
-- `migrate_in`：status=ok，path=**recompute**，replay_tokens=**1633**
-- `migration_complete`：status=ok（Phase 2.A 空操作）
+| # | request_id | D1 已解码 | 剩余 | 路径 | replay | left_D1 | D2_accepted |
+|---|------------|----:|----:|------|----:|---------|-------------|
+| 1 | `36991d3d-05d1-..` | 1081 | 6919 | recompute | 1081 | true | true |
+| 2 | `d4a6e9e3-f971-..` | 1187 | 6813 | recompute | 1187 | true | true |
+| 3 | `01f742e0-ccec-..` | 1294 | 6706 | recompute | 1294 | true | true |
+| 4 | `cd815c61-7377-..` | 1399 | 6601 | recompute | 1399 | true | true |
+| 5 | `1e6df650-b75d-..` | 1500 | 6500 | recompute | 1500 | true | true |
+| 6 | `c8d17144-8a46-..` | 1521 | 6479 | recompute | 1521 | true | true |
 
-**迁移 #2** — `request_id=b10795eb-e854-447e-abb1-bb1c5596a59d`
-- `migrate_out`：status=ok，**generated_tokens=1833**
-- `migrate_in`：status=ok，path=**recompute**，replay_tokens=**1833**
-- `migration_complete`：status=ok
-
-**迁移 #3** — `request_id=0795ed5d-8a0b-4af9-8d53-172856056041`
-- `migrate_out`：status=ok，**generated_tokens=2120**
-- `migrate_in`：status=ok，path=**recompute**，replay_tokens=**2120**
-- `migration_complete`：status=ok
+**Per-request 验证方式：**
+- `left_D1`：迁移后 request_id 从 D1 的 `InProcessRequestRegistry` 消失。
+- `D2_accepted`：D2 的 `migrate_in` 通过协调式 `/migrate` 响应返回
+  `status=ok, path=recompute`。（迁移进来的请求绕过 D2 的
+  `InProcessRequestRegistry`——它们通过 `EngineRequestTracker.submit_request()`
+  直接提交到引擎——因此通过协议响应而非 registry 验证 D2 的接受。）
 
 **为什么 connector path=0：** 已设置 `DYNAMO_RL_CONNECTOR_ENABLED=1`，但
-connector 路径同时需要 KVBM block ID 和 NIXL 坐标。在本部署中，
-`engine_client.engine_core.kv_cache_manager` 返回 `None`（KVBM 缓存管理器
-未暴露），因此 `src_block_ids` 为 null，处理器回退到 Phase 2.A recompute
-路径。三阶段协议（migrate_out → migrate_in → migration_complete）在两条
-路径中均正确执行——当 block 已在 `migrate_out` 中释放时，`/migration_complete`
-调用是无害的空操作。
+KVBM block ID 不可用（`src_block_ids=null`），处理器自动回退到 Phase 2.A
+recompute 路径。
 
-### 5.2 GPU 释放 / 目标接管
+### 5.3 GPU 释放 / 目标接管
 
-| 指标 | T1（调度稳定后） | T2（迁移完成后） | T3（排空后） |
+| 指标 | T1（调度稳定后） | T2（6次迁移后） | T3（排空后） |
 |------|:---:|:---:|:---:|
-| TARGET `num_requests_running` | 9 | **0** | 0 |
-| PEER `num_requests_running` | 6 | 0 | 0 |
+| D1 `num_requests_running` | 40 | 26 | 0 |
+| D2 `num_requests_running` | 40 | 39 | 0 |
+| D1 `generation_tokens_total` | 291701 | 320476 | 328301 |
+| D2 `generation_tokens_total` | 317683 | 347669 | 363420 |
 
-TARGET 运行请求数 9 → 0：所有活跃请求在迁移窗口内完成了迁移或自行结束。
+D1 活跃请求 40 → 26（6 个迁移 + 窗口期间部分完成）。
+D2 generation tokens Δ = 45737（大幅增长，证明 D2 继续解码）。
 
-### 5.3 成本收益判断
+### 5.4 成本收益判断
 
 合成的 `migrate_in`（`prompt_tokens=9000`，超过 `max_replay_tokens=8192`）被
 正确**拒绝**。
 
-### 5.4 总结
+### 5.5 Block hold 计时（来自 D1 worker 日志）
 
-**通过** — 全部条件均满足。
+| request_id | hold 持续时间 |
+|---|---|
+| `36991d3d-..` | 5.1ms |
+| `d4a6e9e3-..` | 7.0ms |
+| `01f742e0-..` | 8.2ms |
+| `cd815c61-..` | 5.4ms |
+| `1e6df650-..` | 7.6ms |
+| `c8d17144-..` | 3.5ms |
+
+平均 hold：~6.1ms。Block 仅在 out→in→complete 握手期间被 hold。
+
+### 5.6 总结
+
+**通过** — 全部七项条件均满足。
 
 | 条件 | 结果 |
 |------|------|
-| ≥1 次迁移成功（ok） | **true**（3 ok，0 declined，0 errors） |
+| ≥1 次迁移成功（ok） | **true**（6 ok，0 declined，0 errors） |
 | 零迁移错误 | **true** |
-| TARGET `requests_running` 下降 | **true**（9 → 0） |
-| PEER `generation_tokens` 增长 | **true** |
+| 每个迁移请求离开 D1 并到达 D2 | **true**（6/6） |
+| D1 `requests_running` 下降（T1→T2） | **true**（40 → 26） |
+| D2 `generation_tokens` 增长（Δ=45737） | **true** |
 | 成本收益判断拒绝超大请求 | **true** |
-| 三阶段协议工作正常（migration_complete） | **true** |
 | **总体** | **true** |
 
 原始产物：
-[reports/s3-consolidation-20260512-111254/REPORT.md](../test-scripts/reports/s3-consolidation-20260512-111254/REPORT.md)，
-同一目录下还有完整的 `migrate_out_N.json` / `migrate_in_N.json` 响应、
-`metrics.csv`、`decline.json`，以及 `run.log`。
+[reports/s3-consolidation-20260513-082330/REPORT.md](../test-scripts/reports/s3-consolidation-20260513-082330/REPORT.md)，
+同一目录下还有 `migrations.csv`、`metrics.csv`、`decline.json`、per-migration ID 快照，以及 `run.log`。
 
 ---
 

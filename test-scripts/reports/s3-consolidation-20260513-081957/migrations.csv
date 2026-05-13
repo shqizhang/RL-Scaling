@@ -1,0 +1,7 @@
+iter,status,request_id,d1_decoded,max_tokens,remaining,path,replay_tokens,d1_pre,d2_pre,d1_post,d2_post,id_left_d1,id_on_d2,rolled_back
+1,?,-,0,0,0,-,-,40,40,39,40,n/a,n/a,False
+2,?,-,0,0,0,-,-,39,40,38,40,n/a,n/a,False
+3,?,-,0,0,0,-,-,38,40,37,40,n/a,n/a,False
+4,?,-,0,0,0,-,-,37,40,36,40,n/a,n/a,False
+5,?,-,0,0,0,-,-,36,40,35,40,n/a,n/a,False
+6,?,-,0,0,0,-,-,34,39,33,39,n/a,n/a,False

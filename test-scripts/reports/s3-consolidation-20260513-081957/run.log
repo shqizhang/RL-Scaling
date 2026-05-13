@@ -1,0 +1,54 @@
+[08:19:57] TARGET (source)     = vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-j96lb
+[08:19:57] PEER   (destination)= vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-wqvrk
+[08:19:57] FRONTEND=vllm-v1-disagg-router-frontend-87b9678b7-fzplg
+[08:19:57] PEER_IP=10.244.0.168
+[08:19:58] warming
+[08:20:00] ==== Phase 1: submitting 80 long chats (max_tokens=8000)
+[08:20:01] waiting 5s for requests to distribute and start decoding...
+[08:20:07] T1 active: D1=40  D2=40
+[08:20:07] ==== Phase 2: coordinated migrations (up to 6x) D1 -> D2
+[08:20:07] --- Migration #1  [pre: D1=40, D2=40]
+[08:20:07]   request_id = -
+[08:20:07]   D1 decoded 0 tokens (prompt=0, max_tokens=0, remaining=0)
+[08:20:07]   result: status=? path=- replay=- rolled_back=False
+[08:20:07]   ID tracking: left_D1=n/a, on_D2=n/a
+[08:20:07]   [post: D1=39, D2=40]
+[08:20:08] --- Migration #2  [pre: D1=39, D2=40]
+[08:20:09]   request_id = -
+[08:20:09]   D1 decoded 0 tokens (prompt=0, max_tokens=0, remaining=0)
+[08:20:09]   result: status=? path=- replay=- rolled_back=False
+[08:20:09]   ID tracking: left_D1=n/a, on_D2=n/a
+[08:20:09]   [post: D1=38, D2=40]
+[08:20:09] --- Migration #3  [pre: D1=38, D2=40]
+[08:20:10]   request_id = -
+[08:20:10]   D1 decoded 0 tokens (prompt=0, max_tokens=0, remaining=0)
+[08:20:10]   result: status=? path=- replay=- rolled_back=False
+[08:20:10]   ID tracking: left_D1=n/a, on_D2=n/a
+[08:20:10]   [post: D1=37, D2=40]
+[08:20:10] --- Migration #4  [pre: D1=37, D2=40]
+[08:20:11]   request_id = -
+[08:20:11]   D1 decoded 0 tokens (prompt=0, max_tokens=0, remaining=0)
+[08:20:11]   result: status=? path=- replay=- rolled_back=False
+[08:20:11]   ID tracking: left_D1=n/a, on_D2=n/a
+[08:20:11]   [post: D1=36, D2=40]
+[08:20:12] --- Migration #5  [pre: D1=36, D2=40]
+[08:20:12]   request_id = -
+[08:20:12]   D1 decoded 0 tokens (prompt=0, max_tokens=0, remaining=0)
+[08:20:12]   result: status=? path=- replay=- rolled_back=False
+[08:20:12]   ID tracking: left_D1=n/a, on_D2=n/a
+[08:20:12]   [post: D1=35, D2=40]
+[08:20:13] --- Migration #6  [pre: D1=34, D2=39]
+[08:20:13]   request_id = -
+[08:20:13]   D1 decoded 0 tokens (prompt=0, max_tokens=0, remaining=0)
+[08:20:13]   result: status=? path=- replay=- rolled_back=False
+[08:20:14]   ID tracking: left_D1=n/a, on_D2=n/a
+[08:20:14]   [post: D1=33, D2=39]
+[08:20:16] T2 active: D1=29  D2=33
+[08:20:16] ==== Phase 3: synthetic oversize migrate_in (expect declined)
+[08:20:16] decline test: status=declined
+[08:20:16] waiting for long chats to finish...
+[08:20:26] REPORT: /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s3-consolidation-20260513-081957/REPORT.md
+[08:20:26] MIG_OK=0  MIG_ERR=6  MIG_DECLINED=0  MIG_ROLLED_BACK=0
+[08:20:26] ID_MOVED_OK=0  ID_MOVED_FAIL=0
+[08:20:26] PASS_MIG_OK=false  PASS_NO_ERRORS=false  PASS_ID_MOVED=false  PASS_GPU_RELEASE=true  PASS_DST_TOKENS=true  PASS_DECLINE=true
+[08:20:26] OVERALL=false

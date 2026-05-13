@@ -1,0 +1,11 @@
+[08:18:53] TARGET (source)     = vllm-v1-disagg-router-vllmdecodeworker-47d8a958-5bbcfb8578p2s7g
+[08:18:53] PEER   (destination)= vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-j96lb
+[08:18:53] FRONTEND=vllm-v1-disagg-router-frontend-87b9678b7-fzplg
+[08:18:53] PEER_IP=10.244.0.170
+[08:18:55] warming
+[08:18:56] ==== Phase 1: submitting 80 long chats (max_tokens=8000)
+[08:18:58] waiting 5s for requests to distribute and start decoding...
+[08:19:03] T1 active: D1=0  D2=40
+[08:19:03] WARN: D1 has 0 active at T1; waiting 5 more seconds...
+[08:19:09] T1 retry: D1=0  D2=38
+[08:19:09] ==== Phase 2: coordinated migrations (up to 6x) D1 -> D2
