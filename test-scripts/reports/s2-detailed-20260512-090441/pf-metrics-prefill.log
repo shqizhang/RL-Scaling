@@ -1,7 +1,0 @@
-Forwarding from 127.0.0.1:19202 -> 9090
-Forwarding from [::1]:19202 -> 9090
-Handling connection for 19202
-Handling connection for 19202
-Handling connection for 19202
-E0512 09:05:24.366212 3799173 portforward.go:424] "Unhandled Error" err="an error occurred forwarding 19202 -> 9090: error forwarding port 9090 to pod 704f02165024c12ddc0ec381aec74d3e0988479e7928604933ae55f89d21da6e, uid : network namespace for sandbox \"704f02165024c12ddc0ec381aec74d3e0988479e7928604933ae55f89d21da6e\" is closed"
-error: lost connection to pod

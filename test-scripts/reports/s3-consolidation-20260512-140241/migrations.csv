@@ -1,0 +1,7 @@
+iter,status,request_id,generated_tokens,max_tokens,remaining,path,replay_tokens,rolled_back
+1,ok,0df237b9-f7ac-417f-809c-9f3b9bcf597a,105,8000,7895,recompute,105,False
+2,ok,57733300-96ef-4079-ba42-c5211212edab,296,8000,7704,recompute,296,False
+3,ok,85bc1d98-3bd3-4531-b3df-9f1b16d3c9c2,459,8000,7541,recompute,459,False
+4,ok,669213b7-1c27-4239-bcf8-5763bb67f18c,603,8000,7397,recompute,603,False
+5,ok,cd4bccac-e13d-4732-88fb-c502052d704a,710,8000,7290,recompute,710,False
+6,ok,da6b2467-e97a-4785-b054-d219e536afb2,827,8000,7173,recompute,827,False

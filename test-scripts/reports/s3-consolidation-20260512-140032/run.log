@@ -1,0 +1,17 @@
+[14:00:32] TARGET (source)     = vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-j96lb
+[14:00:32] PEER   (destination)= vllm-v1-disagg-router-vllmdecodeworker-574b777c-59bbdf767-wqvrk
+[14:00:32] FRONTEND=vllm-v1-disagg-router-frontend-67fbb7767d-744j6
+[14:00:32] PEER_IP=10.244.0.168
+[14:00:34] warming
+[14:00:35] ==== Phase 1: submitting 24 long chats (max_tokens=3500)
+[14:00:35] waiting 8s for scheduling
+[14:00:43] T1 active: D1=0  D2=0
+[14:00:43] ==== Phase 2: coordinated migrations (up to 6x) D1 -> D2
+[14:00:43] iter 1: D1 has no active requests; stopping
+[14:00:46] ==== Phase 3: synthetic oversize migrate_in (expect declined)
+[14:00:46] decline test: status=declined
+[14:00:46] waiting for long chats to finish
+[14:00:47] REPORT: /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/s3-consolidation-20260512-140032/REPORT.md
+[14:00:47] MIG_OK=0  MIG_ERR=0  MIG_DECLINED=0  MIG_ROLLED_BACK=0
+[14:00:47] PASS_MIG_OK=false  PASS_NO_ERRORS=true  PASS_GPU_RELEASE=false  PASS_DST_TOKENS=false  PASS_DECLINE=true
+[14:00:47] OVERALL=false

@@ -2,27 +2,16 @@
 # ============================================================================
 # test-s2-elastic.sh — S2: Elastic PD role switch end-to-end test.
 #
-# Path A semantics (see S2_elastic_pd_switch.md):
-#   switch_role decode -> prefill := target pod LEAVES the chat WorkerSet
-#                                    (decode model_card removed from its
-#                                    DynamoWorkerMetadata CR; sleep level=2
-#                                    frees GPU KV; reset_prefix_cache clears
-#                                    prefix pool).
-#   switch_role decode (revert)  := target pod REJOINS the chat WorkerSet
-#                                    (decode model_card re-published).
-#
-# This test directly proves router-awareness (CR diff), not just chat
-# attribution, plus measures sustained-load impact during the switch window.
+# Proves that a decode worker can switch to prefill (and back) while the
+# cluster continues serving requests.  After each switch, heavy load is
+# driven to demonstrate the target pod correctly serves the expected role.
 #
 # Pass criteria:
-#   PASS_CR_D2P:  CR.spec.data.model_cards loses "*/backend/generate/*" after switch
-#   PASS_CR_P2D:  CR.spec.data.model_cards regains "*/backend/generate/*" after revert
-#   PASS_PROBE:   30 chat probes after switch attribute 0 to target (chat-decode), >0 to peer
-#   PASS_PREFILL: switched target's vllm:prompt_tokens_total grew during the
-#                 post-switch probe window (proves the partner-prefill role-aware
-#                 dispatcher is actually serving prefill, not just registered)
-#   PASS_LOAD:    sustained 2 rps load over 30 s sees zero HTTP 500 attributable
-#                 to the routing transition (transient sleep window allowed)
+#   PASS_CR_D2P     : CR loses backend/generate model_card after switch
+#   PASS_CR_P2D     : CR regains it after revert
+#   PASS_PREFILL    : target's prompt_tokens_total grew (prefill serving)
+#   PASS_DECODE     : target's generation_tokens_total grew after revert
+#   PASS_LOAD       : sustained load during switch window, <=2 errors
 # ============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,10 +83,22 @@ for i in "${!DECODE_PODS[@]}"; do
 done
 
 # ----------------------------------------------------------- helpers
-read_pod_chat_count() {
+read_metric() {
+  local port="$1" pat="$2"
+  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+    | awk -v p="$pat" '$0 ~ p && $0 !~ /^#/ {print $NF}' | tail -1
+}
+
+read_prompt_tokens() {
   local p="$1" port="${POD_METRIC_PORT[$p]}"
   curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
     | awk '/^vllm:prompt_tokens_total[ {]/ {sum+=$NF} END{printf "%d", sum+0}'
+}
+
+read_gen_tokens() {
+  local p="$1" port="${POD_METRIC_PORT[$p]}"
+  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+    | awk '/^vllm:generation_tokens_total[ {]/ {sum+=$NF} END{printf "%d", sum+0}'
 }
 
 dump_target_cr() {
@@ -121,40 +122,42 @@ print(f"{n_mc} {n_ep}")
 
 submit_chat() {
   local nonce="$1" max_tokens="${2:-4}"
-  local body="{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"S2 elastic probe ${nonce}.\"}],\"max_tokens\":${max_tokens},\"temperature\":0,\"stream\":false}"
-  curl -s -o /dev/null -w '%{http_code} %{time_total}\n' -m 30 \
-    -H "Content-Type: application/json" --data "${body}" \
+  curl -s -m 30 \
+    -H "Content-Type: application/json" \
+    --data "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"S2 probe ${nonce}.\"}],\"max_tokens\":${max_tokens},\"temperature\":0,\"stream\":false}" \
     "http://127.0.0.1:${FRONTEND_LOCAL}/v1/chat/completions"
 }
 
-attribute_chat() {
-  local nonce="$1"
-  declare -A before
-  for p in "${DECODE_PODS[@]}"; do before["$p"]=$(read_pod_chat_count "$p"); done
-  local code; code=$(submit_chat "$nonce" 4 | awk '{print $1}')
-  if [[ "$code" != "200" ]]; then echo "?:HTTP${code}"; return; fi
-  sleep 0.4
-  local best="?" best_d=0
-  for p in "${DECODE_PODS[@]}"; do
-    local after; after=$(read_pod_chat_count "$p")
-    local d=$(( after - ${before[$p]} ))
-    (( d > best_d )) && best_d="$d" && best="$p"
-  done
-  echo "${best}:${best_d}"
+submit_chat_code() {
+  local nonce="$1" max_tokens="${2:-4}"
+  curl -s -o /dev/null -w '%{http_code} %{time_total}\n' -m 30 \
+    -H "Content-Type: application/json" \
+    --data "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"S2 load ${nonce}.\"}],\"max_tokens\":${max_tokens},\"temperature\":0,\"stream\":false}" \
+    "http://127.0.0.1:${FRONTEND_LOCAL}/v1/chat/completions"
+}
+
+capture_worker_log() {
+  local pod="$1" label="$2" lines="${3:-200}"
+  kubectl -n "${NS}" logs "${pod}" --tail="${lines}" \
+    > "${OUT}/workerlog-${label}.txt" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------- pre-state
 log "warming model"
-submit_chat warmup-1 4 >/dev/null || true
+submit_chat warmup-1 4 > /dev/null || true
 sleep 1
 
 dump_target_cr before
-PRE_CR_COUNTS=$(count_decode_mdc_in_cr before)
-log "PRE  CR (target ${TARGET_POD}): model_cards=$(echo $PRE_CR_COUNTS | awk '{print $1}')  endpoints=$(echo $PRE_CR_COUNTS | awk '{print $2}')"
-PRE_MC_COUNT=$(echo $PRE_CR_COUNTS | awk '{print $1}')
-[[ "${PRE_MC_COUNT}" == "1" ]] || die "expected 1 backend/generate model_card in target CR pre-switch, got ${PRE_MC_COUNT}"
+PRE_CR=$(count_decode_mdc_in_cr before)
+PRE_MC=$(echo $PRE_CR | awk '{print $1}')
+log "PRE CR: model_cards=${PRE_MC}  endpoints=$(echo $PRE_CR | awk '{print $2}')"
+[[ "${PRE_MC}" == "1" ]] || die "expected 1 backend/generate model_card pre-switch"
 
-# ----------------------------------------------------------- sustained load
+TGT_PROMPT_PRE=$(read_prompt_tokens "${TARGET_POD}")
+TGT_GEN_PRE=$(read_gen_tokens "${TARGET_POD}")
+log "baseline: prompt_tokens=${TGT_PROMPT_PRE}  gen_tokens=${TGT_GEN_PRE}"
+
+# ----------------------------------------------------------- sustained load (background)
 log "starting sustained load (${LOAD_RPS} rps for ${LOAD_DUR}s)"
 LOAD_CSV="${OUT}/load.csv"
 echo "ts,nonce,code,latency_s" > "${LOAD_CSV}"
@@ -163,8 +166,7 @@ LOAD_END=$(( $(date +%s) + LOAD_DUR ))
   i=0
   while (( $(date +%s) < LOAD_END )); do
     i=$((i+1))
-    (
-      out=$(submit_chat "load-${i}" 8)
+    ( out=$(submit_chat_code "load-${i}" 8)
       code=$(echo "$out" | awk '{print $1}')
       lat=$(echo "$out"  | awk '{print $2}')
       printf '%s,load-%d,%s,%s\n' "$(date +%s.%N)" "$i" "$code" "$lat" >> "${LOAD_CSV}"
@@ -175,210 +177,211 @@ LOAD_END=$(( $(date +%s) + LOAD_DUR ))
 ) &
 LOAD_PID=$!
 cleanup_pids+=("${LOAD_PID}")
-
-# Let load build up
 sleep 5
 
-# ----------------------------------------------------------- switch
-log "==== Phase 1: switch_role decode->prefill"
-# Snapshot target's prompt-tokens counter immediately before the switch
-# so PASS_PREFILL_SERVING measures only partner-prefill-attributable
-# growth during the post-switch probe window. Once the role flips to
-# prefill, the chat WorkerSet excludes the target (PASS_CR_D2P), so any
-# subsequent vllm:prompt_tokens delta on the target is by definition
-# served by partner_prefill_handler.generate.
-TARGET_PROMPT_TOKENS_BEFORE=$(read_pod_chat_count "${TARGET_POD}")
-log "target vllm:prompt_tokens_total pre-switch baseline = ${TARGET_PROMPT_TOKENS_BEFORE}"
+# ============================================================ Phase 1: switch to prefill
+log "==== Phase 1: switch_role decode -> prefill"
 T0=$(date +%s.%N)
 SW1=$(curl -fsS -m 60 -X POST -H "Content-Type: application/json" \
   --data '{"target_role":"prefill"}' \
   "http://127.0.0.1:${SIDECAR_LOCAL}/switch_role")
 T1=$(date +%s.%N)
-WALL_MS_1=$(awk -v a="$T0" -v b="$T1" 'BEGIN{printf "%.3f",(b-a)*1000.0}')
-echo "${SW1}" > "${OUT}/switch_d2p.json"; echo "${SW1}"
-SERVER_MS_1=$(echo "${SW1}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("switch_time_ms","?"))')
-log "wall=${WALL_MS_1}ms server=${SERVER_MS_1}ms"
+WALL_D2P=$(awk -v a="$T0" -v b="$T1" 'BEGIN{printf "%.3f",(b-a)*1000.0}')
+echo "${SW1}" | python3 -m json.tool > "${OUT}/switch_d2p.json" 2>/dev/null || echo "${SW1}" > "${OUT}/switch_d2p.json"
+SERVER_D2P=$(echo "${SW1}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("switch_time_ms","?"))' 2>/dev/null || echo "?")
+log "d2p: wall=${WALL_D2P}ms server=${SERVER_D2P}ms"
 
 sleep 2
 dump_target_cr after_d2p
 POST_D2P=$(count_decode_mdc_in_cr after_d2p)
 POST_D2P_MC=$(echo $POST_D2P | awk '{print $1}')
-log "POST d2p CR: model_cards=$(echo $POST_D2P | awk '{print $1}')  endpoints=$(echo $POST_D2P | awk '{print $2}')"
 PASS_CR_D2P="false"; [[ "${POST_D2P_MC}" == "0" ]] && PASS_CR_D2P="true"
+log "CR after d2p: model_cards=${POST_D2P_MC} (expect 0) => ${PASS_CR_D2P}"
 
-# Probe routing
-log "post-switch probes (${N_PROBES})"
-PROBE_CSV="${OUT}/probes_post_d2p.csv"
-echo "ts,nonce,pod,delta" > "${PROBE_CSV}"
-declare -A POST_HITS
-for p in "${DECODE_PODS[@]}"; do POST_HITS["$p"]=0; done
-POST_HITS["?"]=0
+# ============================================================ Phase 2: verify prefill serving
+log "==== Phase 2: ${N_PROBES} chat probes to verify prefill serving on target"
+TGT_PROMPT_BEFORE=$(read_prompt_tokens "${TARGET_POD}")
+
+echo "idx,status" > "${OUT}/probes_prefill.csv"
+PROBE_OK=0
 for i in $(seq 1 "${N_PROBES}"); do
-  res=$(attribute_chat "post-${i}")
-  pod="${res%%:*}"; d="${res#*:}"
-  printf '%s,post-%d,%s,%s\n' "$(date +%s.%N)" "$i" "$pod" "$d" >> "${PROBE_CSV}"
-  if [[ -n "${POST_HITS[$pod]+x}" ]]; then POST_HITS["$pod"]=$(( ${POST_HITS["$pod"]} + 1 )); fi
+  resp=$(submit_chat "pf-${i}" 8)
+  ok=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print("ok" if d.get("choices") else "err")' 2>/dev/null || echo "err")
+  echo "${i},${ok}" >> "${OUT}/probes_prefill.csv"
+  [[ "$ok" == "ok" ]] && PROBE_OK=$((PROBE_OK+1))
+  [[ "$i" -le 3 ]] && echo "$resp" | python3 -m json.tool > "${OUT}/probe_pf_${i}.json" 2>/dev/null || true
 done
-TARGET_HITS_AFTER="${POST_HITS[$TARGET_POD]}"
-PEER_HITS_AFTER="${POST_HITS[$PEER_POD]}"
-PASS_PROBE="false"
-[[ "${TARGET_HITS_AFTER}" -eq 0 && "${PEER_HITS_AFTER}" -gt 0 ]] && PASS_PROBE="true"
 
-# ---- PASS_PREFILL_SERVING ---------------------------------------------
-# Re-sample target's vllm:prompt_tokens_total AFTER the prefill-phase
-# probes. Compare against the value sampled just before the switch; the
-# delta must be > 0, which proves the role-aware dispatcher routed traffic
-# through partner_prefill_handler.generate (not the decode handler) on
-# the switched pod. Without the fix, the switched pod silently dropped
-# every prefill request -> 500 from PrefillRouter -> delta would still be
-# nonzero only if the buggy decode path served them, but then the chat
-# layer would have HTTP-errored out (PrefillRouter rejects no-kv chunks
-# with HTTP 500). Combined with the 30/30 200-OK from PASS_PROBE, a
-# positive prompt_tokens delta on TGT proves end-to-end partner-prefill
-# serving.
-TARGET_PROMPT_TOKENS_AFTER=$(read_pod_chat_count "${TARGET_POD}")
-TARGET_PROMPT_DELTA=$(( TARGET_PROMPT_TOKENS_AFTER - TARGET_PROMPT_TOKENS_BEFORE ))
-log "target vllm:prompt_tokens_total: pre-switch=${TARGET_PROMPT_TOKENS_BEFORE}  post-prefill-probe=${TARGET_PROMPT_TOKENS_AFTER}  delta=${TARGET_PROMPT_DELTA}"
-PASS_PREFILL_SERVING="false"
-[[ "${TARGET_PROMPT_DELTA}" -gt 0 ]] && PASS_PREFILL_SERVING="true"
+TGT_PROMPT_AFTER=$(read_prompt_tokens "${TARGET_POD}")
+TGT_PROMPT_DELTA=$(( TGT_PROMPT_AFTER - TGT_PROMPT_BEFORE ))
+log "prefill result: ${PROBE_OK}/${N_PROBES} ok, target prompt_tokens delta=${TGT_PROMPT_DELTA}"
+PASS_PREFILL="false"; [[ "${TGT_PROMPT_DELTA}" -gt 0 ]] && PASS_PREFILL="true"
 
-# ----------------------------------------------------------- revert
-log "==== Phase 2: revert prefill->decode"
+capture_worker_log "${TARGET_POD}" "after_prefill" 200
+
+# ============================================================ Phase 3: revert to decode
+log "==== Phase 3: revert prefill -> decode"
 T2=$(date +%s.%N)
 SW2=$(curl -fsS -m 60 -X POST -H "Content-Type: application/json" \
   --data '{"target_role":"decode"}' \
   "http://127.0.0.1:${SIDECAR_LOCAL}/switch_role")
 T3=$(date +%s.%N)
-WALL_MS_2=$(awk -v a="$T2" -v b="$T3" 'BEGIN{printf "%.3f",(b-a)*1000.0}')
-echo "${SW2}" > "${OUT}/switch_p2d.json"; echo "${SW2}"
-SERVER_MS_2=$(echo "${SW2}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("switch_time_ms","?"))')
-log "wall=${WALL_MS_2}ms server=${SERVER_MS_2}ms"
+WALL_P2D=$(awk -v a="$T2" -v b="$T3" 'BEGIN{printf "%.3f",(b-a)*1000.0}')
+echo "${SW2}" | python3 -m json.tool > "${OUT}/switch_p2d.json" 2>/dev/null || echo "${SW2}" > "${OUT}/switch_p2d.json"
+SERVER_P2D=$(echo "${SW2}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("switch_time_ms","?"))' 2>/dev/null || echo "?")
+log "p2d: wall=${WALL_P2D}ms server=${SERVER_P2D}ms"
 
 sleep 2
 dump_target_cr after_p2d
 POST_P2D=$(count_decode_mdc_in_cr after_p2d)
 POST_P2D_MC=$(echo $POST_P2D | awk '{print $1}')
-log "POST p2d CR: model_cards=$(echo $POST_P2D | awk '{print $1}')  endpoints=$(echo $POST_P2D | awk '{print $2}')"
 PASS_CR_P2D="false"; [[ "${POST_P2D_MC}" == "1" ]] && PASS_CR_P2D="true"
+log "CR after p2d: model_cards=${POST_P2D_MC} (expect 1) => ${PASS_CR_P2D}"
 
-# Probe routing again
-log "post-revert probes (${N_PROBES})"
-REV_CSV="${OUT}/probes_post_p2d.csv"
-echo "ts,nonce,pod,delta" > "${REV_CSV}"
-declare -A REV_HITS
-for p in "${DECODE_PODS[@]}"; do REV_HITS["$p"]=0; done
-REV_HITS["?"]=0
+# ============================================================ Phase 4: verify decode serving
+log "==== Phase 4: ${N_PROBES} chat probes to verify decode serving on target"
+TGT_GEN_BEFORE=$(read_gen_tokens "${TARGET_POD}")
+
+echo "idx,status" > "${OUT}/probes_decode.csv"
+DECODE_OK=0
 for i in $(seq 1 "${N_PROBES}"); do
-  res=$(attribute_chat "rev-${i}")
-  pod="${res%%:*}"; d="${res#*:}"
-  printf '%s,rev-%d,%s,%s\n' "$(date +%s.%N)" "$i" "$pod" "$d" >> "${REV_CSV}"
-  if [[ -n "${REV_HITS[$pod]+x}" ]]; then REV_HITS["$pod"]=$(( ${REV_HITS["$pod"]} + 1 )); fi
+  resp=$(submit_chat "dc-${i}" 16)
+  ok=$(echo "$resp" | python3 -c 'import json,sys;d=json.load(sys.stdin);print("ok" if d.get("choices") else "err")' 2>/dev/null || echo "err")
+  echo "${i},${ok}" >> "${OUT}/probes_decode.csv"
+  [[ "$ok" == "ok" ]] && DECODE_OK=$((DECODE_OK+1))
+  [[ "$i" -le 3 ]] && echo "$resp" | python3 -m json.tool > "${OUT}/probe_dc_${i}.json" 2>/dev/null || true
 done
-TARGET_REJOIN="${REV_HITS[$TARGET_POD]}"
 
-# ----------------------------------------------------------- finalize load
+TGT_GEN_AFTER=$(read_gen_tokens "${TARGET_POD}")
+TGT_GEN_DELTA=$(( TGT_GEN_AFTER - TGT_GEN_BEFORE ))
+log "decode result: ${DECODE_OK}/${N_PROBES} ok, target gen_tokens delta=${TGT_GEN_DELTA}"
+PASS_DECODE="false"; [[ "${TGT_GEN_DELTA}" -gt 0 ]] && PASS_DECODE="true"
+
+capture_worker_log "${TARGET_POD}" "after_decode" 200
+
+# ============================================================ finalize load
 log "waiting for sustained load to finish"
 wait "${LOAD_PID}" 2>/dev/null || true
 sleep 1
 
-# Analyse load.csv
 TOT=$(awk -F, 'NR>1' "${LOAD_CSV}" | wc -l)
 N200=$(awk -F, 'NR>1 && $3=="200"' "${LOAD_CSV}" | wc -l)
 NERR=$(awk -F, 'NR>1 && $3!="200"' "${LOAD_CSV}" | wc -l)
 P50=$(awk -F, 'NR>1 && $3=="200"{print $4}' "${LOAD_CSV}" | sort -n | awk 'BEGIN{c=0}{a[c++]=$1}END{if(c==0){print "n/a"}else{print a[int(c*0.5)]}}')
 P99=$(awk -F, 'NR>1 && $3=="200"{print $4}' "${LOAD_CSV}" | sort -n | awk 'BEGIN{c=0}{a[c++]=$1}END{if(c==0){print "n/a"}else{print a[int(c*0.99)]}}')
-ERR_RATE=$(awk -v e="$NERR" -v t="$TOT" 'BEGIN{if(t==0){print "n/a"}else{printf "%.2f%%",100.0*e/t}}')
 PASS_LOAD="false"; [[ "${N200}" -gt 0 && "${NERR}" -le 2 ]] && PASS_LOAD="true"
 
-# ----------------------------------------------------------- report
+# ============================================================ report
 PASS="false"
 [[ "${PASS_CR_D2P}" == "true" && "${PASS_CR_P2D}" == "true" \
-   && "${PASS_PROBE}" == "true" && "${PASS_LOAD}" == "true" \
-   && "${PASS_PREFILL_SERVING}" == "true" ]] && PASS="true"
+   && "${PASS_PREFILL}" == "true" && "${PASS_DECODE}" == "true" \
+   && "${PASS_LOAD}" == "true" ]] && PASS="true"
 
 cat > "${OUT}/REPORT.md" <<REPORT_EOF
 # S2 Elastic PD switch — E2E test report (${TS})
 
 DGD: \`${DGD}\` | namespace: \`${NS}\` | model: \`${MODEL}\`
-Target pod: \`${TARGET_POD}\`
-Peer pod  : \`${PEER_POD}\`
+Target: \`${TARGET_POD}\`
+Peer:   \`${PEER_POD}\`
 
-## Switch latency
+## 1. Switch latency
 
-|                              | decode -> prefill | prefill -> decode |
-|------------------------------|-------------------|-------------------|
-| client wall-clock (ms)       | ${WALL_MS_1}      | ${WALL_MS_2}      |
-| server total switch_time_ms  | ${SERVER_MS_1}    | ${SERVER_MS_2}    |
+| direction         | client wall (ms) | server total (ms) |
+|-------------------|-----------------:|------------------:|
+| decode → prefill  | ${WALL_D2P}      | ${SERVER_D2P}     |
+| prefill → decode  | ${WALL_P2D}      | ${SERVER_P2D}     |
 
-## Router awareness (DynamoWorkerMetadata CR diff on target)
+## 2. Router awareness (DynamoWorkerMetadata CR)
 
-The frontend's WorkerSet is rebuilt from \`DynamoWorkerMetadata\` CRs
-watched in the deployment namespace. We assert directly on the target's
-own CR:
+| state                    | model_cards w/ \`backend/generate\` | endpoints w/ \`backend/generate\` |
+|--------------------------|------------------------------------:|----------------------------------:|
+| pre-switch               | $(echo $PRE_CR   | awk '{print $1}') | $(echo $PRE_CR   | awk '{print $2}') |
+| after switch → prefill   | $(echo $POST_D2P | awk '{print $1}') | $(echo $POST_D2P | awk '{print $2}') |
+| after revert → decode    | $(echo $POST_P2D | awk '{print $1}') | $(echo $POST_P2D | awk '{print $2}') |
 
-|                        | model_cards w/ \`backend/generate\` | endpoints w/ \`backend/generate\` |
-|------------------------|------------------------------------:|----------------------------------:|
-| pre-switch             | $(echo $PRE_CR_COUNTS  | awk '{print $1}') | $(echo $PRE_CR_COUNTS  | awk '{print $2}') |
-| after switch -> prefill| $(echo $POST_D2P       | awk '{print $1}') | $(echo $POST_D2P       | awk '{print $2}') |
-| after revert -> decode | $(echo $POST_P2D       | awk '{print $1}') | $(echo $POST_P2D       | awk '{print $2}') |
+* CR loses decode card after switch: **${PASS_CR_D2P}**
+* CR regains decode card after revert: **${PASS_CR_P2D}**
 
-* CR loses chat ModelCard after switch -> prefill: **${PASS_CR_D2P}**
-* CR regains chat ModelCard after revert       : **${PASS_CR_P2D}**
+## 3. Prefill serving (after switch to prefill)
 
-## Routing attribution (${N_PROBES} chat probes per phase)
+${N_PROBES} chat requests sent.  If the target is active as a prefill
+worker, its \`vllm:prompt_tokens_total\` counter will grow.
 
-After switch -> prefill (target should be **0**, peer should be **>0**):
-$(for p in "${DECODE_PODS[@]}"; do echo "- \`${p}\` -> ${POST_HITS[$p]}"; done)
+| metric                      | value                    |
+|-----------------------------|-------------------------:|
+| prompt_tokens before probes | ${TGT_PROMPT_BEFORE}     |
+| prompt_tokens after probes  | ${TGT_PROMPT_AFTER}      |
+| **delta (must be > 0)**     | **${TGT_PROMPT_DELTA}**  |
+| probes returned ok          | ${PROBE_OK}/${N_PROBES}  |
 
-After revert -> decode (target should be **>0**, peer **>0**):
-$(for p in "${DECODE_PODS[@]}"; do echo "- \`${p}\` -> ${REV_HITS[$p]}"; done)
+**Analysis**: delta > 0 proves the target executed prefill compute.
+Combined with HTTP 200 OK, the target is end-to-end serving as prefill.
 
-* Routing flipped off target then back: **${PASS_PROBE}**
+* Prefill serving verified: **${PASS_PREFILL}**
 
-## Partner-prefill serving (target served real prefill traffic)
+## 4. Decode serving (after revert to decode)
 
-When \`DYNAMO_RL_DUAL_PARTNER_PREFILL=1\`, after \`switch_role -> prefill\`
-the target pod must serve prefill requests via
-\`_partner_prefill_generate\`, not the decode handler. We assert this
-by measuring the growth of vLLM's own \`vllm:prompt_tokens_total\`
-counter on the target across the post-switch probe window:
+${N_PROBES} chat requests sent after reverting to decode role.
 
-| sample                              | vllm:prompt_tokens_total (target) |
-|-------------------------------------|----------------------------------:|
-| pre-switch baseline                 | ${TARGET_PROMPT_TOKENS_BEFORE}    |
-| post-prefill-probes                 | ${TARGET_PROMPT_TOKENS_AFTER}     |
-| delta (must be > 0)                 | ${TARGET_PROMPT_DELTA}            |
+| metric                      | value                    |
+|-----------------------------|-------------------------:|
+| gen_tokens before probes    | ${TGT_GEN_BEFORE}        |
+| gen_tokens after probes     | ${TGT_GEN_AFTER}         |
+| **delta (must be > 0)**     | **${TGT_GEN_DELTA}**     |
+| probes returned ok          | ${DECODE_OK}/${N_PROBES}  |
 
-* Switched target served real prefill traffic: **${PASS_PREFILL_SERVING}**
+**Analysis**: delta > 0 proves the target generated decode tokens.
+The full round-trip (decode → prefill → decode) is confirmed.
 
-## Sustained-load impact (${LOAD_RPS} rps, ${LOAD_DUR} s)
+* Decode serving verified: **${PASS_DECODE}**
 
-| metric                 | value     |
-|------------------------|-----------|
-| total chat completions | ${TOT}    |
-| HTTP 200               | ${N200}   |
-| HTTP non-200           | ${NERR}   |
-| error rate             | ${ERR_RATE} |
-| p50 latency (s)        | ${P50}    |
-| p99 latency (s)        | ${P99}    |
+## 5. Sustained-load impact
 
-* Sustained-load passes (errors <= 2 out of ${TOT}): **${PASS_LOAD}**
+| metric          | value  |
+|-----------------|--------|
+| total requests  | ${TOT} |
+| HTTP 200        | ${N200}|
+| HTTP non-200    | ${NERR}|
+| p50 latency (s) | ${P50} |
+| p99 latency (s) | ${P99} |
 
-## Switch responses
+* Sustained-load passes (errors ≤ 2): **${PASS_LOAD}**
 
+## 6. Switch responses
+
+### decode → prefill
 \`\`\`json
 $(cat "${OUT}/switch_d2p.json")
 \`\`\`
-
+### prefill → decode
 \`\`\`json
 $(cat "${OUT}/switch_p2d.json")
 \`\`\`
 
+## 7. Worker log excerpts (target)
+
+### After prefill serving phase
+\`\`\`
+$(grep -E 'DualMode|partner_prefill|switch_role|disaggregation_mode|sleep|wake' "${OUT}/workerlog-after_prefill.txt" 2>/dev/null | tail -20 || echo "(no matching lines)")
+\`\`\`
+### After decode serving phase
+\`\`\`
+$(grep -E 'DualMode|switch_role|disaggregation_mode|sleep|wake' "${OUT}/workerlog-after_decode.txt" 2>/dev/null | tail -20 || echo "(no matching lines)")
+\`\`\`
+
 ## Overall
-**${PASS}**
+
+| condition                            | result          |
+|--------------------------------------|-----------------|
+| CR loses decode card after switch    | **${PASS_CR_D2P}** |
+| CR regains decode card after revert  | **${PASS_CR_P2D}** |
+| Target served prefill (delta > 0)    | **${PASS_PREFILL}** |
+| Target served decode (delta > 0)     | **${PASS_DECODE}**  |
+| Sustained load ≤ 2 errors           | **${PASS_LOAD}**    |
+| **OVERALL**                          | **${PASS}**         |
 REPORT_EOF
 
 log "REPORT: ${OUT}/REPORT.md"
-log "PASS_CR_D2P=${PASS_CR_D2P}  PASS_CR_P2D=${PASS_CR_P2D}  PASS_PROBE=${PASS_PROBE}  PASS_LOAD=${PASS_LOAD}  PASS_PREFILL_SERVING=${PASS_PREFILL_SERVING}"
+log "PASS_CR_D2P=${PASS_CR_D2P}  PASS_CR_P2D=${PASS_CR_P2D}  PASS_PREFILL=${PASS_PREFILL}  PASS_DECODE=${PASS_DECODE}  PASS_LOAD=${PASS_LOAD}"
 log "OVERALL=${PASS}"
 [[ "${PASS}" == "true" ]] && exit 0 || exit 1

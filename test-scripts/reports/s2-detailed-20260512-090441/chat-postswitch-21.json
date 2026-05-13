@@ -1,1 +1,0 @@
-{"message":"Failed to generate completions: Prefill execution failed: failed to route to prefill worker: no endpoints available to route work","type":"Internal Server Error","code":500}

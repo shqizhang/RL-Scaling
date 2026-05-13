@@ -1,7 +1,0 @@
-iter,phase,status,path,replay_tokens,reason,request_id
-1,migrate_out,ok,-,-,-,7476e5b7-c8bc-4713-be9b-eb98ac1d56c8
-1,migrate_in,ok,recompute,1633,-,7476e5b7-c8bc-4713-be9b-eb98ac1d56c8
-2,migrate_out,ok,-,-,-,b10795eb-e854-447e-abb1-bb1c5596a59d
-2,migrate_in,ok,recompute,1833,-,b10795eb-e854-447e-abb1-bb1c5596a59d
-3,migrate_out,ok,-,-,-,0795ed5d-8a0b-4af9-8d53-172856056041
-3,migrate_in,ok,recompute,2120,-,0795ed5d-8a0b-4af9-8d53-172856056041

@@ -1,0 +1,38 @@
+{
+    "id": "chatcmpl-612e0107-7b7c-48cd-86da-b3456757aded",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "content": "<think>\nOkay, the user mentioned \"",
+                "role": "assistant",
+                "reasoning_content": null
+            },
+            "finish_reason": "length"
+        }
+    ],
+    "created": 1778594395,
+    "model": "Qwen/Qwen3-0.6B",
+    "object": "chat.completion",
+    "usage": {
+        "prompt_tokens": 15,
+        "completion_tokens": 8,
+        "total_tokens": 23
+    },
+    "nvext": {
+        "worker_id": {
+            "prefill_worker_id": 6254788034687914,
+            "prefill_dp_rank": 0,
+            "decode_worker_id": 5199425309378584,
+            "decode_dp_rank": 0
+        },
+        "timing": {
+            "request_received_ms": 1778594395849,
+            "prefill_wait_time_ms": 0.627997,
+            "prefill_time_ms": 19.351796,
+            "ttft_ms": 19.979793,
+            "total_time_ms": 58.098373,
+            "kv_hit_rate": 0.0
+        }
+    }
+}

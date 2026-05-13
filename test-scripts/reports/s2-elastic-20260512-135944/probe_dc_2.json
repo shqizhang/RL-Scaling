@@ -1,0 +1,38 @@
+{
+    "id": "chatcmpl-bb52a317-3b20-443f-815b-0fde36eb1b34",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "content": "<think>\nOkay, the user mentioned \"S2 probe dc-2.\" I",
+                "role": "assistant",
+                "reasoning_content": null
+            },
+            "finish_reason": "length"
+        }
+    ],
+    "created": 1778594402,
+    "model": "Qwen/Qwen3-0.6B",
+    "object": "chat.completion",
+    "usage": {
+        "prompt_tokens": 15,
+        "completion_tokens": 16,
+        "total_tokens": 31
+    },
+    "nvext": {
+        "worker_id": {
+            "prefill_worker_id": 6254788034687914,
+            "prefill_dp_rank": 0,
+            "decode_worker_id": 5199425309378584,
+            "decode_dp_rank": 0
+        },
+        "timing": {
+            "request_received_ms": 1778594402508,
+            "prefill_wait_time_ms": 1.211611,
+            "prefill_time_ms": 21.656958,
+            "ttft_ms": 22.868568999999997,
+            "total_time_ms": 81.766559,
+            "kv_hit_rate": 0.0
+        }
+    }
+}
