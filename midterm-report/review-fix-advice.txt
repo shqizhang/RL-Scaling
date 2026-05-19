@@ -1,0 +1,147 @@
+现在开始仅修改英文版md的正文：
+
+1.首先给报告换个更符合的名字，根据Cloud native LLM serving， Auto scaling选择一个更恰当的正标题作为课题的主名称，然后加上subtitle以RL的两个场景作为改进Auto scaling的目标。
+
+将正文里所有的加粗** ** 和斜体 * * 都去掉，遵循学术写作的一般规范，不需要再正文里做过度的highlight。
+
+Abstract里的 (the destination's migrate_in response reports "path": "connector", the source's migrate_out returns fully-populated kv_transfer_params, and the client-visible SSE stream completes without token loss)去掉，不需要过度解释，同样，所有的加粗和斜体都去掉。
+
+(p50 = 65 ms, p99 = 105 ms).这个也去掉。
+
+1.1 NVIDIA Dynamo at a Glance 换个更符合学术报告的英文标题。(v1.0.1 GA, 2026-03)去掉，这种括号的解释非必要和关键中的关键，都不需要。a frontend pod terminating OpenAI-style HTTP 这句话改为 a frontend with kv-aware router that accepts incoming LLM inference requests, 不要提 OpenAI.
+Kubernetes Custom Resources (DWMD) 去掉(DWMD).
+
+1.2的 GPU hour的图替换为引用 GPU-hour.png，可以不保留简图。
+
+Cross-phase pool waste. Prefill GPUs are busy only during the prompt-processing burst; decode GPUs are busy only during the long-tail generation. The pool that is currently idle still holds a GPU allocation and is still being paid for.
+Intra-phase tail waste. Near the end of a batch the running set on each decoder shrinks toward zero. A nearly-empty decoder cannot release its GPU because a handful of long completions are still running.
+
+以上将这两点简略一下但是要保留重点思想，符合学术个技术的表达方式。
+
+(image pull, engine construction, model-weight load, NIXL handshake),不要括号的解释。
+
+Standard elasticity mechanisms are structurally mismatched to this workload on two grounds. First, horizontal pod scaling incurs a cold-start latency on the order of tens of seconds (image pull, engine construction, model-weight load, NIXL handshake), which is one to two orders of magnitude larger than the sampling phase it would need to react inside; furthermore each new pod starts with an empty prefix cache, discarding the prefix-reuse benefit that PD disaggregation was designed to expose
+重新梳理这段话的表达，除了删除括号里的解释，再重新组织语言，逻辑上要递进解释为什么冷启动不符合期望
+
+删除对“§1.3”的引用，替换为概括性的表达，后续的所有的对章节§*.*的引用全部都删除替换。
+
+Optimization Targets这一节仅提我们的目标是优化Ugpu，保留一个公式，其他两个作为文字简单提及优化的
+方向有哪些，我们的重点是什么。
+
+
+
+1.4 Why This Is Hard in vLLM + Dynamo Today也替换一个更书面更学术的标题。
+
+make naive elasticity unsafe:替换为表达目前的机制的机制存在缺陷不能支持RL场景下的需求，然后具体的原因如下：
+(C1) An eight-step in-place role-switch state machine (DualModeWorker.switch_role) that combines engine.sleep(2) → ModelCard unregister → NIXL reset → prefix-cache reset → role flip → ModelCard register → engine.wake_up → role-changed event into an atomic-from-the-scheduler's-perspective operation. Measured: 453 ms server-side, 497 ms client wall-clock (decode→prefill); 428 / 466 ms in reverse.
+(C2) A single-TCP-slot dispatcher for partner-prefill, which lets the same vLLM engine — pre-built with kv_role=kv_both and one (connection_id, "generate") TCP slot — serve chat (decode) or prefill traffic at run-time, routed at request time by dual_mode.current_role.
+(C3) A three-phase block-hold NIXL-pull migration protocol (migrate_out → migrate_in → migration_complete) that consolidates running decoders by pulling GPU KV blocks across NVLink, with the source pinning the blocks across the handshake (zero KV loss) and a 10 s sweep timer preventing block leakage on orchestrator failure.
+(C4) An RL-signal-driven autoscaling controller that consumes rollout-phase signals and dispatches the above primitives.
+(C5) End-to-end validation on a Kubernetes deployment of Qwen3-0.6B: CRD-level discovery diff and Prometheus-level prompt-token attribution prove the role switch; per-request left_TARGET ∧ accepted_at_PEER assertions over six concurrent migrations prove the consolidation.
+
+这一段做精简，删除不必要的过度解释，仅体现贡献，比如(DualModeWorker.switch_role) that combines engine.sleep(2) → ModelCard unregister → NIXL reset → prefix-cache reset → role flip → ModelCard register → engine.wake_up → role-changed event这些就可以直接删除
+参考这个建议，保持精简和准确即可。
+
+The remainder of the report: §2 surveys the relevant runtime fabric; §3 introduces the deployment topology and port model; §4 details the role-switch protocol; §5 details the consolidation protocol; §6 describes the RL-signal autoscaler; §7 presents validation; §8 discusses limitations and future work.
+这一段直接删除不需要保留。
+
+----------
+2.1 Prefill–Decode Disaggregation: a Mainstream Practice
+这一小节的表格和图都不要，仅需要文字解释，同时做简化，PD是什么，为什么用PD，在我们的课题中还存在
+什么问题。按照这样的递进的思路修改。
+
+
+2.2 NVIDIA Dynamo Runtime
+这一章节使用C:\projects\IP\RL-Scaling\midterm-report\dynamo-architecture.png
+这个图作为图解，这个图来自https://docs.dynamo.nvidia.com/dynamo/design-docs/overall-architecture
+因此这个小节的内容调整为针对这个图的总体架构的概述，不需要做详细的过多的解释，缩小篇幅，
+突出重点和dynamo对于我们研究Auto scaling课题的影响即可。
+
+---------
+
+接下来的内容需要做比较大的调整了，涉及整个课题的内容组织，需要你仔细理解我的思路然后按照需求完成：
+
+先说整体的框架：
+首先，先简单介绍我们的研究目标是针对RL场景的scaling的改进，提出了elastic PD role switch和request consolidation
+分别用于解决什么问题。然后分别就两个场景进行详细的回报，测试和总结。
+
+然后你按照我的guidline的思路，参考当前已有的内容，根据逻辑上的需要进行符合学术报告的写作要求必要更新，
+完成整个报告的主体部分的写作：
+
+3.
+3.1 
+简述两个RL的场景，然后直奔主题提出我们的系统设计的架构，RL-SIGNAL-DRIVEN AUTOSCALING
+其中说明Rollout-driven cluster scaling是实现PD的基础，即模拟热启动。
+将6.1 Three Scaling Scenarios 和 C:\projects\IP\RL-Scaling\midterm-report\RL-controller.png和
+C:\projects\IP\RL-Scaling\midterm-report\K8S-deployement.png这个架构图作为这个章节的引用。
+
+给第3节和小节起合适的标题。
+
+
+-------------------
+
+4. ELASTIC PD ROLE SWITCHING
+有了前面的铺垫，4.1 的Problem Definition做适当的简化，但是保证要点和逻辑的递进关系是完整的
+
+4.2 The Eight-Step State Machine保留，但是将Eight-step switch_role state machine.
+的图替换为C:\projects\IP\RL-Scaling\midterm-report\role-switch.png
+4.3 4.4 4.5 的内容保留，4.6 End-to-End Correctness via Kubernetes Service Discovery
+这一节的内容，去掉简图，同时根绝前面的K8S-deployement.pn解释说明non-obvious properties和verify的思路
+
+4.7的内容不放在这个章节，最为单独一个章节展示结果数据用，你需要保留，等我后续告诉你使用
+
+第4节的内容就是这些。
+
+-----------------------
+5. IN-FLIGHT DECODER REQUEST CONSOLIDATION
+
+5.1 Problem Definition保留
+
+5.2 The Three-Phase Block-Hold NIXL-Pull Protocol 与 5.3 Why the Three Phases Cannot Be Collapsed
+合并为一个，精简5.3的原因作为5.2 使用 block hold方案的支撑理由即可，但是需要精简，逻辑递进正确的前提下不要过度阐述
+
+同时删掉简图，使用C:\projects\IP\RL-Scaling\midterm-report\request-consolidation.png
+
+5.3 Migration Strategy
+将5.4作为一个点概括进这个章节，同时对 （a）-(d)每个strategy简略，只阐述关键的迁移逻辑和必要保证的一致性的要点
+
+5.6和5.7 更新为 5.4 5.5保留内容
+
+第6小节已经整合到第3小节了，7. VALIDATION为第6节，更名为 Verification & Testing
+4.7的内容在恰当的地方展示。
+
+Verbatim migrate_in response (migrate_in_1.json):
+
+{"status": "ok",
+ "request_id": "6769d232-e214-4170-9dde-5431764712e4",
+ "path": "connector",
+ "replay_tokens": 1688}
+Verbatim migrate_out.kv_transfer_params (truncated to relevant keys; full payload in migrate_out_1.json):
+
+{
+  "do_remote_prefill": true,
+  "do_remote_decode":  false,
+  "remote_engine_id":  "cf043c71-2207-49d9-a77b-886961093c5e",
+  "remote_host":       "10.244.0.187",
+  "remote_port":       14579,
+  "remote_request_id": "6769d232-e214-4170-9dde-5431764712e4",
+  "remote_block_ids":  [2691, 2692, 2693, 2694, 2695, 2696, 2697,
+                        2698, 2702, 2704, 2708, 2711, 2714, 2717,
+                        "… 95 more …",
+                        2982, 2984, 2986, 2987, 2988, 2989]
+}
+
+这一段删除，不需要过度解释。
+剩余的7.4 和 第8节， reference保留，但是需要更新标号。
+
+
+
+以上是针对文章内容的修改意见。
+
+改完后你除了需要确认内容正确且符合我的需要，
+同时要注意，所有的配图位置的引用都需要正确，、
+同时不要任何****加粗和**斜体，代码的格式部分
+可以保留作为有效区分。正文里对章节的引用类似 §5都不许出现。
+
+
+

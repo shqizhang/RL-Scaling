@@ -1,0 +1,679 @@
+% CVPR 2026 Paper Template
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+%%%%%%%%% PACKAGES
+\usepackage{booktabs}
+\usepackage{makecell}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\usepackage{caption}
+\usepackage{pifont}
+\usepackage{cvpr}
+\input{preamble}
+
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=cvprblue]{hyperref}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{tikz}
+
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+
+% Column types for tabularx: L=left-wrapped, C=center-wrapped, R=right-wrapped
+\newcolumntype{L}{>{\RaggedRight\arraybackslash}X}
+\newcolumntype{C}{>{\Centering\arraybackslash}X}
+\newcolumntype{R}{>{\RaggedLeft\arraybackslash}X}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keepspaces=true,
+  xleftmargin=2pt,
+  xrightmargin=2pt,
+}
+
+%%%%%%%%% TITLE
+\title{Cloud-Native Autoscaling for Disaggregated LLM Inference:\\Elastic Role Switching and In-Flight Request Consolidation for Reinforcement Learning Workloads}
+
+%%%%%%%%% AUTHORS
+\author{
+ZHANG Shengqi \\
+{\tt szhanggd@connect.ust.hk (21209697)} \\
+}
+
+\begin{document}
+\maketitle
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+Prefill--Decode (PD) disaggregation is the mainstream LLM inference architecture (exemplified by NVIDIA Dynamo), splitting compute-bound prefill and bandwidth-bound decode onto separate GPU pools to maximize online serving efficiency. However, in reinforcement-learning (RL) post-training, inference traffic bursts periodically with rollout phases, leaving pools alternately idle and wasting GPU-hours; horizontal scaling (cold start on the order of tens of seconds) cannot react within a single rollout phase.
+
+This report introduces two runtime primitives on Dynamo + vLLM~0.16: (1)~Elastic PD Role Switching---a state-machine-driven in-place protocol that flips a worker's role via ModelCard mutation and engine sleep/wake cycling in sub-second time, with no engine rebuild or pod redeploy; (2)~In-Flight Decoder Request Consolidation---a three-phase block-hold protocol that migrates running decode requests across GPUs via NIXL RDMA pull, with zero KV loss. Together with an RL-signal-driven autoscaling controller, these primitives enable the decode/prefill pools to be dynamically reshaped in lockstep with RL phases.
+
+On a single-node Kubernetes deployment of \texttt{Qwen3-0.6B}, end-to-end validation shows:
+\begin{itemize}[nosep]
+\item a full decode$\to$prefill$\to$decode round-trip completes in 963\,ms of client wall-clock (453\,ms + 428\,ms server-side);
+\item an in-flight decode that had already generated 1688 tokens is migrated off the source decoder onto a peer in 188\,ms via the \texttt{NixlConnector} RDMA path, transferring 109 physical KV blocks without recomputing the prefix;
+\item a sustained 2\,RPS background load across the full switch+revert sequence completes 58/58 requests with zero HTTP errors.
+\end{itemize}
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Overview of the NVIDIA Dynamo Serving Framework}
+\label{sec:dynamo-overview}
+
+NVIDIA Dynamo is an open-source serving framework for disaggregated LLM inference. Architecturally, it is a Rust runtime that hosts (i)~a KV-aware router that accepts incoming LLM inference requests, (ii)~any number of worker pods each wrapping a vLLM engine, and (iii)~a discovery layer that uses Kubernetes Custom Resources as the single observable source of truth for worker membership. The frontend embeds two stateful routers---KvRouter\texttt{KvRouter} for decode dispatch and \texttt{PrefillRouter} for prefill dispatch---and a \texttt{ModelWatcher} that maintains the WorkerSet by \texttt{list+watching} worker metadata CRs. The KV-cache transfer between prefill and decode workers is performed by the NIXL connector over NVLink / RDMA. This stack is the de facto mainstream choice today for production PD-disaggregated serving and is the baseline on which our extensions are built.
+
+\subsection{The RL Workload and Its GPU-Waste Problem}
+\label{sec:rl-waste}
+
+The cost economics of LLM inference are dominated by GPU-hours. In online chat-style, serving the traffic is near-stationary; static PD partitioning works because both pools stay busy. The RL rollout loop that drives modern post-training methods (RLHF, DPO, GRPO) submits inference traffic in a fundamentally different pattern, as shown in Figure~\ref{fig:gpu-hour}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{GPU-hour.png}
+\caption{GPU utilization pattern in RL workloads.}
+\label{fig:gpu-hour}
+\end{figure}
+
+Each phase boundary leaves one of Dynamo's GPU pools fully busy and the other completely idle. Two compounded sources of waste result:
+
+\begin{enumerate}[nosep]
+\item Cross-phase pool waste. During the prompt-processing burst only prefill GPUs are active, while during the long-tail generation only decode GPUs are active. The idle pool retains its GPU allocation throughout, incurring cost without contributing useful work.
+\item Intra-phase tail waste. As a batch nears completion the active request count on each decoder asymptotically approaches zero, yet the GPU cannot be released until the last remaining long completion finishes.
+\end{enumerate}
+
+Standard elasticity mechanisms are structurally mismatched to this workload. Horizontal pod scaling incurs a cold-start latency on the order of tens of seconds, which is one to two orders of magnitude larger than the sampling phase it would need to react inside. Moreover, each newly started pod initializes with an empty prefix cache and must re-establish NIXL connectivity, discarding the prefix-reuse benefit that PD disaggregation was designed to expose. The fundamental problem is that cold start cannot converge fast enough: by the time a new worker is ready, the phase that demanded it has already passed. Static over-provisioning, on the other hand, sizes both pools for peak demand and therefore lower-bounds GPU expenditure at that peak even while either pool is idle. Both mechanisms fail the RL controller's requirement to act within a single rollout phase.
+
+\subsection{Limitations of Current Elasticity Mechanisms}
+\label{sec:limitations}
+
+Three structural facts of the vLLM~0.16 + Dynamo~v1.0.1 stack prevent existing mechanisms from supporting RL-driven elastic scaling:
+
+\begin{enumerate}[nosep]
+\item The \texttt{kv\_transfer\_config} is fixed at engine construction. The NIXL connector binds to one role at engine boot. Any run-time role switch must not rebuild the engine.
+\item vLLM's prefix cache is an index over KV blocks that \texttt{engine.sleep(level=2)} returns to the GPU allocator. Without a synchronized reset, a resumed engine can serve stale hits.
+\item Dynamo's router is stateful. \texttt{KvRouter} and \texttt{PrefillRouter} carry radix-tree KV indices and per-worker cost models. A role change must propagate through the discovery layer and reconverge this state without disrupting in-flight requests.
+\end{enumerate}
+
+\subsection{Optimization Targets}
+\label{sec:opt-targets}
+
+We formalize the RL workload's optimization goal. The primary lever is GPU utilization:
+\begin{equation}
+U_{\text{GPU}} = \frac{\sum_g T_{\text{compute}}(g)}{\sum_g T_{\text{allocated}}(g)}
+\label{eq:ugpu}
+\end{equation}
+
+By re-rolling idle GPUs into the currently-bottlenecked phase and by consolidating tail-end decode work onto fewer GPUs, the system raises useful work per allocated GPU-hour. The operation must complete in sub-second time so an RL controller can act inside one rollout phase.
+
+
+\subsection{Contributions}
+\label{sec:contributions}
+
+\begin{itemize}[nosep]
+\item (C1) An eight-step in-place role-switch state machine that atomically transitions a worker between decode and prefill roles in sub-second time. Measured: 453\,ms server-side, 497\,ms client wall-clock (decode to prefill); 428 / 466\,ms in reverse.
+\item (C2) A single-TCP-slot dispatcher for partner-prefill that lets the same vLLM engine serve both decode and prefill traffic at run-time without socket re-binding.
+\item (C3) A three-phase block-hold NIXL-pull migration protocol that consolidates running decoders by pulling GPU KV blocks across NVLink with zero KV loss, bounded by a safety-net sweep timer.
+\item (C4) An RL-signal-driven autoscaling controller that consumes rollout-phase signals and dispatches the above primitives.
+\item (C5) End-to-end validation on a Kubernetes deployment of \texttt{Qwen3-0.6B} demonstrating both role-switch correctness and NIXL-path migration.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Background and Related Work}
+\label{sec:background}
+
+\subsection{Prefill--Decode Disaggregation}
+\label{sec:pd-disagg}
+
+LLM inference of every request goes through two serial phases that share the same model weights but have different resource bottlenecks. The prefill phase processes all $N$ prompt tokens in a single forward pass with full-rank attention, and is compute-bound due to large GEMMs. The decode phase generates one token at a time against the growing KV cache, and is memory-bandwidth-bound.
+
+Co-locating both phases on one GPU (continuous batching) maximizes raw throughput but causes severe head-of-line blocking: a single long prefill stalls a batch of fast decodes. PD-disaggregated serving---pioneered by Splitwise~\cite{splitwise} and DistServe~\cite{distserve} and now the mainstream pattern adopted by NVIDIA Dynamo~\cite{dynamo}, vLLM-disagg~\cite{vllm}, and SGLang-disagg---splits the two phases onto separate GPU pools. The prefill pool produces the KV cache and ships it to the decode pool over a high-bandwidth fabric (NVLink / RDMA via NIXL~\cite{nixl}). The advantages are: compute-bound and bandwidth-bound work no longer interfere; each pool can be sized to its own bottleneck; and prefix caching becomes a first-class cross-request optimization.
+
+However, the split inherits a structural inefficiency: the ratio of compute to memory traffic in a workload may not match the ratio of prefill to decode GPUs that the operator provisioned, so one pool is idle while the other is the bottleneck. This mismatch is amplified in RL workloads where traffic arrives in bursts, and it is the central leverage point of this work.
+
+
+\subsection{NVIDIA Dynamo Runtime Architecture}
+\label{sec:dynamo-arch}
+
+Dynamo provides the routing and discovery substrate on top of stateful vLLM engines. Figure~\ref{fig:dynamo-arch} illustrates the overall architecture.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{dynamo-architecture.png}
+\caption{NVIDIA Dynamo overall architecture (source: docs.dynamo.nvidia.com).}
+\label{fig:dynamo-arch}
+\end{figure}
+
+The architecture consists of three core subsystems relevant to this work:
+
+The discovery layer uses Kubernetes Custom Resources (one CR per worker pod) as the single source of truth for worker membership. Each worker calls strategic-merge-patch to update its own CR; the frontend's \texttt{ModelWatcher} reconstructs the WorkerSet from these CRs via \texttt{list+watch}. There is no etcd and no central registry.
+
+The routing layer consists of \texttt{KvRouter} and \texttt{PrefillRouter}, both stateful engines. \texttt{KvRouter} maintains a radix-tree index over KV blocks held by each decoder, scoring candidates by prefix-overlap, queue load, and capacity. \texttt{PrefillRouter} fans prefill traffic to any prefill-role worker discovered through the CRs. When a worker's role changes, the router state must reconverge through CR propagation.
+
+The NIXL connector provides zero-copy cross-GPU KV transfer over NVLink (RDMA over InfiniBand for multi-host). Combined with the KV-Block Manager (KVBM) that tracks per-request GPU-block layout, it enables a decoder to pull KV blocks directly from another worker's VRAM---the mechanism our consolidation protocol builds upon.
+
+For our autoscaling research, Dynamo's CR-based discovery provides the critical property that role changes can be made visible to the entire system through a single metadata mutation, without restarting pods or rebuilding engines.
+
+
+\subsection{KV Cache and Prefix Caching}
+\label{sec:kv-cache}
+
+The KV cache stores the keys/values of every prior token so decode amortizes attention cost. Prefix caching~\cite{lmcache} reuses KV blocks across requests that share a prompt prefix. vLLM~0.16 keeps the cache index in CPU memory and the blocks pinned in GPU VRAM. This split is the coherence target of our role-switch protocol: the index can outlive the blocks when \texttt{engine.sleep(2)} releases them to the GPU allocator, and a stale hit at wake-up will corrupt a later request.
+
+
+\subsection{Related Systems and Distinctions}
+\label{sec:related}
+
+\begin{table}[t]
+\centering
+\caption{Comparison with related systems.}
+\label{tab:related}
+\small
+\begin{tabularx}{\linewidth}{@{}lLL@{}}
+\toprule
+System & Elasticity primitive & Limitation addressed \\
+\midrule
+Splitwise~\cite{splitwise} / DistServe~\cite{distserve} & Static PD partition at deploy time & No run-time role flip \\
+vLLM native~\cite{vllm} & Pod replicate & Cold start ${\sim}$30\,s; loses prefix cache \\
+Mooncake~\cite{mooncake} & KV pool offload & Orthogonal to PD; no role switch \\
+ServerlessLLM~\cite{serverlessllm} & Cold-start optimized serverless & No PD-disagg topology \\
+SpotServe~\cite{spotserve} & Spot instance migration & Instance-level, not request-level \\
+This work & In-place role switch + NIXL-pull migration & Sub-second elasticity and zero KV loss \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+To our knowledge, no prior open-source serving system combines (a) sub-second in-place PD role flipping with (b) live decoder-to-decoder NIXL-pull migration, both controllable from an external RL signal. Here are some existing solutions as the ~ Table ~\ref{tab:related} shows:
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{System Design: RL-Signal-Driven Autoscaling}
+\label{sec:system-design}
+
+\subsection{RL Scenarios and Design Rationale}
+\label{sec:rl-scenarios}
+
+The reinforcement-learning post-training loop presents two distinct scaling scenarios that demand different elasticity primitives:
+
+\begin{enumerate}[nosep]
+\item Cross-phase PD ratio mismatch (motivates elastic role switching). When the RL training job transitions between sampling and training phases, the prefill/decode demand ratio shifts abruptly---early in a rollout burst prefill dominates as all prompts arrive simultaneously, while later decode dominates as long completions accumulate. The static PD partition cannot track these shifts, leaving one pool over-provisioned and the other starved. An in-place role-flip primitive is needed so that idle workers can be instantly re-roled to the bottlenecked pool without cold start.
+\item Intra-phase tail fragmentation (motivates decode request consolidation). Near the end of a decode-heavy phase, a shrinking set of long-running completions is scattered across many decoders, each holding only one or two active requests. These nearly-empty decoders cannot be reclaimed or re-roled because aborting in-flight work wastes thousands of already-generated tokens. A live migration primitive is needed to consolidate remaining requests onto fewer decoders, freeing the rest for scale-down or role switch.
+\end{enumerate}
+
+To address these scenarios, we propose an RL-signal-driven auto scaling architecture with three layered primitives, as summarized in    Table ~\ref{tab:scaling-scenarios}.
+
+\begin{table}[t]
+\centering
+\caption{RL-signal-driven scaling scenarios.}
+\label{tab:scaling-scenarios}
+\small
+\begin{tabularx}{\linewidth}{@{}LLLL@{}}
+\toprule
+Scenario & Layer & Goal & Primitive \\
+\midrule
+Cluster scaling & Pod replicas & Pre-warm / drain & Patch replicas \\
+Role rebalancing & In-place flip & Re-balance P/D & \texttt{/switch\_role} \\
+Consolidation & Live migration & Free target & \texttt{/migrate} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Rollout-driven cluster scaling serves as the foundation: it simulates hot-start by pre-warming pods before a rollout begins, so that role-switching and consolidation operate on already-running engines rather than cold-starting new ones. The controller architecture is shown in Figure~\ref{fig:rl-controller}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{RL-controller.png}
+\caption{RL-Scaling controller architecture. The controller consumes phase signals from the RL training job and dispatches scaling primitives.}
+\label{fig:rl-controller}
+\end{figure}
+
+\subsection{Deployment Topology}
+\label{sec:deploy-topo}
+
+The deployment extends a standard Dynamo graph deployment with one pod-local component (the RL-Scaling sidecar) and one cluster-level component (the RL-Scaling controller), as shown in Figure~\ref{fig:k8s-deploy}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{K8S-deployement.png}
+\caption{Kubernetes deployment topology showing dual-mode worker pods, frontend, and RL-Scaling controller.}
+\label{fig:k8s-deploy}
+\end{figure}
+
+Each dual-mode worker pod exposes three logical TCP services, as listed in Table~\ref{tab:ports}.
+
+\begin{table}[t]
+\centering
+\caption{Port model of a dual-mode worker pod.}
+\label{tab:ports}
+\small
+\begin{tabularx}{\linewidth}{@{}lCL@{}}
+\toprule
+Service & Port & Role \\
+\midrule
+Request-serving slot & dynamic & \texttt{generate} endpoint \\
+System / Prometheus & :9090 & Metrics and health \\
+RL-Scaling sidecar & :9091 & Control-plane HTTP \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The key invariant for dual-mode operation is: one pod, one engine, one TCP slot---two ModelCards (decode + prefill) take turns owning that slot. The vLLM engine is built with the following configuration, carrying NIXL metadata for both roles from boot:
+
+\begin{lstlisting}
+--kv-transfer-config NixlConnector kv_both
+--kv-events-config zmq
+\end{lstlisting}
+
+The \texttt{switch\_role} operation never reopens any socket; it only renames the entry that the frontend's \texttt{ModelWatcher} observes in the worker CR.
+
+\subsection{Request Path}
+\label{sec:request-path}
+
+A single chat request traverses the system in the following ordered steps:
+
+\begin{enumerate}[nosep]
+\item The client issues \texttt{POST /v1/chat/completions} to the frontend on \texttt{:8000}.
+\item Under PD-disaggregated mode, \texttt{PrefillRouter} first selects a prefill worker from the prefill subset of the \texttt{WorkerSet}, dispatches the prompt to it, and receives \texttt{kv\_transfer\_params} describing the KV blocks the prefill worker has produced.
+\item \texttt{KvRouter} selects a decoder by scoring each candidate's radix-tree prefix-block overlap, queue load, and remaining KV capacity, then drawing via \texttt{softmax\_sample}.
+\item The frontend reads the chosen worker's transport URL from the corresponding \texttt{DWMD.endpoints[\dots].transport.tcp} entry and connects to its dynamic TCP slot \texttt{host:port/\{cid:x\}/generate}.
+\item The worker's \texttt{generate} handler---gated by the request-time dispatcher on dual-mode pods---runs the request through the local vLLM engine, pulling prefill KV blocks via NIXL when \texttt{kv\_transfer\_params} is present.
+\item Generated tokens stream back over the same TCP slot to the frontend, which forwards them as SSE chunks to the client.
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Elastic PD Role Switching}
+\label{sec:role-switch}
+
+\subsection{Problem Definition}
+\label{sec:switch-problem}
+
+Given a running disaggregated deployment with $D$ decoder pods and $P$ prefill pods serving chat traffic at $r$\,RPS through the frontend, an operator wants to instruct a specific decoder pod $D_i$ to become a prefill worker (and later come back) without restarting the pod, without dropping in-flight requests on the other pods, and within sub-second latency. Concretely, \texttt{POST~<$D_i$>/switch\_role} must achieve all of the following:
+
+\begin{enumerate}[nosep]
+\item The chat \texttt{KvRouter} stops selecting $D_i$ (its decode WorkerSet membership is withdrawn);
+\item $D_i$'s decode-side KV state is released (\texttt{engine.sleep(2)} returns GPU blocks to the allocator and \texttt{reset\_prefix\_cache} flushes the now-stale index);
+\item $D_i$ subsequently serves prefill traffic that the frontend's \texttt{PrefillRouter} dispatches to it;
+\item A reverse \texttt{target\_role="decode"} restores the above symmetrically;
+\item The flip is fast enough (sub-second) that an ongoing chat workload sees at most a brief routing dip with no permanent error increase;
+\item The pod's name, IP, vLLM engine identity, and prefix-cache infrastructure are unchanged; only the registered role in the worker CR and the engine's transient state are mutated.
+\end{enumerate}
+
+Because the operation has internal sequencing constraints (sleep before unpublish before reset-cache before re-publish before wake), the implementation is a state machine rather than a flat script.
+
+\subsection{The Eight-Step State Machine}
+\label{sec:state-machine}
+
+\texttt{DualModeWorker.switch\_role(target)} runs under a per-worker async lock and proceeds through eight deterministic states; each transition is timed and surfaced in the JSON response's \texttt{timings\_ms} field. Figure~\ref{fig:role-switch} illustrates the state machine.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{role-switch.png}
+\caption{Eight-step \texttt{switch\_role} state machine.}
+\label{fig:role-switch}
+\end{figure}
+
+\subsection{Critical Ordering Constraints}
+\label{sec:ordering}
+
+Three orderings make the protocol safe:
+
+\noindent(1) before (2): pause before unpublish. Removing the ModelCard only stops new router decisions; it does not abort flights already on the wire. \texttt{pause\_generation} rejects new local submissions before the engine sleeps, eliminating the race where a request lands on a half-asleep engine.
+
+\noindent(2) before (4): unregister before cache reset. This starts the (eventually-consistent, hundreds of milliseconds) frontend-watcher timer as early as possible.
+
+\noindent(4) inside the sleep window, before (7): reset cache while engine is asleep. vLLM's prefix cache holds block-IDs that \texttt{sleep(2)} returns to the allocator. Reset-after-wake is unsafe because the wake-up race could allocate one of those blocks to a new request before we flush the index. Reset-while-asleep is atomic from the scheduler's perspective:
+
+\begin{lstlisting}
+before sleep:  prefix_cache[hash("system:...")] -> block #42
+sleep(2):      block #42 returned to free pool
+reset_pc:      index cleared        <- we are here
+wake_up:       no stale hits possible
+\end{lstlisting}
+
+\noindent(6) after (4): publish only when the engine is in a consistent target state. This guarantees that traffic arriving via the new ModelCard lands on an engine that can serve it.
+
+\subsection{Why kv\_role=kv\_both Is Load-Bearing}
+\label{sec:kv-both}
+
+vLLM's \texttt{kv\_transfer\_config} is fixed at engine construction. Run-time mutation would require an engine rebuild (at least 5 seconds plus prefix-cache loss). We instead build one engine that knows about both roles from boot:
+
+\begin{lstlisting}
+--kv-transfer-config NixlConnector kv_both
+--kv-events-config zmq
+\end{lstlisting}
+
+Under \texttt{kv\_both} the engine registers NIXL metadata for both prefill-side and decode-side semantics. The role switch is then purely (i) a registration change in the worker CR (which ModelCard is published) and (ii) an engine-state cycle (sleep, reset, wake) to discard transient state inconsistent under the new role.
+
+\subsection{Partner-Prefill: One TCP Slot, Two ModelCards}
+\label{sec:partner-prefill}
+
+When partner-prefill is enabled, the post-switch pod becomes a first-class prefill worker that the frontend's \texttt{PrefillRouter} actually dispatches traffic to. Two non-obvious behaviours were required:
+
+(a) Multi-chunk merge of \texttt{kv\_transfer\_params}. vLLM~0.16's \texttt{NixlConnector} publishes \texttt{kv\_transfer\_params} only on the last \texttt{RequestOutput} chunk, but Dynamo's Rust \texttt{PrefillRouter} reads \texttt{disaggregated\_params} only from the first chunk. A wrapper consumes the entire stream, captures the last observed \texttt{kv\_transfer\_params}, and yields a merged chunk so the router sees the field on chunk~\#1.
+
+(b) Single TCP-slot dispatcher. Dynamo's \texttt{SharedTcpServer} stores handlers in a map keyed by endpoint path. Because the \texttt{connection\_id} is process-level, a naive registration of both decode and prefill on the same engine would collide. The fix is to register exactly one TCP handler and dispatch at request time:
+
+\begin{lstlisting}[language=Python]
+async def _generate_dispatch(request, context):
+    if dm.current_role == "prefill" \
+       and partner_prefill_handler is not None:
+        async for chunk in _partner_prefill_generate(
+            request, context):
+            yield chunk
+        return
+    async for chunk in handler.generate(
+        request, context):
+        yield chunk
+\end{lstlisting}
+
+\texttt{switch\_role} flips \texttt{current\_role} between steps~(3) and~(6), so by the time the new ModelCard is observable on the frontend the dispatcher routes correctly.
+
+\subsection{End-to-End Correctness via Kubernetes Service Discovery}
+\label{sec:e2e-correctness}
+
+The protocol's correctness does not rely on any in-process coordination between worker and frontend---it relies entirely on the cluster control plane. The propagation chain on every flip is:
+
+\begin{lstlisting}
+Worker mutates own CR
+-> K8s API server (etcd write)
+-> kube informer (watch event)
+-> Frontend ModelWatcher(re-converge WorkerSet + invalidate routers)
+\end{lstlisting}
+
+Several non-obvious properties fall out of this design:
+
+\begin{itemize}[nosep]
+\item Pod identity is invariant. The pod's name, IP, vLLM engine, and prefix-cache infrastructure do not change across a switch. Only the worker CR's \texttt{model\_cards} entry changes.
+\item The worker CR is the single observable truth. Any external observer---the frontend, a test harness, or \texttt{kubectl}---sees the same view.
+\item No Kubernetes Service is on the chat path. The request-serving slot is on a dynamically-allocated runtime port advertised in the worker CR. Removing a pod from the WorkerSet means removing its ModelCard from the CR.
+\item Eventual consistency is bounded. Empirically the watcher converges in well under 200\,ms on a single-node cluster; the protocol absorbs this latency by ordering the unregister early and the publish late.
+\end{itemize}
+
+A test or operator confirms a successful flip by composing three independent observations: (1)~CRD diff---inspect worker metadata before and after;assert that the decode \texttt{model\_card} key disappears and a prefill key appears; (2)~Frontend log---\texttt{ModelWatcher} emits a Removed event correlated with the CR change; (3)~Workload attribution---post-switch probes confirm the target's \texttt{prompt\_tokens\_total} counter grows while its decode attribution is zero.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{In-Flight Decoder Request Consolidation}
+\label{sec:consolidation}
+
+\subsection{Problem Definition}
+\label{sec:consol-problem}
+
+The role-switch protocol lets us shrink the decoder pool if the target decoder has no live requests---but a \texttt{switch\_role} issued mid-flight terminates whatever was running. For long completions (e.g., \texttt{max\_tokens~=~8000}) with thousands of already-generated tokens, throwing the work away is wasteful. We therefore need an operator-callable primitive that migrates a running request from one decoder to another, leaving the source drainable, while guaranteeing that no KV state is lost or corrupted.
+
+\subsection{The Three-Phase Block-Hold NIXL-Pull Protocol}
+\label{sec:three-phase}
+
+The protocol moves a request $R$ from a source decoder $D_{\text{src}}$ to a destination decoder $D_{\text{dst}}$ in three coordinated phases. The defining property is that $D_{\text{src}}$ keeps the request alive and the KV blocks pinned across the entire handshake, releasing them only after $D_{\text{dst}}$ has confirmed acceptance. Combined with NIXL's RDMA-style READ semantics, this gives a strict guarantee: at every instant of the protocol, the request's KV state exists on at least one GPU, as shown in Figure~\ref{fig:migration}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{request-consolidation.png}
+\caption{Three-phase block-hold NIXL-pull migration sequence.}
+\label{fig:migration}
+\end{figure}
+
+Phase~1 (Block-Hold): The orchestrator calls \texttt{migrate\_out} on $D_{\text{src}}$. $D_{\text{src}}$ pins the KV blocks of $R$, registers $R$ in pending migrations, collects source block IDs, NIXL coordinates, sampling parameters and previously emitted token count, but does NOT abort $R$. It returns \texttt{kv\_transfer\_params} and \texttt{sampling\_params} to the orchestrator.
+
+Phase~2 (NIXL READ Pull): The orchestrator calls \texttt{migrate\_in} on $D_{\text{dst}}$ with the parameters from Phase~1. $D_{\text{dst}}$ applies the cost-benefit gate, injects \texttt{kv\_transfer\_params} into the request, submits the new request to its local engine. The \texttt{NixlConnectorScheduler} issues an RDMA READ to $D_{\text{src}}$'s GPU, populates local KV blocks, and begins decoding from \texttt{previously\_emitted\_tokens~+~1}.
+
+Phase~3 (Release): The orchestrator calls \texttt{migration\_complete} on $D_{\text{src}}$. $D_{\text{src}}$ aborts $R$, unpins KV blocks, and removes the entry from pending migrations.
+
+The KV-consistency guarantee satisfies an at-least-one-copy invariant: no transition step ever leaves the request without an authoritative KV copy. If the orchestrator crashes between Phase~2 and Phase~3, the source has not aborted $R$, so the failure mode degrades to at-most-once duplicate emission rather than KV-state loss.
+
+A two-phase variant---abort on \texttt{migrate\_out}, then submit on \texttt{migrate\_in}---is unsafe under NIXL pull. If $D_{\text{src}}$ aborts first, its KV blocks are freed and may be reused by another request before the $D_{\text{dst}}$ NIXL READ completes, resulting in a silent correctness violation. The three-phase protocol decouples acceptance (\texttt{migrate\_in} returns ok) from cleanup (\texttt{migration\_complete}), turning a two-party race into a sequential handshake.
+
+\subsection{Migration Strategy}
+\label{sec:mig-strategy}
+
+The protocol moves one specified request between two specified decoders. The strategy layer answers the harder questions: which request to drain, and onto which peer.
+
+Per-pod request registry. Each worker maintains an in-process request registry updated at submission, on every streaming delta, and on completion. The registry answers which requests this decoder currently owns and how much progress each has made.
+
+Source-side victim selection. When \texttt{migrate\_out} is called, the source selects the request with the largest generated token count. Migrating the most-progressed request maximizes the marginal cost saved per migration and minimizes aggregate protocol overhead per saved token.
+
+Destination-side admission. The cost-benefit gate rejects \texttt{migrate\_in} when the request is structurally not worth migrating (replay cost exceeds threshold, too few tokens generated, or too few tokens remaining). A declined \texttt{migrate\_in} returns \texttt{status=declined} before committing any engine state.
+
+Controller-level peer choice. The controller enumerates peer decoders from the WorkerSet, ranks them by load score (active requests, generation throughput, queue depth), and picks the least-loaded eligible peer with spare KV capacity.
+
+\subsection{Block-Hold Safety Net}
+\label{sec:safety-net}
+
+A background task \texttt{sweep\_stale\_migrations} runs every second and force-completes any pending migration entry older than the configured hold timeout (default 10\,s). This prevents a crashed orchestrator from indefinitely pinning KV blocks on the source.
+
+\subsection{Client-Side Continuity}
+\label{sec:client-continuity}
+
+\texttt{migrate\_in} carries \texttt{previously\_emitted\_tokens}, the count of tokens already streamed to the client by $D_{\text{src}}$. The destination's streaming consumer skips this prefix so the client receives exactly one logical stream across the migration boundary. The chat-completion path handles this transparently because each migration produces a fresh SSE stream.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Verification and Testing}
+\label{sec:validation}
+
+\subsection{Experimental Environment}
+\label{sec:env}
+
+\begin{itemize}[nosep]
+\item Single-node Kubernetes 1.34.1, namespace \texttt{dynamo-system}
+\item Model: \texttt{Qwen/Qwen3-0.6B} with PD disaggregation
+\item 1 frontend, 2 decoders, 1 prefill (all Running)
+\item Dual-mode enabled with partner-prefill and NIXL connector
+\end{itemize}
+
+\subsection{Elastic Role Switch --- Measured Cost}
+\label{sec:switch-cost}
+
+\begin{table}[t]
+\centering
+\caption{Switch latency breakdown (ms).}
+\label{tab:switch-cost}
+\small
+\begin{tabularx}{\linewidth}{@{}LRR@{}}
+\toprule
+Step & $D{\to}P$ & $P{\to}D$ \\
+\midrule
+\texttt{sleep} & 65.8 & 50.3 \\
+\texttt{unregister\_mdc} & 22.8 & 19.4 \\
+\texttt{reconfig\_nixl} & 0.1 & 0.1 \\
+\texttt{reset\_prefix\_cache} & 4.3 & 1.2 \\
+\texttt{register\_mdc} & 326.7 & 328.1 \\
+\texttt{wake} & 20.2 & 28.8 \\
+\midrule
+Server-side total & 453.5 & 428.0 \\
+Client wall-clock & 497.3 & 465.7 \\
+\midrule
+\multicolumn{2}{@{}l}{Full round-trip (client)} & 963.0 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Table~\ref{tab:switch-cost} shows the per-step latency breakdown. \texttt{register\_mdc} dominates (Kubernetes \texttt{apply} round-trip); the engine-side cost is essentially \texttt{sleep~+~wake} at approximately 90\,ms. Both directions are symmetric because partner-prefill publishes a prefill ModelCard on decode-to-prefill and re-publishes the decode ModelCard on prefill-to-decode.
+
+\subsection{Elastic Role Switch --- Correctness Verification}
+\label{sec:switch-verify}
+
+An automated end-to-end test executes the full decode-to-prefill-to-decode switch cycle while maintaining a 2\,RPS background chat load. Five pass conditions are evaluated in Table~\ref{tab:switch-pass}.
+
+\begin{table}[t]
+\centering
+\caption{Role-switch pass conditions.}
+\label{tab:switch-pass}
+\small
+\begin{tabularx}{\linewidth}{@{}lL@{}}
+\toprule
+Code & Meaning \\
+\midrule
+\texttt{PASS\_CR\_D2P} & After switch to prefill, TARGET's CR loses its decode \texttt{model\_card} key \\
+\texttt{PASS\_CR\_P2D} & After revert to decode, the same key reappears \\
+\texttt{PASS\_PREFILL} & TARGET's \texttt{prompt\_tokens\_total} grew \\
+\texttt{PASS\_DECODE} & TARGET's \texttt{generation\_tokens\_total} grew \\
+\texttt{PASS\_LOAD} & Background load: \texttt{error\_count~=~0} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Direct CRD diff (decode to prefill):
+\begin{lstlisting}
+- .../backend/generate/<inst>
++ .../prefill/generate/<inst>
+\end{lstlisting}
+
+Workload attribution results are shown in Table~\ref{tab:attribution}.
+
+\begin{table}[t]
+\centering
+\caption{Post-switch workload attribution.}
+\label{tab:attribution}
+\small
+\begin{tabularx}{\linewidth}{@{}LCCL@{}}
+\toprule
+Phase & Probes & HTTP 200 & Counter $\Delta$ \\
+\midrule
+After switch$\to$prefill & 30 & 30 & \texttt{prompt\_tokens} +583 \\
+After revert$\to$decode & 30 & 30 & \texttt{gen\_tokens} +224 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Sustained background load (2\,RPS for 30\,s): 58 total requests, 58 HTTP~200, 0 errors. All five conditions passed.
+
+\subsection{In-Flight Consolidation --- NIXL Connector Path Verified}
+\label{sec:consol-verify}
+
+To verify that the protocol actually transfers KV state via the NIXL RDMA connector (rather than falling back to recompute-prefill), we designed an end-to-end integration test. The harness submits 5 streaming completions (\texttt{max\_tokens=3000}), waits for decoding to begin, then drives the full three-phase migration sequence. Six pass conditions are evaluated in Table~\ref{tab:mig-pass}.
+
+\begin{table}[t]
+\centering
+\caption{Consolidation pass conditions.}
+\label{tab:mig-pass}
+\small
+\begin{tabularx}{\linewidth}{@{}lL@{}}
+\toprule
+Code & Meaning \\
+\midrule
+\texttt{PASS\_KV\_TRANSFER} & \texttt{migrate\_out} carries populated \texttt{kv\_transfer\_params} \\
+\texttt{PASS\_BLOCK\_IDS} & \texttt{src\_block\_ids} is non-empty \\
+\texttt{PASS\_CONNECTOR} & \texttt{migrate\_in} reports \texttt{path=connector} \\
+\texttt{PASS\_TOKENS} & Source decoded $N{>}0$ tokens; destination resumes from $N{+}1$ \\
+\texttt{PASS\_COMPLETE} & All 5 requests finished \\
+\texttt{PASS\_MIG\_OK} & $\geq$1 pair returned \texttt{status=ok} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Per-migration NIXL evidence is summarized in Table~\ref{tab:nixl-evidence}.
+
+\begin{table}[t]
+\centering
+\caption{NIXL migration evidence.}
+\label{tab:nixl-evidence}
+\small
+\begin{tabularx}{\linewidth}{@{}lL@{}}
+\toprule
+Field & Value \\
+\midrule
+\texttt{tokens\_before} & 1688 tokens produced locally \\
+\texttt{migrate\_in.path} & \texttt{connector} (NIXL used) \\
+\texttt{replay\_tokens} & 1688 (confirms KV transfer) \\
+Migration round-trip & 188\,ms \\
+\texttt{remote\_block\_ids} & 109 physical blocks \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+A separate run exercised six concurrent migrations, exhibiting mean block-hold latency of 6.1\,ms and zero errors, confirming that the three-phase block-hold orchestration scales to multiple in-flight migrations without leaks. A synthetic \texttt{migrate\_in} with \texttt{prompt\_tokens=9000} returned \texttt{status=declined}, confirming the destination-side admission gate. All six pass conditions met.
+
+\subsection{Experimental Summary}
+\label{sec:summary}
+Table~\ref{tab:summary} consolidates the key results across all validation scenarios. Both primitives meet their design targets: role switching completes within sub-second latency with zero request errors, and NIXL-path migration transfers KV state two orders of magnitude faster than recomputing the prefix, while the block-hold orchestration scales to concurrent migrations without resource leaks.
+
+\begin{table}[t]
+\centering
+\caption{Validation summary.}
+\label{tab:summary}
+\small
+\begin{tabularx}{\linewidth}{@{}LCLL@{}}
+\toprule
+Scenario & Pass & Timing & Errors \\
+\midrule
+Role switch & 5/5 & 497\,ms d$\to$p; 963\,ms RT & 0 \\
+Consolidation (NIXL) & 6/6 & 188\,ms; 109 blocks & 0 \\
+Consolidation (scale) & all & 6 concurrent; 6.1\,ms hold & 0 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion and Future Work}
+\label{sec:discussion}
+
+\subsection{Discussion}
+
+(a) \texttt{register\_mdc} dominates the switch cost. At approximately 327\,ms it is roughly 3.5$\times$ the engine-side \texttt{sleep~+~wake} cost. This is a Kubernetes \texttt{apply} round-trip, fundamental to our choice of the worker CR as the single source of truth. The trade-off is strong observability and zero new infrastructure versus a ${\sim}$330\,ms floor on flip latency. For an RL controller that flips on the order of once per rollout phase (tens of seconds), this is acceptable.
+
+(b) Three-phase NIXL pull is verified end-to-end. The validation demonstrates that with the KVBM block-bridge wired through, \texttt{migrate\_in} takes the connector path. The 188\,ms wall-clock cost is dominated by RDMA setup; the source-side block-hold window remains short (single-digit ms in the orchestration-scale run), bounded by the at-least-one-copy invariant. The recompute-prefill fallback is retained as a safety net but is no longer the active path.
+
+(c) The single-TCP-slot dispatcher generalizes. The same lesson---a process-level \texttt{connection\_id} collides any two endpoints sharing the same \texttt{endpoint\_name}---applies to any future dual-role endpoint Dynamo grows. The dispatcher pattern is a useful template.
+
+(d) Single-host evaluation. Network costs in this evaluation are loopback-bound. Multi-host deployments will pay one additional round-trip per phase (CR propagation, plus NIXL setup over RDMA); we expect the switch wall-clock to remain under approximately 700\,ms with a healthy cluster.
+
+\subsection{Future Work}
+
+\begin{enumerate}[nosep]
+\item Cluster-wide measurement. Reproduce the validation on a multi-node cluster with RDMA NIXL; quantify additional \texttt{register\_mdc} and NIXL-pull latencies.
+\item Closed-loop RL controller. Wire the RL-Signal SDK into the controller's state machine; replace manually-triggered \texttt{switch\_role} / \texttt{migrate} calls with policy-driven dispatch evaluated on a real GRPO rollout.
+\item Expose KVBM block index by default, making three-phase NIXL pull the common path; this requires upstream cooperation with vLLM~0.17+.
+\item Pluggable scheduling to short-circuit \texttt{softmax\_sample} during a transient PD imbalance and accelerate the router's reaction to a flip.
+\item Multi-engine support. Extend the dispatcher and dual-mode plumbing to non-vLLM engines (SGLang, TRT-LLM) that support a similar dual-role configuration.
+\end{enumerate}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+{
+\small
+\bibliographystyle{ieeenat_fullname}
+\begin{thebibliography}{9}
+
+\bibitem{splitwise}
+P.~Patel, E.~Choukse, C.~Zhang, et~al., ``Splitwise: Efficient Generative LLM Inference Using Phase Splitting,'' in \emph{Proc. ISCA}, 2024.
+
+\bibitem{distserve}
+Y.~Zhong, S.~Liu, J.~Chen, et~al., ``DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving,'' in \emph{Proc. OSDI}, 2024.
+
+\bibitem{dynamo}
+NVIDIA, ``Dynamo: A Disaggregated Inference Serving Framework,'' 2024. Available: \url{https://github.com/ai-dynamo/dynamo}
+
+\bibitem{vllm}
+W.~Kwon, Z.~Li, S.~Zhuang, et~al., ``Efficient Memory Management for Large Language Model Serving with PagedAttention,'' in \emph{Proc. SOSP}, 2023.
+
+\bibitem{nixl}
+NVIDIA, ``NIXL: NVIDIA Inference eXchange Library,'' 2024. Available: \url{https://github.com/ai-dynamo/nixl}
+
+\bibitem{lmcache}
+Y.~Liu et~al., ``LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Serving,'' 2024.
+
+\bibitem{mooncake}
+R.~Qin, Z.~Li, W.~He, et~al., ``Mooncake: Trading More Storage for Less Computation --- A KVCache-Centric Architecture for Serving LLM Chatbot,'' in \emph{Proc. USENIX FAST}, 2025, pp.~155--170.
+
+\bibitem{serverlessllm}
+Y.~Fu, L.~Xue, S.~Huang, et~al., ``ServerlessLLM: Low-Latency Serverless Inference for Large Language Models,'' in \emph{Proc. OSDI}, 2024.
+
+\bibitem{spotserve}
+X.~Miao, C.~Shi, J.~Duan, et~al., ``SpotServe: Serving Generative Large Language Models on Preemptible Instances,'' in \emph{Proc. ASPLOS}, 2024.
+
+\end{thebibliography}
+}
+
+\end{document}
