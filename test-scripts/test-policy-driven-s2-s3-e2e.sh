@@ -40,6 +40,7 @@ OUT="${OUT:-${SCRIPT_DIR}/reports/policy-e2e-${TS}}"
 mkdir -p "${OUT}"
 
 NS="${NS:-dynamo-system}"
+CONTROLLER_NS="${CONTROLLER_NS:-dynamo}"
 DGD="${DGD:-vllm-v1-disagg-router}"
 MODEL="${MODEL:-Qwen/Qwen3-0.6B}"
 MODE="${MODE:-both}"                         # baseline|strategy|both
@@ -48,6 +49,7 @@ STRATEGY_DRIVER="${STRATEGY_DRIVER:-sidecar}" # auto|sidecar|none
 FRONTEND_LOCAL="${FRONTEND_LOCAL:-18000}"
 METRIC_BASE="${METRIC_BASE:-19200}"
 SIDECAR_BASE="${SIDECAR_BASE:-19300}"
+CONTROLLER_LOCAL="${CONTROLLER_LOCAL:-18081}"
 
 N_REQ="${N_REQ:-48}"
 CONCURRENCY="${CONCURRENCY:-8}"
@@ -57,8 +59,11 @@ REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-300}"
 SCENARIO_PAUSE_SECONDS="${SCENARIO_PAUSE_SECONDS:-10}"
 
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-1}"
+GPU_SAMPLE_INTERVAL="${GPU_SAMPLE_INTERVAL:-5}"
 ROLE_SWITCH_DELAY="${ROLE_SWITCH_DELAY:-8}"
 CONSOLIDATION_DELAY="${CONSOLIDATION_DELAY:-20}"
+AUTO_PROGRESS_DELAY="${AUTO_PROGRESS_DELAY:-18}"
+AUTO_PROGRESS_VALUE="${AUTO_PROGRESS_VALUE:-0.9}"
 MIG_LOOPS="${MIG_LOOPS:-4}"
 MIGRATION_SPACING="${MIGRATION_SPACING:-1}"
 STRATEGY_ACTION_TIMEOUT="${STRATEGY_ACTION_TIMEOUT:-120}"
@@ -115,14 +120,14 @@ for item in data.get("items", []):
 ' | sort
 }
 
-mapfile -t DECODE_PODS < <(discover_ready_pods VllmDecodeWorker)
-mapfile -t PREFILL_PODS < <(discover_ready_pods VllmPrefillWorker || true)
+mapfile -t DECODE_PODS < <(discover_ready_pods VllmDecodeWorker | tr -d '\r')
+mapfile -t PREFILL_PODS < <(discover_ready_pods VllmPrefillWorker | tr -d '\r' || true)
 [[ "${#DECODE_PODS[@]}" -ge 2 ]] || die "need >=2 ready decode pods, have ${#DECODE_PODS[@]}"
 
 FRONTEND_POD=$(kubectl -n "${NS}" get pod \
   -l "nvidia.com/dynamo-graph-deployment-name=${DGD},nvidia.com/dynamo-component=Frontend" \
   --field-selector=status.phase=Running \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || die "frontend not found"
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null | tr -d '\r') || die "frontend not found"
 
 log "DGD=${DGD} namespace=${NS} model=${MODEL}"
 log "FRONTEND=${FRONTEND_POD}"
@@ -187,6 +192,7 @@ cat > "${OUT}/experiment_config.csv" <<EOF
 key,value
 timestamp,${TS}
 namespace,${NS}
+controller_namespace,${CONTROLLER_NS}
 dgd,${DGD}
 model,${MODEL}
 mode,${MODE}
@@ -196,8 +202,11 @@ concurrency,${CONCURRENCY}
 max_tokens,${MAX_TOKENS}
 prompt_words,${PROMPT_WORDS}
 sample_interval,${SAMPLE_INTERVAL}
+gpu_sample_interval,${GPU_SAMPLE_INTERVAL}
 role_switch_delay,${ROLE_SWITCH_DELAY}
 consolidation_delay,${CONSOLIDATION_DELAY}
+auto_progress_delay,${AUTO_PROGRESS_DELAY}
+auto_progress_value,${AUTO_PROGRESS_VALUE}
 mig_loops,${MIG_LOOPS}
 migration_spacing,${MIGRATION_SPACING}
 strategy_action_timeout,${STRATEGY_ACTION_TIMEOUT}
@@ -209,17 +218,53 @@ role_switch_target_role,${ROLE_SWITCH_TARGET_ROLE}
 controller_label,${CONTROLLER_LABEL}
 EOF
 
+{
+  echo "key,value"
+  kubectl -n "${CONTROLLER_NS}" get cm rl-scaling-controller-config -o json 2>/dev/null \
+    | python3 -c 'import csv,json,sys
+try:
+    data=json.load(sys.stdin).get("data",{})
+except Exception:
+    data={}
+w=csv.writer(sys.stdout)
+for k in sorted(data):
+    w.writerow([f"configmap.{k}", data[k]])' || true
+  kubectl -n "${CONTROLLER_NS}" get deploy rl-scaling-controller -o json 2>/dev/null \
+    | python3 -c 'import csv,json,sys
+try:
+    obj=json.load(sys.stdin)
+except Exception:
+    obj={}
+containers=obj.get("spec",{}).get("template",{}).get("spec",{}).get("containers",[])
+w=csv.writer(sys.stdout)
+if containers:
+    image=containers[0].get("image","")
+    if image:
+        w.writerow(["deployment.image", image])
+    for env in containers[0].get("env",[]) or []:
+        if "value" in env:
+            w.writerow(["deployment.env."+env.get("name",""), env.get("value","")])' || true
+} > "${OUT}/controller_config.csv"
+
 # ---------------------------------------------------------------- metrics helpers
 metric_sum() {
   local port="$1" regex="$2"
-  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+  (curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null || true) \
     | awk -v r="${regex}" '$0 ~ r && $0 !~ /^#/ {s+=$NF} END{printf "%d", s+0}'
 }
 
 metric_last_float() {
   local port="$1" regex="$2"
-  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
-    | awk -v r="${regex}" '$0 ~ r && $0 !~ /^#/ {v=$NF} END{if(v==""){printf "0"}else{printf "%s", v}}'
+  (curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null || true) \
+    | awk -v r="${regex}" '
+      $0 ~ r && $0 !~ /^#/ {
+        candidate=$NF
+        if (candidate ~ /^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/) {
+          v=candidate
+        }
+      }
+      END{if(v==""){printf "0"}else{printf "%s", v}}
+    '
 }
 
 sidecar_role() {
@@ -261,6 +306,29 @@ sample_metrics_loop() {
         "${prompt}" "${gen}" "${running}" "${active}" >> "${csv}"
     done
     sleep "${SAMPLE_INTERVAL}"
+  done
+}
+
+sample_gpu_loop() {
+  local scenario="$1" dir="$2" stop_file="$3"
+  local csv="${dir}/gpu_metrics.csv"
+  echo "ts,scenario,role,pod,gpu_util_pct,mem_used_mib,mem_total_mib" > "${csv}"
+  while [[ ! -f "${stop_file}" ]]; do
+    local ts_now
+    ts_now="$(date +%s.%N)"
+    for pod in "${ALL_PODS[@]}"; do
+      local role raw util mem_used mem_total
+      role="${POD_ROLE[$pod]}"
+      raw="$(kubectl -n "${NS}" exec "${pod}" -- nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+      if [[ -n "${raw}" ]]; then
+        util="$(echo "${raw}" | awk -F, '{gsub(/ /,"",$1); print $1+0}')"
+        mem_used="$(echo "${raw}" | awk -F, '{gsub(/ /,"",$2); print $2+0}')"
+        mem_total="$(echo "${raw}" | awk -F, '{gsub(/ /,"",$3); print $3+0}')"
+        printf '%s,%s,%s,%s,%s,%s,%s\n' \
+          "${ts_now}" "${scenario}" "${role}" "${pod}" "${util}" "${mem_used}" "${mem_total}" >> "${csv}"
+      fi
+    done
+    sleep "${GPU_SAMPLE_INTERVAL}"
   done
 }
 
@@ -344,6 +412,63 @@ except Exception:
     payload = {"raw": raw}
 print(json.dumps({"ts": time.time(), "type": typ, "payload": payload}, sort_keys=True))
 PY
+}
+
+with_controller_pf() {
+  local callback="$1"
+  kubectl -n "${CONTROLLER_NS}" port-forward svc/rl-scaling-controller "${CONTROLLER_LOCAL}:8080" \
+    > "${OUT}/pf-controller.log" 2>&1 &
+  local pf_pid="$!"
+  cleanup_pids+=("${pf_pid}")
+  for _ in $(seq 1 40); do
+    (echo > "/dev/tcp/127.0.0.1/${CONTROLLER_LOCAL}") 2>/dev/null && break
+    sleep 0.25
+  done
+  "${callback}"
+  kill "${pf_pid}" 2>/dev/null || true
+}
+
+send_auto_progress_signal() {
+  local dir="$1"
+  local payload response
+  payload="$(python3 - "${AUTO_PROGRESS_VALUE}" <<'PY'
+import json, sys
+progress = float(sys.argv[1])
+print(json.dumps({
+    "progress": progress,
+    "batch_meta": {"batch_size": 1, "avg_isl": 128, "avg_osl": 768, "total_tokens": 896},
+}))
+PY
+)"
+  response="$(curl -fsS -m 10 -H "Content-Type: application/json" \
+    --data "${payload}" \
+    "http://127.0.0.1:${CONTROLLER_LOCAL}/api/v1/signals/sampling_progress" 2>/dev/null || true)"
+  record_event "${dir}" "controller_sampling_progress" "$(python3 - "${AUTO_PROGRESS_VALUE}" "${response}" <<'PY'
+import json, sys
+progress, raw = float(sys.argv[1]), sys.argv[2]
+try:
+    response = json.loads(raw) if raw else {}
+except Exception:
+    response = {"raw": raw}
+print(json.dumps({"progress": progress, "response": response}, sort_keys=True))
+PY
+)"
+}
+
+record_controller_status() {
+  local dir="$1"
+  local response
+  response="$(curl -fsS -m 10 "http://127.0.0.1:${CONTROLLER_LOCAL}/api/v1/status" 2>/dev/null || true)"
+  record_event "${dir}" "controller_status" "$(python3 - "${response}" <<'PY'
+import json, sys
+raw = sys.argv[1]
+try:
+    body = json.loads(raw) if raw else {}
+except Exception:
+    body = {"raw": raw}
+print(json.dumps({"response": body}, sort_keys=True))
+PY
+)"
 }
 
 run_sidecar_strategy_actions() {
@@ -511,10 +636,30 @@ PY
   strategy_action_pids+=("$!")
 }
 
+run_auto_strategy_actions() {
+  local dir="$1"
+  (
+    sleep "${AUTO_PROGRESS_DELAY}"
+    kubectl -n "${CONTROLLER_NS}" port-forward svc/rl-scaling-controller "${CONTROLLER_LOCAL}:8080" \
+      > "${OUT}/pf-controller-auto.log" 2>&1 &
+    local controller_pf_pid="$!"
+    for _ in $(seq 1 40); do
+      (echo > "/dev/tcp/127.0.0.1/${CONTROLLER_LOCAL}") 2>/dev/null && break
+      sleep 0.25
+    done
+    send_auto_progress_signal "${dir}"
+    record_controller_status "${dir}"
+    sleep 5
+    record_controller_status "${dir}"
+    kill "${controller_pf_pid}" 2>/dev/null || true
+  ) &
+  strategy_action_pids+=("$!")
+}
+
 capture_logs() {
   local scenario="$1" dir="$2" since="$3"
   mkdir -p "${dir}/logs"
-  kubectl -n "${NS}" logs -l "${CONTROLLER_LABEL}" --since-time="${since}" --tail="${CAPTURE_LOG_LINES}" \
+  kubectl -n "${CONTROLLER_NS}" logs -l "${CONTROLLER_LABEL}" --since-time="${since}" --tail="${CAPTURE_LOG_LINES}" \
     > "${dir}/logs/controller.log" 2>/dev/null || true
   for pod in "${ALL_PODS[@]}"; do
     kubectl -n "${NS}" logs "${pod}" --since-time="${since}" --tail="${CAPTURE_LOG_LINES}" \
@@ -527,11 +672,13 @@ capture_logs() {
 
 analyze_scenario() {
   local scenario="$1" dir="$2"
-  python3 - "${scenario}" "${dir}" "${N_REQ}" <<'PY'
+  python3 - "${scenario}" "${dir}" "${N_REQ}" "${GPU_SAMPLE_INTERVAL}" <<'PY'
 import csv, json, math, os, statistics, sys
-scenario, out_dir, expected = sys.argv[1], sys.argv[2], int(sys.argv[3])
+scenario, out_dir, expected, gpu_interval = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
 req_path = os.path.join(out_dir, "requests.csv")
 metrics_path = os.path.join(out_dir, "pod_metrics.csv")
+gpu_path = os.path.join(out_dir, "gpu_metrics.csv")
+responses_dir = os.path.join(out_dir, "responses")
 summary_path = os.path.join(out_dir, "summary.json")
 throughput_path = os.path.join(out_dir, "pod_throughput.csv")
 
@@ -541,6 +688,12 @@ def pct(vals, p):
         return 0.0
     idx = min(len(vals) - 1, max(0, int(math.ceil((p / 100.0) * len(vals))) - 1))
     return vals[idx]
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value or default)
+    except Exception:
+        return default
 
 requests = []
 with open(req_path, newline="") as f:
@@ -555,6 +708,31 @@ ok = sum(1 for r in requests if r["http_code"] == "200")
 total_wall = (max(ends) - min(starts)) if starts and ends else 0.0
 success_rate = (ok / len(requests) * 100.0) if requests else 0.0
 
+user_prompt_tokens = 0
+user_completion_tokens = 0
+user_total_tokens = 0
+for row in requests:
+    idx = str(row.get("idx", ""))
+    if not idx.isdigit():
+        continue
+    path = os.path.join(responses_dir, f"response-{idx}.json")
+    if not os.path.exists(path):
+        continue
+    try:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        continue
+    usage = payload.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    prompt_tokens = int(safe_float(usage.get("prompt_tokens")))
+    completion_tokens = int(safe_float(usage.get("completion_tokens")))
+    total_tokens = int(safe_float(usage.get("total_tokens")))
+    user_prompt_tokens += prompt_tokens
+    user_completion_tokens += completion_tokens
+    user_total_tokens += total_tokens or (prompt_tokens + completion_tokens)
+
 samples_by_pod = {}
 if os.path.exists(metrics_path):
     with open(metrics_path, newline="") as f:
@@ -566,11 +744,11 @@ pod_rows = []
 total_prompt_delta = 0
 total_gen_delta = 0
 for pod, rows in sorted(samples_by_pod.items()):
-    rows.sort(key=lambda r: float(r["ts"]))
+    rows.sort(key=lambda r: safe_float(r["ts"]))
     first, last = rows[0], rows[-1]
-    elapsed = max(0.001, float(last["ts"]) - float(first["ts"]))
-    prompt_delta = int(float(last["prompt_tokens_total"])) - int(float(first["prompt_tokens_total"]))
-    gen_delta = int(float(last["generation_tokens_total"])) - int(float(first["generation_tokens_total"]))
+    elapsed = max(0.001, safe_float(last["ts"]) - safe_float(first["ts"]))
+    prompt_delta = int(safe_float(last["prompt_tokens_total"])) - int(safe_float(first["prompt_tokens_total"]))
+    gen_delta = int(safe_float(last["generation_tokens_total"])) - int(safe_float(first["generation_tokens_total"]))
     total_prompt_delta += max(0, prompt_delta)
     total_gen_delta += max(0, gen_delta)
     pod_rows.append({
@@ -584,8 +762,8 @@ for pod, rows in sorted(samples_by_pod.items()):
         "generation_tokens_delta": gen_delta,
         "prompt_tps": prompt_delta / elapsed,
         "generation_tps": gen_delta / elapsed,
-        "max_running": max(float(r["num_requests_running"] or 0) for r in rows),
-        "max_active_requests": max(float(r["active_requests"] or 0) for r in rows),
+        "max_running": max(safe_float(r["num_requests_running"]) for r in rows),
+        "max_active_requests": max(safe_float(r["active_requests"]) for r in rows),
     })
 
 with open(throughput_path, "w", newline="") as f:
@@ -593,6 +771,36 @@ with open(throughput_path, "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=fields)
     w.writeheader()
     w.writerows(pod_rows)
+
+gpu_rows = []
+if os.path.exists(gpu_path):
+    with open(gpu_path, newline="") as f:
+        for row in csv.DictReader(f):
+            gpu_rows.append(row)
+gpu_utils = [safe_float(r.get("gpu_util_pct")) for r in gpu_rows]
+gpu_mem = [safe_float(r.get("mem_used_mib")) for r in gpu_rows]
+gpu_active = sum(1 for v in gpu_utils if v > 0)
+gpu_rows_by_pod = {}
+for row in gpu_rows:
+    gpu_rows_by_pod.setdefault(row.get("pod", ""), []).append(row)
+gpu_observed_seconds = 0.0
+gpu_active_seconds = 0.0
+gpu_effective_seconds = 0.0
+for pod, rows in gpu_rows_by_pod.items():
+    rows.sort(key=lambda r: safe_float(r.get("ts")))
+    for idx, row in enumerate(rows):
+        ts = safe_float(row.get("ts"))
+        if idx + 1 < len(rows):
+            dt = safe_float(rows[idx + 1].get("ts")) - ts
+            if dt <= 0:
+                dt = gpu_interval
+        else:
+            dt = gpu_interval
+        util = max(0.0, min(100.0, safe_float(row.get("gpu_util_pct"))))
+        gpu_observed_seconds += dt
+        gpu_effective_seconds += (util / 100.0) * dt
+        if util > 0:
+            gpu_active_seconds += dt
 
 events_path = os.path.join(out_dir, "strategy_events.jsonl")
 event_counts = {}
@@ -646,8 +854,23 @@ summary = {
     "ttft_p99_s": pct(ttfts, 99),
     "prompt_tokens_delta": total_prompt_delta,
     "generation_tokens_delta": total_gen_delta,
+    "user_prompt_tokens": user_prompt_tokens,
+    "user_completion_tokens": user_completion_tokens,
+    "user_total_tokens": user_total_tokens,
+    "engine_replay_or_overhead_tokens": max(0, total_gen_delta - user_completion_tokens),
     "cluster_prompt_tps": (total_prompt_delta / total_wall) if total_wall > 0 else 0.0,
     "cluster_generation_tps": (total_gen_delta / total_wall) if total_wall > 0 else 0.0,
+    "user_completion_tps": (user_completion_tokens / total_wall) if total_wall > 0 else 0.0,
+    "gpu_sample_count": len(gpu_rows),
+    "gpu_util_avg_pct": (statistics.mean(gpu_utils) if gpu_utils else 0.0),
+    "gpu_util_max_pct": (max(gpu_utils) if gpu_utils else 0.0),
+    "gpu_mem_used_avg_mib": (statistics.mean(gpu_mem) if gpu_mem else 0.0),
+    "gpu_mem_used_max_mib": (max(gpu_mem) if gpu_mem else 0.0),
+    "gpu_active_sample_pct": (gpu_active / len(gpu_utils) * 100.0 if gpu_utils else 0.0),
+    "gpu_observed_seconds": gpu_observed_seconds,
+    "gpu_active_seconds": gpu_active_seconds,
+    "gpu_effective_seconds": gpu_effective_seconds,
+    "gpu_effective_hours": gpu_effective_seconds / 3600.0,
     "event_counts": event_counts,
     "pod_count": len(pod_rows),
 }
@@ -664,6 +887,10 @@ with open(scenario_report, "w", encoding="utf-8") as f:
         "end_to_end_wall_s", "request_throughput_rps", "latency_avg_s", "latency_p50_s",
         "latency_p95_s", "latency_p99_s", "ttft_avg_s", "ttft_p50_s", "ttft_p95_s", "ttft_p99_s",
         "cluster_prompt_tps", "cluster_generation_tps", "prompt_tokens_delta", "generation_tokens_delta",
+        "user_prompt_tokens", "user_completion_tokens", "user_completion_tps", "engine_replay_or_overhead_tokens",
+        "gpu_sample_count", "gpu_util_avg_pct", "gpu_util_max_pct", "gpu_mem_used_avg_mib",
+        "gpu_mem_used_max_mib", "gpu_active_sample_pct", "gpu_active_seconds",
+        "gpu_effective_seconds", "gpu_effective_hours",
     ]:
         value = summary.get(key, "")
         if isinstance(value, float):
@@ -701,6 +928,7 @@ with open(scenario_report, "w", encoding="utf-8") as f:
         ("summary.json", "Machine-readable scenario summary"),
         ("requests.csv", "Per-request timing and HTTP status"),
         ("pod_metrics.csv", "Raw per-pod metric samples"),
+        ("gpu_metrics.csv", "Raw per-pod GPU utilization and memory samples"),
         ("pod_throughput.csv", "Per-pod throughput summary"),
         ("event_timeline.csv", "Flattened strategy event timeline"),
         ("strategy_events.jsonl", "Raw strategy event payloads"),
@@ -735,11 +963,15 @@ run_scenario() {
   sample_metrics_loop "${scenario}" "${dir}" "${stop_file}" &
   local sampler_pid="$!"
   scenario_pids+=("${sampler_pid}")
+  sample_gpu_loop "${scenario}" "${dir}" "${stop_file}" &
+  local gpu_sampler_pid="$!"
+  scenario_pids+=("${gpu_sampler_pid}")
 
   if [[ "${scenario}" == "strategy" && "${driver}" == "sidecar" ]]; then
     run_sidecar_strategy_actions "${dir}"
   elif [[ "${scenario}" == "strategy" && "${driver}" == "auto" ]]; then
     record_event "${dir}" "strategy_driver" '{"mode":"auto","note":"observing controller-triggered actions only"}'
+    run_auto_strategy_actions "${dir}"
   else
     record_event "${dir}" "strategy_driver" '{"mode":"none","note":"baseline/passive observation"}'
   fi
@@ -751,6 +983,7 @@ run_scenario() {
   sleep 2
   touch "${stop_file}"
   wait "${sampler_pid}" 2>/dev/null || true
+  wait "${gpu_sampler_pid}" 2>/dev/null || true
 
   capture_logs "${scenario}" "${dir}" "${since}"
   analyze_scenario "${scenario}" "${dir}"
@@ -792,8 +1025,12 @@ fields = [
     "scenario", "completed_requests", "http_200", "http_non_200",
   "success_rate_pct", "end_to_end_wall_s", "request_throughput_rps",
     "latency_p50_s", "latency_p95_s", "latency_p99_s",
-  "ttft_p50_s", "ttft_p95_s", "cluster_prompt_tps", "cluster_generation_tps",
-    "prompt_tokens_delta", "generation_tokens_delta",
+    "ttft_p50_s", "ttft_p95_s", "cluster_prompt_tps", "cluster_generation_tps",
+    "prompt_tokens_delta", "generation_tokens_delta", "user_prompt_tokens",
+    "user_completion_tokens", "user_completion_tps", "engine_replay_or_overhead_tokens",
+    "gpu_sample_count", "gpu_util_avg_pct", "gpu_util_max_pct",
+    "gpu_mem_used_avg_mib", "gpu_mem_used_max_mib", "gpu_active_sample_pct",
+    "gpu_active_seconds", "gpu_effective_seconds", "gpu_effective_hours",
 ]
 with open(os.path.join(out, "comparison.csv"), "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=fields)
@@ -804,7 +1041,9 @@ with open(os.path.join(out, "comparison.csv"), "w", newline="") as f:
 
 improvement = None
 throughput_gain = None
+user_throughput_gain = None
 latency_change = None
+gpu_effective_change = None
 if baseline and strategy:
     b = baseline.get("end_to_end_wall_s", 0) or 0
     s = strategy.get("end_to_end_wall_s", 0) or 0
@@ -814,13 +1053,30 @@ if baseline and strategy:
     st = strategy.get("cluster_generation_tps", 0) or 0
     if bt > 0:
         throughput_gain = (st - bt) / bt * 100.0
+    but = baseline.get("user_completion_tps", 0) or 0
+    sut = strategy.get("user_completion_tps", 0) or 0
+    if but > 0:
+        user_throughput_gain = (sut - but) / but * 100.0
     bl = baseline.get("latency_p95_s", 0) or 0
     sl = strategy.get("latency_p95_s", 0) or 0
     if bl > 0:
         latency_change = (bl - sl) / bl * 100.0
+    bg = baseline.get("gpu_effective_seconds", 0) or 0
+    sg = strategy.get("gpu_effective_seconds", 0) or 0
+    if bg > 0:
+        gpu_effective_change = (bg - sg) / bg * 100.0
 
 topology_rows = read_csv_rows("topology.csv")
 config_rows = read_csv_rows("experiment_config.csv")
+controller_config_rows = read_csv_rows("controller_config.csv")
+controller_config = {row.get("key", ""): row.get("value", "") for row in controller_config_rows}
+
+def cfg_value(name, default="n/a"):
+    return (
+        controller_config.get(f"deployment.env.{name}")
+        or controller_config.get(f"configmap.{name}")
+        or default
+    )
 
 lines = []
 lines.append("# Policy-driven S2/S3 E2E Test Report")
@@ -834,7 +1090,9 @@ if baseline and strategy:
     lines.append("|---|---:|---|")
     lines.append(f"| end-to-end wall time change | {fmt(improvement)}% | positive means strategy completed faster |")
     lines.append(f"| generation throughput change | {fmt(throughput_gain)}% | positive means more generation tokens/s |")
+    lines.append(f"| user-visible completion throughput change | {fmt(user_throughput_gain)}% | positive means more response completion tokens/s, excluding engine replay |")
     lines.append(f"| p95 latency change | {fmt(latency_change)}% | positive means lower p95 latency |")
+    lines.append(f"| GPU effective seconds change | {fmt(gpu_effective_change)}% | positive means fewer utilization-weighted GPU seconds for the same workload |")
 else:
     ran = "baseline" if baseline else "strategy" if strategy else "none"
     lines.append(f"Single-scenario report generated for `{ran}`. Run with `MODE=both` to produce baseline-vs-strategy comparison.")
@@ -846,7 +1104,24 @@ lines.append("|---|---|")
 for row in config_rows:
     lines.append(f"| `{row.get('key', '')}` | `{row.get('value', '')}` |")
 lines.append("")
-lines.append("## 3. Topology")
+lines.append("## 3. Controller Strategy Logic")
+lines.append("")
+lines.append("| strategy | formal trigger condition | deployed value in this run | validation evidence |")
+lines.append("|---|---|---|---|")
+lines.append(
+    "| Baseline | `ROLE_SWITCH_ENABLED=false` and `CONSOLIDATION_ENABLED=false`; controller observes traffic but does not call S2/S3 sidecars | "
+    f"`ROLE_SWITCH_ENABLED={cfg_value('ROLE_SWITCH_ENABLED')}`, `CONSOLIDATION_ENABLED={cfg_value('CONSOLIDATION_ENABLED')}` | baseline has no S2/S3 controller execution log lines |"
+)
+lines.append(
+    "| S2 PD Role Switch | prefill-heavy trigger: `prefill_queue_depth >= PREFILL_QUEUE_THRESHOLD` and `decode_utilization <= DECODE_IDLE_THRESHOLD`; decode-heavy trigger: `decode_queue_depth >= DECODE_QUEUE_THRESHOLD` and `prefill_utilization <= PREFILL_IDLE_THRESHOLD`; actions are rate-limited by `MIN_SWITCH_INTERVAL` | "
+    f"`PREFILL_QUEUE_THRESHOLD={cfg_value('PREFILL_QUEUE_THRESHOLD')}`, `DECODE_QUEUE_THRESHOLD={cfg_value('DECODE_QUEUE_THRESHOLD')}`, `DECODE_IDLE_THRESHOLD={cfg_value('DECODE_IDLE_THRESHOLD')}`, `PREFILL_IDLE_THRESHOLD={cfg_value('PREFILL_IDLE_THRESHOLD')}`, `MIN_SWITCH_INTERVAL={cfg_value('MIN_SWITCH_INTERVAL')}` | controller status/logs expose `s2_history`, `S2 role switch decision`, and `S2 role switch result` |"
+)
+lines.append(
+    "| S3 Request Consolidation | batch progress must be `>= MIN_BATCH_COMPLETION`; source decode worker must have `1..CONSOLIDATION_THRESHOLD` in-flight requests; target worker must have available capacity at least equal to source active request count; migration must be cost-beneficial; the same plan must remain stable for `CONSOLIDATION_STABLE_SAMPLES` controller ticks and respect `CONSOLIDATION_MIN_INTERVAL` cooldown | "
+    f"`MIN_BATCH_COMPLETION={cfg_value('MIN_BATCH_COMPLETION')}`, `CONSOLIDATION_THRESHOLD={cfg_value('CONSOLIDATION_THRESHOLD')}`, `CONSOLIDATION_STABLE_SAMPLES={cfg_value('CONSOLIDATION_STABLE_SAMPLES')}`, `CONSOLIDATION_MIN_INTERVAL={cfg_value('CONSOLIDATION_MIN_INTERVAL')}`, `CONSOLIDATION_SCALE_DOWN_ENABLED={cfg_value('CONSOLIDATION_SCALE_DOWN_ENABLED')}` | controller logs expose waiting/decision/executed records; worker logs expose migration complete/rollback records |"
+)
+lines.append("")
+lines.append("## 4. Topology")
 lines.append("")
 if topology_rows:
     lines.append("| role | pod | pod IP | metric port | sidecar port |")
@@ -859,10 +1134,30 @@ if topology_rows:
 else:
     lines.append("Topology was not captured.")
 lines.append("")
-lines.append("## 4. End-to-End Timing And Throughput")
+lines.append("## 5. End-to-End Timing And Throughput")
 lines.append("")
-lines.append("| scenario | completed | success % | wall time (s) | req/s | p50 latency (s) | p95 latency (s) | p99 latency (s) | p50 TTFT (s) | gen tok/s |")
-lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+lines.append("### Metric Meanings")
+lines.append("")
+lines.append("| metric | meaning | measurement boundary | why it matters |")
+lines.append("|---|---|---|---|")
+lines.append("| completed | requests for which the client process returned a row in `requests.csv` | one row per submitted HTTP request | confirms workload size and whether requests finished inside timeout |")
+lines.append("| success % | `http_200 / completed * 100` | HTTP status returned by Dynamo frontend `/v1/chat/completions` | validates service correctness while strategy actions occur |")
+lines.append("| wall time | `max(end_ts) - min(start_ts)` across measured requests | starts when the first measured curl is launched; ends when the last measured curl returns | represents end-to-end batch completion time |")
+lines.append("| req/s | successful frontend HTTP requests per second, `http_200 / wall time` | same wall-time window as above | user-visible request throughput |")
+lines.append("| p50 latency | median per-request curl total time | each request start to complete response body | typical user request latency |")
+lines.append("| p95/p99 latency | 95th/99th percentile per-request curl total time | each request start to complete response body | tail latency, sensitive to queueing and stragglers |")
+lines.append("| p50 TTFT | median curl `time_starttransfer` | request start to first response byte | approximates time-to-first-token / first-byte responsiveness |")
+lines.append("| engine gen tok/s | cluster generation token delta divided by wall time | vLLM `generation_tokens_total` sampled before/after scenario | model-side decode throughput; can include migration replay tokens |")
+lines.append("| user completion tok/s | sum of HTTP response `usage.completion_tokens` divided by wall time | successful non-streaming frontend responses in `responses/` | user-visible output throughput, excluding internal replay |")
+lines.append("| replay/overhead tokens | `engine_generation_tokens_delta - user_completion_tokens`, clamped at 0 | vLLM counters minus frontend response usage | indicates extra engine work such as migration replay/recompute |")
+lines.append("| GPU active sample % | share of GPU samples where `nvidia-smi utilization.gpu > 0` | sampled per worker pod every configured GPU interval | coarse proxy for GPU active time / effective-hour utilization |")
+lines.append("| GPU effective seconds | sum of `gpu_util_pct / 100 * sample_duration` across worker pods | `nvidia-smi` utilization samples integrated over time | utilization-weighted GPU time; lower is better for equal completed work |")
+lines.append("| GPU memory MiB | device memory used by worker pod at sample time | `nvidia-smi memory.used` | shows whether consolidation/switching changes memory footprint or leaves workers occupied |")
+lines.append("")
+lines.append("### Results")
+lines.append("")
+lines.append("| scenario | completed | success % | wall time (s) | req/s | p50 latency (s) | p95 latency (s) | p99 latency (s) | p50 TTFT (s) | engine gen tok/s | user completion tok/s | replay/overhead tok | GPU active % | GPU effective s | avg GPU util % | max GPU mem MiB |")
+lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 for row in (baseline, strategy):
     if not row:
         continue
@@ -870,12 +1165,18 @@ for row in (baseline, strategy):
     f"| {row['scenario']} | {row['completed_requests']} | {fmt(row.get('success_rate_pct'))} | "
         f"{fmt(row['end_to_end_wall_s'])} | {fmt(row['request_throughput_rps'])} | "
         f"{fmt(row['latency_p50_s'])} | {fmt(row['latency_p95_s'])} | "
-    f"{fmt(row['latency_p99_s'])} | {fmt(row.get('ttft_p50_s'))} | {fmt(row['cluster_generation_tps'])} |"
+    f"{fmt(row['latency_p99_s'])} | {fmt(row.get('ttft_p50_s'))} | {fmt(row['cluster_generation_tps'])} | "
+    f"{fmt(row.get('user_completion_tps'))} | {fmt(row.get('engine_replay_or_overhead_tokens'), 0)} | "
+    f"{fmt(row.get('gpu_active_sample_pct'))} | {fmt(row.get('gpu_effective_seconds'))} | "
+    f"{fmt(row.get('gpu_util_avg_pct'))} | {fmt(row.get('gpu_mem_used_max_mib'))} |"
     )
 lines.append("")
-lines.append("## 5. Strategy Trigger Evidence")
+lines.append("## 6. Strategy Trigger Evidence")
 lines.append("")
 if strategy:
+    if driver == "auto":
+        lines.append("`STRATEGY_DRIVER=auto` means this script did not call worker sidecar action endpoints. S2/S3 evidence must come from controller `/api/v1/status`, controller logs, and worker logs captured under `strategy/logs/`.")
+        lines.append("")
     lines.append(f"Event counts: `{json.dumps(strategy.get('event_counts', {}), sort_keys=True)}`")
     timeline = read_csv_rows("strategy/event_timeline.csv")
     if timeline:
@@ -891,8 +1192,9 @@ else:
     lines.append("No strategy scenario was run.")
 lines.append("")
 lines.append("Raw event payloads are in `strategy/strategy_events.jsonl`; flattened event rows are in `strategy/event_timeline.csv`.")
+lines.append("For auto runs, inspect `strategy/strategy-log-excerpts.txt` for `S2 role switch decision`, `S2 role switch result`, `S3 consolidation decision`, and `S3 consolidation executed` log lines.")
 lines.append("")
-lines.append("## 6. Per-Scenario Reports")
+lines.append("## 7. Per-Scenario Reports")
 lines.append("")
 lines.append("| scenario | report | requests | pod throughput | raw metrics | logs |")
 lines.append("|---|---|---|---|---|---|")
@@ -900,14 +1202,14 @@ for scenario in ("baseline", "strategy"):
     if os.path.exists(os.path.join(out, scenario)):
         lines.append(
             f"| {scenario} | `{scenario}/REPORT.md` | `{scenario}/requests.csv` | "
-            f"`{scenario}/pod_throughput.csv` | `{scenario}/pod_metrics.csv` | `{scenario}/logs/` |"
+            f"`{scenario}/pod_throughput.csv` | `{scenario}/pod_metrics.csv`, `{scenario}/gpu_metrics.csv` | `{scenario}/logs/` |"
         )
 lines.append("")
-lines.append("## 7. Cache Control Note")
+lines.append("## 8. Cache Control Note")
 lines.append("")
 lines.append("Each scenario uses a unique prompt salt and a separate warmup request. This reduces prefix/KV cache reuse between baseline and strategy. For stricter isolation, run each scenario on freshly restarted workers or clear worker KV state through the deployment-specific clear route before invoking this script.")
 lines.append("")
-lines.append("## 8. Artifact Index")
+lines.append("## 9. Artifact Index")
 lines.append("")
 lines.append("| artifact | exists | purpose |")
 lines.append("|---|---|---|")
@@ -915,9 +1217,11 @@ for artifact, purpose in [
     ("experiment_config.csv", "Run configuration captured at script start"),
     ("topology.csv", "Discovered frontend/prefill/decode topology"),
     ("comparison.csv", "Machine-readable scenario comparison"),
+    ("controller_config.csv", "Controller ConfigMap and deployment env captured at test start"),
     ("baseline/REPORT.md", "Baseline scenario report"),
     ("strategy/REPORT.md", "Strategy scenario report"),
     ("strategy/event_timeline.csv", "Flattened strategy trigger timeline"),
+    ("strategy/gpu_metrics.csv", "Raw strategy GPU utilization and memory samples"),
 ]:
     lines.append(f"| `{artifact}` | {artifact_exists(artifact)} | {purpose} |")
 

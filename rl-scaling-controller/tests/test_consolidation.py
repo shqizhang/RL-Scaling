@@ -17,7 +17,7 @@ from rl_scaling_controller.metrics_collector import (
 
 
 def _cfg(**overrides) -> ControllerConfig:
-    base = replace(load_config(), consolidation_enabled=True, min_decode_replicas=1)
+    base = replace(load_config(), consolidation_enabled=True, min_decode_replicas=1, consolidation_stable_samples=1)
     return replace(base, **overrides)
 
 
@@ -154,6 +154,37 @@ class TestConsolidationController:
         assert client.migrate_one.call_count == 2  # 2 requests on source 'a'
         assert decision.scaled_down_to == 3
         assert d.get_replicas("decode") == 3
+
+    @pytest.mark.asyncio
+    async def test_waits_for_stable_samples_before_migrating(self):
+        workers = [
+            _w("a", in_flight=2, capacity=10, remaining=60),
+            _w("b", in_flight=8, capacity=50, remaining=60),
+        ]
+
+        class M(InMemoryMetricsCollector):
+            async def get_decode_worker_states(self):
+                return workers
+
+        client = MagicMock()
+        ctrl = ConsolidationController(
+            config=_cfg(
+                consolidation_threshold=3,
+                consolidation_stable_samples=2,
+                consolidation_min_interval_seconds=0,
+            ),
+            metrics=M(),
+            dgdsa=InMemoryDGDSAClient(),
+            client=client,
+            batch_completion_fn=lambda: 0.9,
+        )
+        assert await ctrl.control_loop_tick() is None
+        client.migrate_one.assert_not_called()
+
+        decision = await ctrl.control_loop_tick()
+        assert decision is not None
+        assert decision.executed_pairs == 1
+        assert client.migrate_one.call_count == 2
 
     @pytest.mark.asyncio
     async def test_scale_down_clamped_to_min(self):

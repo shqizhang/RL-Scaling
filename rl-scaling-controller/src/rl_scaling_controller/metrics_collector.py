@@ -77,13 +77,41 @@ class PrometheusMetricsCollector:
     controller if Prometheus is temporarily unreachable (returns 0 / empty).
     """
 
-    def __init__(self, prometheus_url: str, http_client=None, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        prometheus_url: str,
+        http_client=None,
+        timeout: float = 5.0,
+        *,
+        namespace: str = "dynamo-system",
+        dgd_name: str = "vllm-v1-disagg-router",
+        worker_sidecar_port: int = 9091,
+        max_concurrent_per_decode: int = 64,
+        k8s_core_api=None,
+    ) -> None:
         self.url = prometheus_url.rstrip("/")
+        self.namespace = namespace
+        self.dgd_name = dgd_name
+        self.worker_sidecar_port = worker_sidecar_port
+        self.max_concurrent_per_decode = max_concurrent_per_decode
         if http_client is None:
             import httpx
 
             http_client = httpx.AsyncClient(timeout=timeout)
         self._http = http_client
+        self._k8s_core = k8s_core_api
+
+    @property
+    def k8s_core(self):
+        if self._k8s_core is None:
+            from kubernetes import client, config  # type: ignore
+
+            try:
+                config.load_incluster_config()
+            except Exception:
+                config.load_kube_config()
+            self._k8s_core = client.CoreV1Api()
+        return self._k8s_core
 
     async def _query(self, expr: str) -> Optional[float]:
         try:
@@ -121,13 +149,95 @@ class PrometheusMetricsCollector:
         cm.decode_utilization = float(await self._query(
             'avg(dynamo_worker_gpu_utilization{role="decode"})'
         ) or 0.0)
+        workers = await self.get_worker_states()
+        cm.prefill_workers = [w for w in workers if w.role == "prefill"]
+        cm.decode_workers = [w for w in workers if w.role == "decode"]
+        if cm.prefill_queue_depth == 0:
+            cm.prefill_queue_depth = sum(w.in_flight_requests for w in cm.prefill_workers)
+        if cm.decode_queue_depth == 0:
+            cm.decode_queue_depth = sum(w.in_flight_requests for w in cm.decode_workers)
+        if cm.decode_workers and cm.decode_utilization == 0.0:
+            busy = sum(w.in_flight_requests for w in cm.decode_workers)
+            capacity = max(1, len(cm.decode_workers) * self.max_concurrent_per_decode)
+            cm.decode_utilization = min(1.0, busy / capacity)
+        if cm.prefill_workers and cm.prefill_utilization == 0.0:
+            busy = sum(w.in_flight_requests for w in cm.prefill_workers)
+            capacity = max(1, len(cm.prefill_workers) * self.max_concurrent_per_decode)
+            cm.prefill_utilization = min(1.0, busy / capacity)
         return cm
 
     async def get_decode_worker_states(self) -> List[WorkerState]:
-        # Real implementation would iterate workers via service discovery /
-        # Prometheus label values. For the controller skeleton we leave it
-        # empty; integration tests rely on InMemoryMetricsCollector.
-        return []
+        return [w for w in await self.get_worker_states() if w.role == "decode"]
+
+    async def get_worker_states(self) -> List[WorkerState]:
+        workers: List[WorkerState] = []
+        for component, role in (
+            ("VllmDecodeWorker", "decode"),
+            ("VllmPrefillWorker", "prefill"),
+        ):
+            workers.extend(await self._discover_component_workers(component, role))
+        return workers
+
+    async def _discover_component_workers(self, component: str, expected_role: str) -> List[WorkerState]:
+        label_selector = (
+            f"nvidia.com/dynamo-component={component},"
+            f"nvidia.com/dynamo-graph-deployment-name={self.dgd_name}"
+        )
+        try:
+            pods = self.k8s_core.list_namespaced_pod(
+                namespace=self.namespace,
+                label_selector=label_selector,
+            ).items
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list worker pods failed: %s", exc)
+            return []
+
+        states: List[WorkerState] = []
+        for pod in pods:
+            if getattr(pod.status, "phase", "") != "Running":
+                continue
+            conditions = getattr(pod.status, "conditions", []) or []
+            ready = any(getattr(c, "type", "") == "Ready" and getattr(c, "status", "") == "True" for c in conditions)
+            if not ready:
+                continue
+            pod_ip = getattr(pod.status, "pod_ip", None)
+            pod_name = getattr(pod.metadata, "name", "")
+            if not pod_ip:
+                continue
+            addr = f"http://{pod_ip}:{self.worker_sidecar_port}"
+            role = await self._sidecar_role(addr, expected_role)
+            active = await self._sidecar_active_count(addr)
+            capacity = max(0, self.max_concurrent_per_decode - active)
+            remaining = 60.0 if active > 0 else 0.0
+            states.append(
+                WorkerState(
+                    worker_id=pod_name,
+                    addr=addr,
+                    role=role,
+                    in_flight_requests=active,
+                    active_kv_blocks=0,
+                    available_capacity=capacity,
+                    estimated_remaining_time=remaining,
+                )
+            )
+        return states
+
+    async def _sidecar_role(self, addr: str, default: str) -> str:
+        try:
+            resp = await self._http.get(addr.rstrip("/") + "/v1/role")
+            resp.raise_for_status()
+            return str(resp.json().get("current_role") or default)
+        except Exception:
+            return default
+
+    async def _sidecar_active_count(self, addr: str) -> int:
+        try:
+            resp = await self._http.get(addr.rstrip("/") + "/v1/active_requests")
+            resp.raise_for_status()
+            body = resp.json()
+            return len(body) if isinstance(body, list) else 0
+        except Exception:
+            return 0
 
     async def get_worker_request_count(self, worker_id: str) -> int:
         v = await self._query(

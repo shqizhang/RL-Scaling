@@ -44,6 +44,7 @@ class ControllerConfig:
         "PROMETHEUS_URL",
         "http://prometheus-kube-prometheus-prometheus.monitoring:9090",
     ))
+    worker_sidecar_port: int = field(default_factory=lambda: _env_int("WORKER_SIDECAR_PORT", 9091))
 
     # ─── S1: Rollout scale ───
     pre_warm_threshold: float = field(default_factory=lambda: _env_float("PRE_WARM_THRESHOLD", 0.8))
@@ -75,6 +76,9 @@ class ControllerConfig:
     consolidation_threshold: int = field(default_factory=lambda: _env_int("CONSOLIDATION_THRESHOLD", 3))
     min_batch_completion_pct: float = field(default_factory=lambda: _env_float("MIN_BATCH_COMPLETION", 0.6))
     per_request_migration_overhead: float = field(default_factory=lambda: _env_float("PER_REQUEST_MIGRATION_OVERHEAD", 0.5))
+    consolidation_scale_down_enabled: bool = field(default_factory=lambda: _env_bool("CONSOLIDATION_SCALE_DOWN_ENABLED", True))
+    consolidation_stable_samples: int = field(default_factory=lambda: _env_int("CONSOLIDATION_STABLE_SAMPLES", 2))
+    consolidation_min_interval_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_MIN_INTERVAL", 10.0))
 
     # ─── HTTP server ───
     http_host: str = field(default_factory=lambda: _env_str("HTTP_HOST", "0.0.0.0"))

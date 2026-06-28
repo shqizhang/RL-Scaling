@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -28,7 +28,12 @@ class _SamplingDoneBody(BaseModel):
     batch_meta: _BatchMetaModel
 
 
-def create_app(state_machine_factory: Callable[[], ScalingStateMachine]) -> FastAPI:
+def create_app(
+    state_machine_factory: Callable[[], ScalingStateMachine],
+    *,
+    on_sampling_progress: Optional[Callable[[float], None]] = None,
+    strategy_status_factory: Optional[Callable[[], Dict[str, Any]]] = None,
+) -> FastAPI:
     """Build a FastAPI app that delegates to the supplied state machine.
 
     A factory is used (rather than passing the instance directly) to make the
@@ -63,11 +68,14 @@ def create_app(state_machine_factory: Callable[[], ScalingStateMachine]) -> Fast
                 }
                 for h in sm.history[-20:]
             ],
+            "strategy": strategy_status_factory() if strategy_status_factory else None,
         }
 
     @app.post("/api/v1/signals/sampling_progress")
     async def sampling_progress(body: _SamplingProgressBody) -> Dict[str, Any]:
         sm = state_machine_factory()
+        if on_sampling_progress is not None:
+            on_sampling_progress(body.progress)
         try:
             new_state = sm.on_sampling_progress(body.progress, body.batch_meta.model_dump())
         except ValueError as exc:

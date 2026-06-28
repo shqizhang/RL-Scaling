@@ -2,20 +2,13 @@
 
 Each worker exposes::
 
-    POST {worker_url}/migrate_out      body={"request_id": str}
-        -> {"status": "ok",
-            "prompt_tokens": [...],
-            "generated_tokens": [...],
-            "sampling_params": {...},
-            "stop_conditions": {...}}
+    POST {source_url}/migrate
+        body={"request_id": str, "target_url": str}
 
-    POST {worker_url}/migrate_in       body=<above payload + request_id>
-        -> {"status": "ok"}
-
-The orchestration is *recompute-prefill*: the controller fetches the
-request's token state from the source, then resubmits it (prompt + already
-generated tokens) on the target. The target redoes prefill but generation
-continues seamlessly. See the design doc S3 feasibility note.
+The source sidecar owns the full coordinated protocol:
+``migrate_out -> remote migrate_in -> migration_complete/rollback``. Keeping
+that sequence inside the source worker is important for the connector path,
+because source KV blocks may be held until the destination accepts the request.
 """
 from __future__ import annotations
 
@@ -43,15 +36,18 @@ class MigrationClient:
         resp.raise_for_status()
         return resp.json()
 
+    def migrate(self, source_url: str, target_url: str, request_id: str) -> dict:
+        url = source_url.rstrip("/") + "/migrate"
+        resp = self._client.post(
+            url,
+            json={"request_id": request_id, "target_url": target_url.rstrip("/")},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def migrate_one(self, source_url: str, target_url: str, request_id: str) -> dict:
         """End-to-end migration of a single request."""
-        state = self.migrate_out(source_url, request_id)
-        if state.get("status") != "ok":
-            return {"status": "error", "stage": "out", "detail": state}
-        # The target needs the request_id too.
-        payload = dict(state)
-        payload.setdefault("request_id", request_id)
-        return self.migrate_in(target_url, payload)
+        return self.migrate(source_url, target_url, request_id)
 
     def close(self) -> None:
         if self._owns:

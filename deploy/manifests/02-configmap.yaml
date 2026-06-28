@@ -5,9 +5,10 @@ metadata:
   namespace: dynamo
 data:
   # ── Connectivity ──
-  DYNAMO_NAMESPACE: "dynamo"
-  DGD_NAME: "rl-serving"
+  DYNAMO_NAMESPACE: "dynamo-system"
+  DGD_NAME: "vllm-v1-disagg-router"
   PROMETHEUS_URL: "http://prometheus-kube-prometheus-prometheus.monitoring:9090"
+  WORKER_SIDECAR_PORT: "9091"
 
   # ── S1 ──
   PRE_WARM_THRESHOLD: "0.8"
@@ -33,6 +34,9 @@ data:
   CONSOLIDATION_THRESHOLD: "3"
   MIN_BATCH_COMPLETION: "0.6"
   PER_REQUEST_MIGRATION_OVERHEAD: "0.5"
+  CONSOLIDATION_SCALE_DOWN_ENABLED: "true"
+  CONSOLIDATION_STABLE_SAMPLES: "2"
+  CONSOLIDATION_MIN_INTERVAL: "10"
 
   # ── HTTP ──
   HTTP_HOST: "0.0.0.0"

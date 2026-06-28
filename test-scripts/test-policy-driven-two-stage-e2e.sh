@@ -41,11 +41,14 @@ S2_POST_MAX_TOKENS="${S2_POST_MAX_TOKENS:-192}"
 
 ACTION_TIMEOUT="${ACTION_TIMEOUT:-120}"
 CONSOLIDATION_MIN_ACTIVE="${CONSOLIDATION_MIN_ACTIVE:-1}"
-CONSOLIDATION_ACTIVE_MAX="${CONSOLIDATION_ACTIVE_MAX:-6}"
+CONSOLIDATION_ACTIVE_MAX="${CONSOLIDATION_ACTIVE_MAX:-3}"
+CONSOLIDATION_STABLE_SAMPLES="${CONSOLIDATION_STABLE_SAMPLES:-3}"
+MAX_CONCURRENT_PER_DECODE="${MAX_CONCURRENT_PER_DECODE:-64}"
 MIG_LOOPS="${MIG_LOOPS:-6}"
 MIGRATION_SPACING="${MIGRATION_SPACING:-1}"
 ROLE_SWITCH_TARGET_ROLE="${ROLE_SWITCH_TARGET_ROLE:-prefill}"
 ROLE_SWITCH_SOURCE_ACTIVE_MAX="${ROLE_SWITCH_SOURCE_ACTIVE_MAX:-0}"
+GPU_SAMPLE_INTERVAL="${GPU_SAMPLE_INTERVAL:-5}"
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "${OUT}/run.log"; }
 die() { log "FATAL: $*"; exit 1; }
@@ -85,14 +88,14 @@ for item in data.get("items", []):
 '
 }
 
-mapfile -t DECODE_PODS < <(discover_ready_pods VllmDecodeWorker | sort)
-mapfile -t PREFILL_PODS < <(discover_ready_pods VllmPrefillWorker | sort || true)
+mapfile -t DECODE_PODS < <(discover_ready_pods VllmDecodeWorker | tr -d '\r' | sort)
+mapfile -t PREFILL_PODS < <(discover_ready_pods VllmPrefillWorker | tr -d '\r' | sort || true)
 [[ "${#DECODE_PODS[@]}" -ge 2 ]] || die "need >=2 ready decode pods"
 
 FRONTEND_POD=$(kubectl -n "${NS}" get pod \
   -l "nvidia.com/dynamo-graph-deployment-name=${DGD},nvidia.com/dynamo-component=Frontend" \
   --field-selector=status.phase=Running \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || die "frontend not found"
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null | tr -d '\r') || die "frontend not found"
 
 log "DGD=${DGD} namespace=${NS} model=${MODEL}"
 log "FRONTEND=${FRONTEND_POD}"
@@ -177,22 +180,33 @@ s2_post_max_tokens,${S2_POST_MAX_TOKENS}
 action_timeout,${ACTION_TIMEOUT}
 consolidation_min_active,${CONSOLIDATION_MIN_ACTIVE}
 consolidation_active_max,${CONSOLIDATION_ACTIVE_MAX}
+consolidation_stable_samples,${CONSOLIDATION_STABLE_SAMPLES}
+max_concurrent_per_decode,${MAX_CONCURRENT_PER_DECODE}
 mig_loops,${MIG_LOOPS}
 migration_spacing,${MIGRATION_SPACING}
 role_switch_target_role,${ROLE_SWITCH_TARGET_ROLE}
 role_switch_source_active_max,${ROLE_SWITCH_SOURCE_ACTIVE_MAX}
+gpu_sample_interval,${GPU_SAMPLE_INTERVAL}
 EOF
 
 metric_sum() {
   local port="$1" regex="$2"
-  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+  (curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null || true) \
     | awk -v r="${regex}" '$0 ~ r && $0 !~ /^#/ {s+=$NF} END{printf "%d", s+0}'
 }
 
 metric_last_float() {
   local port="$1" regex="$2"
-  curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
-    | awk -v r="${regex}" '$0 ~ r && $0 !~ /^#/ {v=$NF} END{if(v==""){printf "0"}else{printf "%s", v}}'
+  (curl -fsS -m 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null || true) \
+    | awk -v r="${regex}" '
+      $0 ~ r && $0 !~ /^#/ {
+        candidate=$NF
+        if (candidate ~ /^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/) {
+          v=candidate
+        }
+      }
+      END{if(v==""){printf "0"}else{printf "%s", v}}
+    '
 }
 
 sidecar_role() {
@@ -247,6 +261,33 @@ sample_metrics_loop() {
         "${prompt}" "${gen}" "${running}" "${active}" >> "${csv}"
     done
     sleep "${SAMPLE_INTERVAL}"
+  done
+}
+
+sample_gpu_loop() {
+  local stage="$1" mode="$2" dir="$3" stop_file="$4"
+  local csv="${dir}/gpu_metrics.csv"
+  echo "ts,stage,mode,role,pod,gpu_util_pct,mem_used_mib,mem_total_mib" > "${csv}"
+  while [[ ! -f "${stop_file}" ]]; do
+    local ts_now
+    ts_now="$(date +%s.%N)"
+    for pod in "${ALL_PODS[@]}"; do
+      local role raw util mem_used mem_total
+      role="${POD_ROLE[$pod]}"
+      raw="$(kubectl -n "${NS}" exec "${pod}" -- nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+      if [[ -n "${raw}" ]]; then
+        util="$(echo "${raw}" | awk -F, '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1+0}')"
+        mem_used="$(echo "${raw}" | awk -F, '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2+0}')"
+        mem_total="$(echo "${raw}" | awk -F, '{gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3+0}')"
+      else
+        util="0"
+        mem_used="0"
+        mem_total="0"
+      fi
+      printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "${ts_now}" "${stage}" "${mode}" "${role}" "${pod}" "${util}" "${mem_used}" "${mem_total}" >> "${csv}"
+    done
+    sleep "${GPU_SAMPLE_INTERVAL}"
   done
 }
 
@@ -372,9 +413,43 @@ select_source_target() {
   printf '%s,%s,%s,%s\n' "${source_pod}" "${source_active}" "${target_pod}" "${target_active}"
 }
 
+select_stable_source_target() {
+  local deadline="$1"
+  local last_source="" last_target="" stable=0
+  local source_pod source_active target_pod target_active target_capacity
+  while true; do
+    IFS=, read -r source_pod source_active target_pod target_active <<< "$(select_source_target)"
+    target_capacity=$(( MAX_CONCURRENT_PER_DECODE - target_active ))
+    if [[ -n "${source_pod}" && -n "${target_pod}" ]] \
+      && (( source_active >= CONSOLIDATION_MIN_ACTIVE )) \
+      && (( source_active <= CONSOLIDATION_ACTIVE_MAX )) \
+      && (( target_capacity >= source_active )); then
+      if [[ "${source_pod}" == "${last_source}" && "${target_pod}" == "${last_target}" ]]; then
+        stable=$((stable + 1))
+      else
+        last_source="${source_pod}"
+        last_target="${target_pod}"
+        stable=1
+      fi
+      if (( stable >= CONSOLIDATION_STABLE_SAMPLES )); then
+        printf '%s,%s,%s,%s,%s,%s\n' "${source_pod}" "${source_active}" "${target_pod}" "${target_active}" "${target_capacity}" "${stable}"
+        return 0
+      fi
+    else
+      stable=0
+      last_source=""
+      last_target=""
+    fi
+    if [[ "$(date +%s)" -ge "${deadline}" ]]; then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 perform_best_effort_consolidation() {
   local dir="$1" label="$2"
-  local deadline source_pod source_active target_pod target_active source_port target_ip target_url
+  local deadline source_pod source_active target_pod target_active target_capacity stable_samples source_port target_ip target_url
   local i t0 t1 wall resp status
 
   LAST_SOURCE_POD=""
@@ -382,23 +457,23 @@ perform_best_effort_consolidation() {
   LAST_MIGRATION_OK="0"
   deadline=$(( $(date +%s) + ACTION_TIMEOUT ))
 
-  while true; do
-    IFS=, read -r source_pod source_active target_pod target_active <<< "$(select_source_target)"
-    if [[ -n "${source_pod}" && -n "${target_pod}" ]] \
-      && (( source_active >= CONSOLIDATION_MIN_ACTIVE )) \
-      && (( source_active <= CONSOLIDATION_ACTIVE_MAX )); then
-      break
-    fi
-    if [[ "$(date +%s)" -ge "${deadline}" ]]; then
-      record_event "${dir}" "request_consolidation_skipped" "$(python3 - "$label" <<'PY'
+  if ! IFS=, read -r source_pod source_active target_pod target_active target_capacity stable_samples < <(select_stable_source_target "${deadline}"); then
+    record_event "${dir}" "request_consolidation_skipped" "$(python3 - "$label" "$CONSOLIDATION_MIN_ACTIVE" "$CONSOLIDATION_ACTIVE_MAX" "$CONSOLIDATION_STABLE_SAMPLES" "$MAX_CONCURRENT_PER_DECODE" <<'PY'
 import json, sys
-print(json.dumps({"label": sys.argv[1], "status": "skipped", "reason": "no_eligible_source_target_within_timeout"}))
+label, min_active, max_active, stable_samples, max_conc = sys.argv[1:6]
+print(json.dumps({
+    "label": label,
+    "status": "skipped",
+    "reason": "no_stable_eligible_source_target_within_timeout",
+    "required_source_active_min": int(min_active),
+    "required_source_active_max": int(max_active),
+    "required_stable_samples": int(stable_samples),
+    "max_concurrent_per_decode": int(max_conc),
+}))
 PY
 )"
-      return 1
-    fi
-    sleep 1
-  done
+    return 1
+  fi
 
   source_port="${POD_SIDECAR_PORT[$source_pod]}"
   target_ip="${POD_IP[$target_pod]}"
@@ -420,9 +495,9 @@ try:
 except Exception:
     print("parse_error")' <<< "${resp}")
     echo "${resp}" > "${dir}/${label}-migrate-${i}.json"
-    record_event "${dir}" "request_consolidation" "$(python3 - "${label}" "${source_pod}" "${target_pod}" "${i}" "${wall}" "${source_active}" "${target_active}" "${resp}" <<'PY'
+    record_event "${dir}" "request_consolidation" "$(python3 - "${label}" "${source_pod}" "${target_pod}" "${i}" "${wall}" "${source_active}" "${target_active}" "${target_capacity}" "${stable_samples}" "${resp}" <<'PY'
 import json, sys
-label, source, target, iteration, wall, source_active, target_active, raw = sys.argv[1:9]
+label, source, target, iteration, wall, source_active, target_active, target_capacity, stable_samples, raw = sys.argv[1:11]
 try:
     body = json.loads(raw)
 except Exception:
@@ -435,6 +510,8 @@ print(json.dumps({
     "client_wall_ms": float(wall),
     "source_active_at_select": int(float(source_active)),
     "target_active_at_select": int(float(target_active)),
+    "target_available_capacity_at_select": int(float(target_capacity)),
+    "stable_samples_at_select": int(float(stable_samples)),
     "response": body,
 }))
 PY
@@ -513,6 +590,7 @@ req_path = os.path.join(out_dir, "requests.csv")
 summary_path = os.path.join(out_dir, "summary.json")
 phase_csv = os.path.join(out_dir, "phase_summary.csv")
 metrics_path = os.path.join(out_dir, "pod_metrics.csv")
+gpu_path = os.path.join(out_dir, "gpu_metrics.csv")
 throughput_path = os.path.join(out_dir, "pod_throughput.csv")
 events_path = os.path.join(out_dir, "strategy_events.jsonl")
 
@@ -522,6 +600,12 @@ def pct(vals, p):
         return 0.0
     idx = min(len(vals) - 1, max(0, int(math.ceil((p / 100.0) * len(vals))) - 1))
     return vals[idx]
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value or default)
+    except Exception:
+        return default
 
 requests = []
 with open(req_path, newline="") as f:
@@ -561,11 +645,11 @@ pod_rows = []
 prompt_delta_total = 0
 gen_delta_total = 0
 for pod, rows in sorted(samples_by_pod.items()):
-    rows.sort(key=lambda r: float(r["ts"]))
+    rows.sort(key=lambda r: safe_float(r["ts"]))
     first, last = rows[0], rows[-1]
-    elapsed = max(0.001, float(last["ts"]) - float(first["ts"]))
-    prompt_delta = int(float(last["prompt_tokens_total"])) - int(float(first["prompt_tokens_total"]))
-    gen_delta = int(float(last["generation_tokens_total"])) - int(float(first["generation_tokens_total"]))
+    elapsed = max(0.001, safe_float(last["ts"]) - safe_float(first["ts"]))
+    prompt_delta = int(safe_float(last["prompt_tokens_total"])) - int(safe_float(first["prompt_tokens_total"]))
+    gen_delta = int(safe_float(last["generation_tokens_total"])) - int(safe_float(first["generation_tokens_total"]))
     prompt_delta_total += max(0, prompt_delta)
     gen_delta_total += max(0, gen_delta)
     pod_rows.append({
@@ -580,9 +664,41 @@ for pod, rows in sorted(samples_by_pod.items()):
         "generation_tokens_delta": gen_delta,
         "prompt_tps": prompt_delta / elapsed,
         "generation_tps": gen_delta / elapsed,
-        "max_running": max(float(r["num_requests_running"] or 0) for r in rows),
-        "max_active_requests": max(float(r["active_requests"] or 0) for r in rows),
+        "max_running": max(safe_float(r["num_requests_running"]) for r in rows),
+        "max_active_requests": max(safe_float(r["active_requests"]) for r in rows),
     })
+
+gpu_rows = []
+gpu_summary = {
+    "gpu_sample_count": 0,
+    "gpu_util_avg_pct": 0.0,
+    "gpu_util_max_pct": 0.0,
+    "gpu_mem_used_avg_mib": 0.0,
+    "gpu_mem_used_max_mib": 0.0,
+    "gpu_active_sample_pct": 0.0,
+}
+if os.path.exists(gpu_path):
+    util_values = []
+    mem_values = []
+    active = 0
+    with open(gpu_path, newline="") as f:
+        for row in csv.DictReader(f):
+            util = safe_float(row.get("gpu_util_pct"))
+            mem = safe_float(row.get("mem_used_mib"))
+            util_values.append(util)
+            mem_values.append(mem)
+            if util > 0:
+                active += 1
+            gpu_rows.append(row)
+    if util_values:
+        gpu_summary = {
+            "gpu_sample_count": len(util_values),
+            "gpu_util_avg_pct": sum(util_values) / len(util_values),
+            "gpu_util_max_pct": max(util_values),
+            "gpu_mem_used_avg_mib": sum(mem_values) / len(mem_values) if mem_values else 0.0,
+            "gpu_mem_used_max_mib": max(mem_values) if mem_values else 0.0,
+            "gpu_active_sample_pct": active / len(util_values) * 100.0,
+        }
 
 with open(throughput_path, "w", newline="") as f:
     fields = ["stage","mode","role","pod","first_current_role","last_current_role","elapsed_s","prompt_tokens_delta","generation_tokens_delta","prompt_tps","generation_tps","max_running","max_active_requests"]
@@ -636,6 +752,7 @@ summary = {
     "cluster_generation_tps": (gen_delta_total / overall_wall) if overall_wall > 0 else 0.0,
     "prompt_tokens_delta": prompt_delta_total,
     "generation_tokens_delta": gen_delta_total,
+    **gpu_summary,
     "event_counts": event_counts,
     "phase_summaries": phase_summaries,
 }
@@ -655,6 +772,13 @@ with open(report_path, "w", encoding="utf-8") as f:
     f.write("## Overall\n\n")
     f.write("| metric | value |\n|---|---:|\n")
     for key in ["completed_requests","http_200","http_non_200","success_rate_pct","end_to_end_wall_s","request_throughput_rps","cluster_prompt_tps","cluster_generation_tps","prompt_tokens_delta","generation_tokens_delta"]:
+        value = summary[key]
+        if isinstance(value, float):
+            value = f"{value:.6f}"
+        f.write(f"| {key} | {value} |\n")
+    f.write("\n## GPU Metrics\n\n")
+    f.write("| metric | value |\n|---|---:|\n")
+    for key in ["gpu_sample_count","gpu_util_avg_pct","gpu_util_max_pct","gpu_mem_used_avg_mib","gpu_mem_used_max_mib","gpu_active_sample_pct"]:
         value = summary[key]
         if isinstance(value, float):
             value = f"{value:.6f}"
@@ -708,6 +832,8 @@ run_stage_mode() {
   log "==== ${stage}/${mode}"
   sample_metrics_loop "${stage}" "${mode}" "${dir}" "${stop_file}" &
   local sampler_pid="$!"
+  sample_gpu_loop "${stage}" "${mode}" "${dir}" "${stop_file}" &
+  local gpu_sampler_pid="$!"
 
   case "${stage}" in
     s3-tail-drain)
@@ -747,6 +873,7 @@ run_stage_mode() {
   sleep 2
   touch "${stop_file}"
   wait "${sampler_pid}" 2>/dev/null || true
+  wait "${gpu_sampler_pid}" 2>/dev/null || true
   capture_logs "${dir}" "${since}"
   analyze_run "${stage}" "${mode}" "${dir}"
   log "summary ${stage}/${mode}: $(tr -d '\n' < "${dir}/summary.json")"

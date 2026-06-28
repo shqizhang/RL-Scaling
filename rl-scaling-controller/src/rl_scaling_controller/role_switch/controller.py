@@ -87,15 +87,36 @@ class ElasticRoleSwitchController:
         if not self._can_switch():
             return None
         cluster = await self.metrics.get_cluster_metrics()
-        workers = await self.metrics.get_decode_worker_states() or []
-        decision = self._decide(cluster, decode_workers=workers, prefill_workers=workers)
+        decode_workers = list(getattr(cluster, "decode_workers", []) or [])
+        prefill_workers = list(getattr(cluster, "prefill_workers", []) or [])
+        if not decode_workers:
+            decode_workers = await self.metrics.get_decode_worker_states() or []
+        decision = self._decide(cluster, decode_workers=decode_workers, prefill_workers=prefill_workers)
         if decision is None:
             return None
+        logger.info(
+            "S2 role switch decision: from=%s to=%s worker=%s reason=%s "
+            "prefill_workers=%s decode_workers=%s",
+            decision.from_role,
+            decision.to_role,
+            decision.worker_url,
+            decision.reason,
+            cluster.prefill_worker_count,
+            cluster.decode_worker_count,
+        )
         try:
             decision.result = self.client.switch_role(decision.worker_url, decision.to_role)
             decision.executed = decision.result.status == "ok"
             if decision.executed:
                 self._last_switch_time = self.clock()
+            logger.info(
+                "S2 role switch result: executed=%s status=%s worker=%s new_role=%s switch_time_ms=%s",
+                decision.executed,
+                decision.result.status,
+                decision.worker_url,
+                decision.result.new_role,
+                decision.result.switch_time_ms,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Role switch failed: %s", exc)
             decision.executed = False
