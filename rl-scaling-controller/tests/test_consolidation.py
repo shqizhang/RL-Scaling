@@ -180,11 +180,44 @@ class TestConsolidationController:
         )
         assert await ctrl.control_loop_tick() is None
         client.migrate_one.assert_not_called()
+        client.migrate_one.return_value = {"status": "ok"}
 
         decision = await ctrl.control_loop_tick()
         assert decision is not None
         assert decision.executed_pairs == 1
         assert client.migrate_one.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_stops_pair_after_declined_migration(self):
+        workers = [
+            _w("a", in_flight=4, capacity=10, remaining=60),
+            _w("b", in_flight=8, capacity=50, remaining=60),
+        ]
+
+        class M(InMemoryMetricsCollector):
+            async def get_decode_worker_states(self):
+                return workers
+
+        client = MagicMock()
+        client.migrate_one.return_value = {
+            "status": "declined",
+            "rolled_back": True,
+            "migrate_in": {"message": "request too young"},
+        }
+        ctrl = ConsolidationController(
+            config=_cfg(consolidation_threshold=4),
+            metrics=M(),
+            dgdsa=InMemoryDGDSAClient(),
+            client=client,
+            batch_completion_fn=lambda: 0.9,
+        )
+        decision = await ctrl.control_loop_tick()
+        assert decision is not None
+        assert decision.migration_attempts == 1
+        assert decision.migrated_requests == 0
+        assert decision.declined_requests == 1
+        assert decision.executed_pairs == 0
+        assert client.migrate_one.call_count == 1
 
     @pytest.mark.asyncio
     async def test_scale_down_clamped_to_min(self):

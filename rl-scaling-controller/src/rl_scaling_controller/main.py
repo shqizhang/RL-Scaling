@@ -76,6 +76,9 @@ class StrategyRuntime:
                             for p in item.plans
                         ],
                         "executed_pairs": item.executed_pairs,
+                        "migration_attempts": getattr(item, "migration_attempts", 0),
+                        "migrated_requests": getattr(item, "migrated_requests", 0),
+                        "declined_requests": getattr(item, "declined_requests", 0),
                         "scaled_down_to": item.scaled_down_to,
                         "error": item.error,
                     }

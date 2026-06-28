@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 class ConsolidationDecision:
     plans: List[MigrationPair]
     executed_pairs: int = 0
+    migration_attempts: int = 0
+    migrated_requests: int = 0
+    declined_requests: int = 0
     scaled_down_to: Optional[int] = None
     error: Optional[str] = None
 
@@ -112,18 +115,38 @@ class ConsolidationController:
                 # call. The Dynamo-side `/migrate_out` therefore accepts a
                 # special "*" token meaning "next ready request". Repeat
                 # migration_count times.
+                pair_migrated = 0
                 for _ in range(pair.request_count):
-                    self.client.migrate_one(
+                    result = self.client.migrate_one(
                         source_url=pair.source.addr,
                         target_url=pair.target.addr,
                         request_id="*",
                     )
-                decision.executed_pairs += 1
+                    decision.migration_attempts += 1
+                    if result.get("status") == "ok":
+                        pair_migrated += 1
+                        decision.migrated_requests += 1
+                        continue
+
+                    decision.declined_requests += 1
+                    logger.info(
+                        "S3 migration stopped for pair after non-ok response: "
+                        "source=%s target=%s status=%s rolled_back=%s message=%s",
+                        pair.source.worker_id,
+                        pair.target.worker_id,
+                        result.get("status"),
+                        result.get("rolled_back"),
+                        (result.get("migrate_in") or {}).get("message") or result.get("message"),
+                    )
+                    break
+                if pair_migrated:
+                    decision.executed_pairs += 1
                 logger.info(
-                    "S3 consolidation executed: source=%s target=%s request_count=%s",
+                    "S3 consolidation executed: source=%s target=%s request_count=%s migrated=%s",
                     pair.source.worker_id,
                     pair.target.worker_id,
                     pair.request_count,
+                    pair_migrated,
                 )
             if decision.executed_pairs:
                 self.last_action_ts = time.monotonic()
