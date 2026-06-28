@@ -1,0 +1,3 @@
+scenario,completed_requests,http_200,http_non_200,success_rate_pct,end_to_end_wall_s,request_throughput_rps,latency_p50_s,latency_p95_s,latency_p99_s,ttft_p50_s,ttft_p95_s,cluster_prompt_tps,cluster_generation_tps,prompt_tokens_delta,generation_tokens_delta
+baseline,64,64,0,100.0,33.025426626205444,1.9379007794320648,3.970561,4.067446,4.069781,3.970409,4.067244,813.615530364681,1951.8294412842329,26870,64460
+strategy,64,64,0,100.0,33.447792530059814,1.9134297111680139,3.93927,4.123308,4.167866,3.939081,4.123103,817.5128440965339,1948.260111379119,27344,65165

@@ -1,0 +1,27 @@
+{
+  "cluster_generation_tps": 1758.8802859704076,
+  "cluster_prompt_tps": 761.3395465816994,
+  "completed_requests": 64,
+  "end_to_end_wall_s": 36.46467614173889,
+  "event_counts": {
+    "request_consolidation": 4,
+    "role_switch": 1
+  },
+  "expected_requests": 64,
+  "generation_tokens_delta": 64137,
+  "http_200": 64,
+  "http_non_200": 0,
+  "latency_avg_s": 4.323309234375,
+  "latency_p50_s": 4.41733,
+  "latency_p95_s": 4.490588,
+  "latency_p99_s": 4.512809,
+  "pod_count": 3,
+  "prompt_tokens_delta": 27762,
+  "request_throughput_rps": 1.755123225316215,
+  "scenario": "strategy",
+  "success_rate_pct": 100.0,
+  "ttft_avg_s": 4.323143140625,
+  "ttft_p50_s": 4.417176,
+  "ttft_p95_s": 4.490411,
+  "ttft_p99_s": 4.51271
+}

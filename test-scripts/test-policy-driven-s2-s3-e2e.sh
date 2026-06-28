@@ -61,6 +61,12 @@ ROLE_SWITCH_DELAY="${ROLE_SWITCH_DELAY:-8}"
 CONSOLIDATION_DELAY="${CONSOLIDATION_DELAY:-20}"
 MIG_LOOPS="${MIG_LOOPS:-4}"
 MIGRATION_SPACING="${MIGRATION_SPACING:-1}"
+STRATEGY_ACTION_TIMEOUT="${STRATEGY_ACTION_TIMEOUT:-120}"
+CONSOLIDATION_MIN_ACTIVE="${CONSOLIDATION_MIN_ACTIVE:-1}"
+CONSOLIDATION_ACTIVE_MAX="${CONSOLIDATION_ACTIVE_MAX:-6}"
+MIG_STOP_ON_SUCCESS="${MIG_STOP_ON_SUCCESS:-1}"
+ROLE_SWITCH_SOURCE_ACTIVE_MAX="${ROLE_SWITCH_SOURCE_ACTIVE_MAX:-0}"
+ROLE_SWITCH_TARGET_ROLE="${ROLE_SWITCH_TARGET_ROLE:-prefill}"
 
 CONTROLLER_LABEL="${CONTROLLER_LABEL:-app=rl-scaling-controller}"
 CAPTURE_LOG_LINES="${CAPTURE_LOG_LINES:-800}"
@@ -194,6 +200,12 @@ role_switch_delay,${ROLE_SWITCH_DELAY}
 consolidation_delay,${CONSOLIDATION_DELAY}
 mig_loops,${MIG_LOOPS}
 migration_spacing,${MIGRATION_SPACING}
+strategy_action_timeout,${STRATEGY_ACTION_TIMEOUT}
+consolidation_min_active,${CONSOLIDATION_MIN_ACTIVE}
+consolidation_active_max,${CONSOLIDATION_ACTIVE_MAX}
+mig_stop_on_success,${MIG_STOP_ON_SUCCESS}
+role_switch_source_active_max,${ROLE_SWITCH_SOURCE_ACTIVE_MAX}
+role_switch_target_role,${ROLE_SWITCH_TARGET_ROLE}
 controller_label,${CONTROLLER_LABEL}
 EOF
 
@@ -336,47 +348,68 @@ PY
 
 run_sidecar_strategy_actions() {
   local dir="$1"
-  local switch_pod="${DECODE_PODS[0]}"
-  local source_pod="${DECODE_PODS[0]}"
-  local target_pod="${DECODE_PODS[1]}"
-
-  # If there are >=3 decode pods, keep consolidation away from the switched pod.
-  if [[ "${#DECODE_PODS[@]}" -ge 3 ]]; then
-    switch_pod="${DECODE_PODS[0]}"
-    source_pod="${DECODE_PODS[1]}"
-    target_pod="${DECODE_PODS[2]}"
-  fi
-
-  (
-    sleep "${ROLE_SWITCH_DELAY}"
-    local port body t0 t1 resp wall
-    port="${POD_SIDECAR_PORT[$switch_pod]}"
-    body='{"target_role":"prefill"}'
-    t0="$(date +%s.%N)"
-    resp=$(curl -fsS -m 90 -X POST -H "Content-Type: application/json" --data "${body}" \
-      "http://127.0.0.1:${port}/switch_role" 2>/dev/null || echo '{"status":"http_error"}')
-    t1="$(date +%s.%N)"
-    wall=$(awk -v a="${t0}" -v b="${t1}" 'BEGIN{printf "%.3f", (b-a)*1000.0}')
-    echo "${resp}" > "${dir}/switch-role-response.json"
-    record_event "${dir}" "role_switch" "$(python3 - "${switch_pod}" "${wall}" "${resp}" <<'PY'
-import json, sys
-pod, wall, raw = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    body = json.loads(raw)
-except Exception:
-    body = {"raw": raw}
-print(json.dumps({"pod": pod, "direction": "decode_to_prefill", "client_wall_ms": float(wall), "response": body}))
-PY
-)"
-  ) &
-  strategy_action_pids+=("$!")
-
   (
     sleep "${CONSOLIDATION_DELAY}"
-    local source_port target_url i resp t0 t1 wall target_ip
+    local deadline now source_pod target_pod source_active target_active
+    local source_port target_url target_ip i resp t0 t1 wall status
+    local mig_success=0
+    local switch_pod
+
+    deadline=$(( $(date +%s) + STRATEGY_ACTION_TIMEOUT ))
+    source_pod=""
+    target_pod=""
+
+    while true; do
+      now=$(date +%s)
+      [[ "${now}" -ge "${deadline}" ]] && break
+
+      source_pod=""
+      target_pod=""
+      source_active=-1
+      target_active=999999
+
+      for pod in "${DECODE_PODS[@]}"; do
+        local a
+        a=$(active_count "${pod}")
+        [[ -z "${a}" ]] && a=0
+        if (( a > source_active )); then
+          source_active=${a}
+          source_pod="${pod}"
+        fi
+      done
+
+      for pod in "${DECODE_PODS[@]}"; do
+        [[ "${pod}" == "${source_pod}" ]] && continue
+        local a
+        a=$(active_count "${pod}")
+        [[ -z "${a}" ]] && a=0
+        if (( a < target_active )); then
+          target_active=${a}
+          target_pod="${pod}"
+        fi
+      done
+
+      if [[ -n "${source_pod}" && -n "${target_pod}" ]] \
+        && (( source_active >= CONSOLIDATION_MIN_ACTIVE )) \
+        && (( source_active <= CONSOLIDATION_ACTIVE_MAX )); then
+        break
+      fi
+      sleep 1
+    done
+
+    if [[ -z "${source_pod}" || -z "${target_pod}" ]]; then
+      record_event "${dir}" "request_consolidation_skipped" "$(python3 - <<'PY'
+import json
+print(json.dumps({"status":"skipped","reason":"no_eligible_source_target_within_timeout"}))
+PY
+)"
+      return
+    fi
+
     source_port="${POD_SIDECAR_PORT[$source_pod]}"
     target_ip="${POD_IP[$target_pod]}"
     target_url="http://${target_ip}:9091"
+
     for i in $(seq 1 "${MIG_LOOPS}"); do
       t0="$(date +%s.%N)"
       resp=$(curl -fsS -m 90 -X POST -H "Content-Type: application/json" \
@@ -384,19 +417,96 @@ PY
         "http://127.0.0.1:${source_port}/migrate" 2>/dev/null || echo '{"status":"http_error"}')
       t1="$(date +%s.%N)"
       wall=$(awk -v a="${t0}" -v b="${t1}" 'BEGIN{printf "%.3f", (b-a)*1000.0}')
+      status=$(python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+try:
+    print(json.loads(raw).get("status","parse_error"))
+except Exception:
+    print("parse_error")' <<< "${resp}")
       echo "${resp}" > "${dir}/migrate-${i}.json"
-      record_event "${dir}" "request_consolidation" "$(python3 - "${source_pod}" "${target_pod}" "${i}" "${wall}" "${resp}" <<'PY'
+      record_event "${dir}" "request_consolidation" "$(python3 - "${source_pod}" "${target_pod}" "${i}" "${wall}" "${source_active}" "${target_active}" "${resp}" <<'PY'
 import json, sys
-source, target, iteration, wall, raw = sys.argv[1:6]
+source, target, iteration, wall, src_active, dst_active, raw = sys.argv[1:8]
 try:
     body = json.loads(raw)
 except Exception:
     body = {"raw": raw}
-print(json.dumps({"source": source, "target": target, "iteration": int(iteration), "client_wall_ms": float(wall), "response": body}))
+print(json.dumps({
+    "source": source,
+    "target": target,
+    "iteration": int(iteration),
+    "client_wall_ms": float(wall),
+    "source_active_at_select": int(float(src_active)),
+    "target_active_at_select": int(float(dst_active)),
+    "response": body,
+}))
 PY
 )"
+      if [[ "${status}" == "ok" ]]; then
+        mig_success=1
+        if [[ "${MIG_STOP_ON_SUCCESS}" == "1" ]]; then
+          break
+        fi
+      fi
       sleep "${MIGRATION_SPACING}"
     done
+
+    sleep "${ROLE_SWITCH_DELAY}"
+    switch_pod="${source_pod}"
+    if (( mig_success == 1 )); then
+      local switch_deadline active_now body port
+      switch_deadline=$(( $(date +%s) + STRATEGY_ACTION_TIMEOUT ))
+      while true; do
+        active_now=$(active_count "${switch_pod}")
+        [[ -z "${active_now}" ]] && active_now=0
+        if (( active_now <= ROLE_SWITCH_SOURCE_ACTIVE_MAX )); then
+          break
+        fi
+        [[ "$(date +%s)" -ge "${switch_deadline}" ]] && break
+        sleep 1
+      done
+
+      if (( active_now <= ROLE_SWITCH_SOURCE_ACTIVE_MAX )); then
+        local t0s t1s walls resps
+        port="${POD_SIDECAR_PORT[$switch_pod]}"
+        body="{\"target_role\":\"${ROLE_SWITCH_TARGET_ROLE}\"}"
+        t0s="$(date +%s.%N)"
+        resps=$(curl -fsS -m 90 -X POST -H "Content-Type: application/json" --data "${body}" \
+          "http://127.0.0.1:${port}/switch_role" 2>/dev/null || echo '{"status":"http_error"}')
+        t1s="$(date +%s.%N)"
+        walls=$(awk -v a="${t0s}" -v b="${t1s}" 'BEGIN{printf "%.3f", (b-a)*1000.0}')
+        echo "${resps}" > "${dir}/switch-role-response.json"
+        record_event "${dir}" "role_switch" "$(python3 - "${switch_pod}" "${ROLE_SWITCH_TARGET_ROLE}" "${walls}" "${active_now}" "${resps}" <<'PY'
+import json, sys
+pod, direction, wall, active_now, raw = sys.argv[1:6]
+try:
+    body = json.loads(raw)
+except Exception:
+    body = {"raw": raw}
+print(json.dumps({
+    "pod": pod,
+    "direction": f"decode_to_{direction}",
+    "active_requests_before_switch": int(float(active_now)),
+    "client_wall_ms": float(wall),
+    "response": body,
+}))
+PY
+)"
+      else
+        record_event "${dir}" "role_switch_skipped" "$(python3 - "${switch_pod}" "${active_now}" <<'PY'
+import json, sys
+pod, active = sys.argv[1], sys.argv[2]
+print(json.dumps({"status":"skipped","pod":pod,"reason":"source_not_drained","active_requests":int(float(active))}))
+PY
+)"
+      fi
+    else
+      record_event "${dir}" "role_switch_skipped" "$(python3 - <<'PY'
+import json
+print(json.dumps({"status":"skipped","reason":"migration_not_successful"}))
+PY
+)"
+    fi
   ) &
   strategy_action_pids+=("$!")
 }

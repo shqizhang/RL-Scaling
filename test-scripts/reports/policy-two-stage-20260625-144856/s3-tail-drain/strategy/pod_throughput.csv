@@ -1,0 +1,4 @@
+stage,mode,role,pod,first_current_role,last_current_role,elapsed_s,prompt_tokens_delta,generation_tokens_delta,prompt_tps,generation_tps,max_running,max_active_requests
+s3-tail-drain,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,decode,decode,24.624934434890747,6589,13853,267.5743164889053,562.559873474094,6.0,6.0
+s3-tail-drain,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,decode,decode,24.624934434890747,6459,16022,262.29511461554705,650.6413262688179,7.0,6.0
+s3-tail-drain,strategy,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,prefill,prefill,24.624934434890747,11076,42,449.78799961012527,1.7055882975465206,0.0,0.0

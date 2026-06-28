@@ -1,0 +1,26 @@
+{
+  "cluster_generation_tps": 1899.69459170739,
+  "cluster_prompt_tps": 1014.1931185188325,
+  "completed_requests": 48,
+  "end_to_end_wall_s": 19.42628049850464,
+  "event_counts": {
+    "strategy_driver": 1
+  },
+  "expected_requests": 48,
+  "generation_tokens_delta": 36904,
+  "http_200": 48,
+  "http_non_200": 0,
+  "latency_avg_s": 3.0302548125,
+  "latency_p50_s": 2.966767,
+  "latency_p95_s": 3.222223,
+  "latency_p99_s": 3.230111,
+  "pod_count": 3,
+  "prompt_tokens_delta": 19702,
+  "request_throughput_rps": 2.470879590341283,
+  "scenario": "baseline",
+  "success_rate_pct": 100.0,
+  "ttft_avg_s": 3.0298463541666667,
+  "ttft_p50_s": 2.966503,
+  "ttft_p95_s": 3.222091,
+  "ttft_p99_s": 3.229957
+}

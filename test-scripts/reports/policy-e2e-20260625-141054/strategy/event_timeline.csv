@@ -1,0 +1,6 @@
+ts,type,subject,target,status,client_wall_ms
+1782396666.0836658,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,25.322
+1782396667.1867635,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,17.995
+1782396668.2961915,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,25.026
+1782396669.4088519,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,27.216
+1782396678.0889328,role_switch,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,decode_to_prefill,ok,40.982
