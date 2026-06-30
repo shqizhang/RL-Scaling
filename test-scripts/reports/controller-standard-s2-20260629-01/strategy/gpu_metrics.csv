@@ -1,0 +1,16 @@
+ts,scenario,role,pod,gpu_util_pct,mem_used_mib,mem_total_mib
+1782689027.387417822,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,0,22122,24576
+1782689027.387417822,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,48,22080,24576
+1782689027.387417822,strategy,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,9,22590,24576
+1782689030.236962102,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,11,22122,24576
+1782689030.236962102,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,100,22080,24576
+1782689030.236962102,strategy,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,0,22590,24576
+1782689033.082604831,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,24,22122,24576
+1782689033.082604831,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,20,22080,24576
+1782689033.082604831,strategy,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,10,22590,24576
+1782689035.891528952,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,0,22122,24576
+1782689035.891528952,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,100,22080,24576
+1782689035.891528952,strategy,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,10,22590,24576
+1782689038.750311405,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,0,22122,24576
+1782689038.750311405,strategy,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,0,22080,24576
+1782689038.750311405,strategy,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,0,22590,24576

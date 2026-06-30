@@ -1,0 +1,5 @@
+ts,type,subject,target,status,client_wall_ms
+1782689027.4169846,strategy_driver,auto,,,
+1782689028.808053,controller_sampling_progress,,,ok,
+1782689028.8927002,controller_status,,,,
+1782689033.9855125,controller_status,,,,

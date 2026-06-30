@@ -1,0 +1,4 @@
+scenario,role,pod,first_current_role,last_current_role,elapsed_s,prompt_tokens_delta,generation_tokens_delta,prompt_tps,generation_tps,max_running,max_active_requests
+baseline,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,decode,decode,18.48867654800415,14107,3456,763.0075610535167,186.92522371878883,3.0,3.0
+baseline,decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,decode,decode,18.48867654800415,14108,3456,763.0616482131576,186.92522371878883,3.0,3.0
+baseline,prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,prefill,prefill,18.48867654800415,23517,30,1271.967733273946,1.6226147892255973,0.0,0.0
