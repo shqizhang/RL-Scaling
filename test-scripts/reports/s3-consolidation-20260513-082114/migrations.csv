@@ -1,7 +1,0 @@
-iter,status,request_id,d1_decoded,max_tokens,remaining,path,replay_tokens,d1_pre,d2_pre,d1_post,d2_post,id_left_d1,id_on_d2,rolled_back
-1,ok,2358dc1b-f6fd-4cce-bf08-3ebd9d350ee6,1060,8000,6940,recompute,1060,40,40,39,40,true,false,False
-2,ok,b4c515d1-17a6-483a-a854-bb0fa1a28376,1174,8000,6826,recompute,1174,39,39,38,39,true,false,False
-3,ok,af010cc1-ef51-4d06-8bf7-54a299bea1c4,1284,8000,6716,recompute,1284,38,39,37,39,true,false,False
-4,ok,0b07dd58-b756-490f-ba43-16b44bf559bf,1388,8000,6612,recompute,1388,36,38,35,38,true,false,False
-5,ok,cabba041-2a2e-4101-ab2f-c53273f51871,1489,8000,6511,recompute,1489,35,38,34,37,true,false,False
-6,ok,6a612a33-1737-4f47-855c-e77523c33e7d,1536,8000,6464,recompute,1536,33,35,32,35,true,false,False

@@ -1,6 +1,0 @@
-ts,type,subject,target,status,client_wall_ms
-1782396608.822523,role_switch,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,decode_to_prefill,ok,527.329
-1782396620.3122158,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,20.31
-1782396621.4208732,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,25.256
-1782396622.5229328,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,22.018
-1782396623.632701,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,error,21.837

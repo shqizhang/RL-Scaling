@@ -1,2 +1,0 @@
-scenario,completed_requests,http_200,http_non_200,success_rate_pct,end_to_end_wall_s,request_throughput_rps,latency_p50_s,latency_p95_s,latency_p99_s,ttft_p50_s,ttft_p95_s,cluster_prompt_tps,cluster_generation_tps,prompt_tokens_delta,generation_tokens_delta
-strategy,64,64,0,100.0,36.46467614173889,1.755123225316215,4.41733,4.490588,4.512809,4.417176,4.490411,761.3395465816994,1758.8802859704076,27762,64137

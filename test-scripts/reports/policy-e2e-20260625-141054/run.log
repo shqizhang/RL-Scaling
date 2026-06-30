@@ -1,7 +1,0 @@
-[14:10:55] DGD=vllm-v1-disagg-router namespace=dynamo-system model=Qwen/Qwen3-0.6B
-[14:10:55] FRONTEND=vllm-v1-disagg-router-frontend-87b9678b7-fzplg
-[14:10:55] DECODE_PODS=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg
-[14:10:55] PREFILL_PODS=vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89
-[14:10:56] ==== strategy: driver=sidecar, requests=64, concurrency=8, max_tokens=1024, salt=strategy-20260625-141054-1782396656965655937
-[14:11:40] strategy summary: {  "cluster_generation_tps": 1758.8802859704076,  "cluster_prompt_tps": 761.3395465816994,  "completed_requests": 64,  "end_to_end_wall_s": 36.46467614173889,  "event_counts": {    "request_consolidation": 4,    "role_switch": 1  },  "expected_requests": 64,  "generation_tokens_delta": 64137,  "http_200": 64,  "http_non_200": 0,  "latency_avg_s": 4.323309234375,  "latency_p50_s": 4.41733,  "latency_p95_s": 4.490588,  "latency_p99_s": 4.512809,  "pod_count": 3,  "prompt_tokens_delta": 27762,  "request_throughput_rps": 1.755123225316215,  "scenario": "strategy",  "success_rate_pct": 100.0,  "ttft_avg_s": 4.323143140625,  "ttft_p50_s": 4.417176,  "ttft_p95_s": 4.490411,  "ttft_p99_s": 4.51271}
-[14:11:40] Report written: /home/shengqizhang/IP/RL-Scaling/test-scripts/reports/policy-e2e-20260625-141054/REPORT.md

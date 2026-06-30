@@ -1,3 +1,0 @@
-phase,completed_requests,http_200,http_non_200,success_rate_pct,end_to_end_wall_s,request_throughput_rps,latency_p50_s,latency_p95_s,latency_p99_s,ttft_p50_s,ttft_p95_s
-pre,24,24,0,100.0,19.37588119506836,1.2386533421823722,1.725899,4.802309,5.091537,1.725757,4.802146
-post,32,32,0,100.0,10.17933201789856,3.143624743129868,2.395346,2.558748,2.559704,2.39523,2.558569

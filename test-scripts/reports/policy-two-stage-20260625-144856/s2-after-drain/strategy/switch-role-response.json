@@ -1,1 +1,0 @@
-{"status": "ok", "new_role": "prefill", "switch_time_ms": 445.20577788352966, "timings_ms": {"sleep": 49.459, "unregister_mdc": 9.731, "reconfig_nixl": 0.179, "reset_prefix_cache": 2.627, "register_mdc": 314.042, "wake": 56.474}}

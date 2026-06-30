@@ -1,5 +1,0 @@
-label,tgt_running,peer_running,tgt_gen_tot,peer_gen_tot
-T0_pre,0.0,0.0,12536,12805
-T1_scheduled,4.0,0.0,12673,12805
-T2_migrated,18.0,15.0,51060,52235
-T3_drained,7.0,2.0,56966,56437

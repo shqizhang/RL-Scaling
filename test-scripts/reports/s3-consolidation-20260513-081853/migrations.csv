@@ -1,1 +1,0 @@
-iter,status,request_id,d1_decoded,max_tokens,remaining,path,replay_tokens,d1_pre,d2_pre,d1_post,d2_post,id_left_d1,id_on_d2,rolled_back

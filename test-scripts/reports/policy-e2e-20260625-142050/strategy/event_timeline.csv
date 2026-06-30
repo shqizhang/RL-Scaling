@@ -1,3 +1,0 @@
-ts,type,subject,target,status,client_wall_ms
-1782397310.7382066,request_consolidation,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,ok,30.589
-1782397339.7903607,role_switch,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,decode_to_prefill,ok,898.41
