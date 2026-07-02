@@ -1,0 +1,4 @@
+role,pod,pod_ip,metric_local_port,sidecar_local_port
+decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk,10.244.0.187,19200,19300
+decode,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg,10.244.0.186,19201,19301
+prefill,vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89,10.244.0.169,19202,

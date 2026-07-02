@@ -1,0 +1,4 @@
+{"payload": {"mode": "auto", "note": "observing controller-triggered actions only"}, "ts": 1782962361.988091, "type": "strategy_driver"}
+{"payload": {"progress": 0.9, "response": {}}, "ts": 1782962365.38803, "type": "controller_sampling_progress"}
+{"payload": {"response": {"current_target": {"decode_replicas": 1, "prefill_replicas": 1}, "history": [], "state": "idle", "strategy": {"batch_completion_pct": 0.9, "s2_enabled": false, "s2_history": [], "s3_enabled": true, "s3_history": [], "tick_errors": []}}}, "ts": 1782962365.4563487, "type": "controller_status"}
+{"payload": {"response": {"current_target": {"decode_replicas": 1, "prefill_replicas": 1}, "history": [], "state": "idle", "strategy": {"batch_completion_pct": 0.9, "s2_enabled": false, "s2_history": [], "s3_enabled": true, "s3_history": [], "tick_errors": []}}}, "ts": 1782962370.549196, "type": "controller_status"}

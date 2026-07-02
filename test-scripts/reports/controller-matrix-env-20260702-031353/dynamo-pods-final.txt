@@ -1,0 +1,9 @@
+NAME                                                              READY   STATUS             RESTARTS           AGE   IP             NODE    NOMINATED NODE   READINESS GATES
+curl-test                                                         0/1     Completed          0                  67d   10.244.0.88    gpu14   <none>           <none>
+dynamo-platform-nats-0                                            2/2     Running            0                  67d   10.244.0.73    gpu14   <none>           <none>
+vllm-v1-disagg-router-frontend-87b9678b7-fzplg                    1/1     Running            0                  49d   10.244.0.172   gpu14   <none>           <none>
+vllm-v1-disagg-router-vllmdecodeworker-47d8a958-5bbcfb8578p2s7g   0/1     CrashLoopBackOff   9985 (2m11s ago)   49d   10.244.0.173   gpu14   <none>           <none>
+vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk   1/1     Running            2 (3d17h ago)      43d   10.244.0.187   gpu14   <none>           <none>
+vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg   1/1     Running            2 (3d17h ago)      43d   10.244.0.186   gpu14   <none>           <none>
+vllm-v1-disagg-router-vllmprefillworker-47d8a958-9949ff79fbg9vq   0/1     CrashLoopBackOff   9982 (3m33s ago)   49d   10.244.0.171   gpu14   <none>           <none>
+vllm-v1-disagg-router-vllmprefillworker-574b777c-ffddb778dj8r89   1/1     Running            0                  50d   10.244.0.169   gpu14   <none>           <none>

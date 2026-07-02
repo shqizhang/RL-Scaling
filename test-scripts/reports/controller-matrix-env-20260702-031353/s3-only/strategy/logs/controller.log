@@ -1,0 +1,279 @@
+2026-07-02 03:19:18,656 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:18,658 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:18,659 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:18,660 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:20,689 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:20,693 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:20,698 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:20,701 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:22,738 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:22,742 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:22,745 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:22,747 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+INFO:     10.244.0.1:45644 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:24,780 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:24,782 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:24,784 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:24,786 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+WARNING:  Invalid HTTP request received.
+INFO:     127.0.0.1:46744 - "POST /api/v1/signals/sampling_progress HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/protocols/http/h11_impl.py", line 415, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 62, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 2531, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1241, in handle
+    await super().handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 150, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 136, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 690, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 344, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/rl_scaling_controller/signal_receiver.py", line 80, in sampling_progress
+    new_state = sm.on_sampling_progress(body.progress, body.batch_meta.model_dump())
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/rl_scaling_controller/state_machine.py", line 108, in on_sampling_progress
+    self._scale_to(target)
+  File "/usr/local/lib/python3.11/site-packages/rl_scaling_controller/state_machine.py", line 190, in _scale_to
+    self.dgdsa.patch("prefill", target.prefill_replicas)
+  File "/usr/local/lib/python3.11/site-packages/rl_scaling_controller/dgdsa_client.py", line 71, in patch
+    self._api.patch_namespaced_custom_object_scale(
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/api/custom_objects_api.py", line 4080, in patch_namespaced_custom_object_scale
+    return self.patch_namespaced_custom_object_scale_with_http_info(group, version, namespace, plural, name, body, **kwargs)  # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/api/custom_objects_api.py", line 4241, in patch_namespaced_custom_object_scale_with_http_info
+    return self.api_client.call_api(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/api_client.py", line 374, in call_api
+    return self.__call_api(resource_path, method,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/api_client.py", line 191, in __call_api
+    raise e
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/api_client.py", line 184, in __call_api
+    response_data = self.request(
+                    ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/api_client.py", line 434, in request
+    return self.rest_client.PATCH(url,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/rest.py", line 301, in PATCH
+    return self.request("PATCH", url,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/kubernetes/client/rest.py", line 235, in request
+    raise NotFoundException(http_resp=r)
+kubernetes.client.exceptions.NotFoundException: (404)
+Reason: Not Found
+HTTP response headers: HTTPHeaderDict({'Audit-Id': 'a03b1e92-1401-4de7-8096-6625fa466548', 'Cache-Control': 'no-cache, private', 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-Kubernetes-Pf-Flowschema-Uid': '3294f35f-9744-4f22-b336-a9db90ccb533', 'X-Kubernetes-Pf-Prioritylevel-Uid': '88e9c5a1-220b-42e7-9307-4416cd36b648', 'Date': 'Thu, 02 Jul 2026 03:19:25 GMT', 'Content-Length': '19'})
+HTTP response body: 404 page not found
+
+
+INFO:     127.0.0.1:46748 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:26,817 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:26,820 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:26,826 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:26,839 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:28,873 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:28,875 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:28,877 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:28,879 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:28,891 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4': 1}
+INFO:     127.0.0.1:46838 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:30,911 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:30,915 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:30,920 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:30,923 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:31,013 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:3': 1}
+2026-07-02 03:19:33,033 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:33,037 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:33,041 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:33,043 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:33,066 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4': 1}
+INFO:     10.244.0.1:34776 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:35,090 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,094 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,098 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,100 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,114 INFO rl_scaling_controller.consolidation.controller S3 consolidation decision: completion=0.900 threshold=0.600 plans=[{'source': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk', 'source_active': 4, 'target': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg', 'target_capacity': 60, 'request_count': 4}]
+2026-07-02 03:19:35,126 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,132 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,137 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,143 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:35,144 INFO rl_scaling_controller.consolidation.controller S3 consolidation executed: source=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk target=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg request_count=4 migrated=4
+2026-07-02 03:19:37,173 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:37,176 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:37,180 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:37,183 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:39,220 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:39,221 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:39,223 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:39,224 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:39,234 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=5.911 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+2026-07-02 03:19:41,252 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:41,254 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:41,256 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:41,257 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:41,270 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=3.875 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+INFO:     10.244.0.1:50682 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:43,289 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:43,292 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:43,296 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:43,300 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:43,314 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=1.830 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+INFO:     10.244.0.1:50694 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:45,332 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:45,335 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:45,340 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:45,343 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:45,355 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4': 1}
+2026-07-02 03:19:47,376 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:47,380 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:47,384 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:47,387 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:47,481 INFO rl_scaling_controller.consolidation.controller S3 consolidation decision: completion=0.900 threshold=0.600 plans=[{'source': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk', 'source_active': 4, 'target': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg', 'target_capacity': 60, 'request_count': 4}]
+2026-07-02 03:19:47,493 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:47,494 INFO rl_scaling_controller.consolidation.controller S3 migration stopped for pair after non-ok response: source=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk target=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg status=declined rolled_back=True message=None
+2026-07-02 03:19:47,494 INFO rl_scaling_controller.consolidation.controller S3 consolidation executed: source=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk target=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg request_count=4 migrated=0
+2026-07-02 03:19:49,511 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,513 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,515 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,517 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,533 INFO rl_scaling_controller.consolidation.controller S3 consolidation decision: completion=0.900 threshold=0.600 plans=[{'source': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk', 'source_active': 4, 'target': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg', 'target_capacity': 60, 'request_count': 4}]
+2026-07-02 03:19:49,541 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,550 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,556 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,561 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:19:49,562 INFO rl_scaling_controller.consolidation.controller S3 consolidation executed: source=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk target=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg request_count=4 migrated=4
+2026-07-02 03:19:51,582 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:51,585 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:51,589 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:51,593 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:53,636 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:53,638 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:53,640 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:53,641 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:53,653 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=5.909 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+INFO:     10.244.0.1:35314 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:19:55,676 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:55,680 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:55,685 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:55,687 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:55,700 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=3.862 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+2026-07-02 03:19:57,723 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:57,727 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:57,735 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:57,738 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:57,754 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=1.808 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+2026-07-02 03:19:59,781 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:59,785 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:59,788 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:19:59,792 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:19:59,807 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4': 1}
+2026-07-02 03:20:01,831 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,834 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,837 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,839 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,857 INFO rl_scaling_controller.consolidation.controller S3 consolidation decision: completion=0.900 threshold=0.600 plans=[{'source': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk', 'source_active': 4, 'target': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg', 'target_capacity': 60, 'request_count': 4}]
+2026-07-02 03:20:01,869 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,875 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,881 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,887 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:01,888 INFO rl_scaling_controller.consolidation.controller S3 consolidation executed: source=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk target=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg request_count=4 migrated=4
+2026-07-02 03:20:03,909 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:03,913 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:03,917 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:03,920 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:03,935 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=7.953 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+INFO:     10.244.0.1:35234 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:20:05,954 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:05,957 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:05,960 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:05,962 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:05,975 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=5.913 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+2026-07-02 03:20:08,000 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:08,004 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:08,008 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:08,010 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:10,042 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:10,044 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:10,048 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:10,051 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:10,065 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=1.823 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+2026-07-02 03:20:12,085 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:12,090 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:12,093 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:12,095 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:12,116 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:3': 1}
+INFO:     10.244.0.1:36742 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:20:14,138 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:14,140 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:14,144 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:14,148 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:14,160 INFO rl_scaling_controller.consolidation.controller S3 consolidation waiting for stable window: required=2 pending={'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4': 1}
+INFO:     10.244.0.1:36750 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:20:16,181 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,185 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,188 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,200 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,216 INFO rl_scaling_controller.consolidation.controller S3 consolidation decision: completion=0.900 threshold=0.600 plans=[{'source': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk', 'source_active': 4, 'target': 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg', 'target_capacity': 60, 'request_count': 4}]
+2026-07-02 03:20:16,231 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,238 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,246 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,255 INFO httpx HTTP Request: POST http://10.244.0.187:9091/migrate "HTTP/1.1 200 OK"
+2026-07-02 03:20:16,255 INFO rl_scaling_controller.consolidation.controller S3 consolidation executed: source=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk target=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg request_count=4 migrated=4
+2026-07-02 03:20:18,273 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:18,276 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:18,277 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:18,279 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:20,307 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:20,309 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:20,311 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:20,313 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:20,325 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=5.930 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+2026-07-02 03:20:22,345 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:22,347 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:22,349 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:22,351 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:22,363 INFO rl_scaling_controller.consolidation.controller S3 consolidation gated by cooldown: remaining_s=3.893 plans=['vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk->vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7k7gtg:4']
+INFO:     10.244.0.1:59188 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-02 03:20:24,381 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:24,383 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:24,386 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:24,388 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:26,417 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:26,419 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-02 03:20:26,421 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-02 03:20:26,422 INFO httpx HTTP Request: GET http://10.244.0.186:9091/v1/active_requests "HTTP/1.1 200 OK"
