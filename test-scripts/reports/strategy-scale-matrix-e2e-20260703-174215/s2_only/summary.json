@@ -1,0 +1,107 @@
+{
+  "scenario": {
+    "scenario": "s2_only",
+    "title": "Enable S2 Only",
+    "s2_enabled": true,
+    "s3_enabled": false,
+    "scale_down_triggered": false,
+    "scale_up_triggered": false,
+    "released_gpu_seconds": 0.0,
+    "released_gpu_hours": 0.0,
+    "high_before_success_pct": 100.0,
+    "high_before_wall_s": 33.49614715576172,
+    "high_before_req_s": 1.4330006306932364,
+    "high_before_p95_s": 4.45619535446167,
+    "high_before_user_tps": 1088.5132499105437,
+    "low_tail_success_pct": 100.0,
+    "low_tail_wall_s": 17.63597798347473,
+    "low_tail_req_s": 0.6804272499797994,
+    "low_tail_p95_s": 2.9991748332977295,
+    "low_tail_user_tps": 261.284063992243,
+    "high_after_success_pct": 100.0,
+    "high_after_wall_s": 34.067299127578735,
+    "high_after_req_s": 1.4089757987636369,
+    "high_after_p95_s": 4.538077116012573,
+    "high_after_user_tps": 1082.0934134504732,
+    "high_before_effective_util_pct": 31.916666666666668,
+    "low_tail_effective_util_pct": 0.0,
+    "high_after_effective_util_pct": 39.1875,
+    "low_tail_allocated_gpu_hours": 0.02939329663912455,
+    "low_tail_effective_busy_hours": 0.0,
+    "low_tail_idle_gpu_hours": 0.02939329663912455,
+    "high_after_allocated_gpu_hours": 0.05677883187929789,
+    "high_after_effective_busy_hours": 0.022250204742699863,
+    "high_after_idle_gpu_hours": 0.03452862713659803,
+    "data_profile": "high(48 req, concurrency=6, max_tokens=768) -> low/tail(12 req, concurrency=2, max_tokens=384) -> high recovery(48 req)；只开启 S2 资格验证，不执行 replica 释放，用于证明 S2 单独不会被误解为 scale-down。"
+  },
+  "gpu_samples_summary": {
+    "high_before": {
+      "samples": 24,
+      "avg_gpu_util_pct": 31.916666666666668,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 36.0,
+      "gpu_busy_seconds": 15.32,
+      "gpu_idle_seconds": 20.68,
+      "allocated_gpu_hours": 0.01,
+      "gpu_effective_busy_hours": 0.004255555555555556,
+      "gpu_idle_hours": 0.005744444444444444,
+      "effective_hour_utilization_pct": 42.55555555555556
+    },
+    "low_tail": {
+      "samples": 8,
+      "avg_gpu_util_pct": 0.0,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 12.0,
+      "gpu_busy_seconds": 0.0,
+      "gpu_idle_seconds": 12.0,
+      "allocated_gpu_hours": 0.0033333333333333335,
+      "gpu_effective_busy_hours": 0.0,
+      "gpu_idle_hours": 0.0033333333333333335,
+      "effective_hour_utilization_pct": 0.0
+    },
+    "hold": {
+      "samples": 24,
+      "avg_gpu_util_pct": 12.375,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 36.0,
+      "gpu_busy_seconds": 5.9399999999999995,
+      "gpu_idle_seconds": 30.060000000000002,
+      "allocated_gpu_hours": 0.01,
+      "gpu_effective_busy_hours": 0.0016499999999999998,
+      "gpu_idle_hours": 0.00835,
+      "effective_hour_utilization_pct": 16.5
+    },
+    "high_after": {
+      "samples": 16,
+      "avg_gpu_util_pct": 39.1875,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 24.0,
+      "gpu_busy_seconds": 12.540000000000001,
+      "gpu_idle_seconds": 11.459999999999999,
+      "allocated_gpu_hours": 0.006666666666666667,
+      "gpu_effective_busy_hours": 0.0034833333333333335,
+      "gpu_idle_hours": 0.003183333333333333,
+      "effective_hour_utilization_pct": 52.25
+    }
+  },
+  "gpu_accounting": {
+    "high_before": {
+      "allocated_gpu_hours": 0.05582691192626953,
+      "gpu_effective_busy_hours": 0.017818089389801027,
+      "gpu_idle_hours": 0.038008822536468506,
+      "effective_hour_utilization_pct": 31.916666666666668
+    },
+    "low_tail": {
+      "allocated_gpu_hours": 0.02939329663912455,
+      "gpu_effective_busy_hours": 0.0,
+      "gpu_idle_hours": 0.02939329663912455,
+      "effective_hour_utilization_pct": 0.0
+    },
+    "high_after": {
+      "allocated_gpu_hours": 0.05677883187929789,
+      "gpu_effective_busy_hours": 0.022250204742699863,
+      "gpu_idle_hours": 0.03452862713659803,
+      "effective_hour_utilization_pct": 39.1875
+    }
+  }
+}

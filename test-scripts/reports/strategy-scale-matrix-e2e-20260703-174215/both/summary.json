@@ -1,0 +1,107 @@
+{
+  "scenario": {
+    "scenario": "both",
+    "title": "Both Enable",
+    "s2_enabled": true,
+    "s3_enabled": true,
+    "scale_down_triggered": true,
+    "scale_up_triggered": true,
+    "released_gpu_seconds": 575.6099920272827,
+    "released_gpu_hours": 0.15989166445202296,
+    "high_before_success_pct": 100.0,
+    "high_before_wall_s": 33.57960748672485,
+    "high_before_req_s": 1.4294389837336845,
+    "high_before_p95_s": 4.379672527313232,
+    "high_before_user_tps": 1097.362439825053,
+    "low_tail_success_pct": 100.0,
+    "low_tail_wall_s": 17.67409348487854,
+    "low_tail_req_s": 0.6789598578431683,
+    "low_tail_p95_s": 3.060718059539795,
+    "low_tail_user_tps": 260.7205854117766,
+    "high_after_success_pct": 100.0,
+    "high_after_wall_s": 33.94050931930542,
+    "high_after_req_s": 1.414239236907901,
+    "high_after_p95_s": 5.019723892211914,
+    "high_after_user_tps": 1072.906704416692,
+    "high_before_effective_util_pct": 24.75,
+    "low_tail_effective_util_pct": 12.625,
+    "high_after_effective_util_pct": 14.75,
+    "low_tail_allocated_gpu_hours": 0.019637881649865043,
+    "low_tail_effective_busy_hours": 0.0024792825582954617,
+    "low_tail_idle_gpu_hours": 0.017158599091569582,
+    "high_after_allocated_gpu_hours": 0.0565675155321757,
+    "high_after_effective_busy_hours": 0.008343708540995915,
+    "high_after_idle_gpu_hours": 0.048223806991179785,
+    "data_profile": "high(48 req, concurrency=6, max_tokens=768) -> low/tail(12 req, concurrency=2, max_tokens=384) -> high recovery(48 req)；S2 与 S3 同时开启，由顶层策略在低负载/长尾窗口选择 S3 release path，并在高负载恢复前 scale up。"
+  },
+  "gpu_samples_summary": {
+    "high_before": {
+      "samples": 16,
+      "avg_gpu_util_pct": 24.75,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 24.0,
+      "gpu_busy_seconds": 7.92,
+      "gpu_idle_seconds": 16.08,
+      "allocated_gpu_hours": 0.006666666666666667,
+      "gpu_effective_busy_hours": 0.0022,
+      "gpu_idle_hours": 0.0044666666666666665,
+      "effective_hour_utilization_pct": 33.0
+    },
+    "low_tail": {
+      "samples": 16,
+      "avg_gpu_util_pct": 12.625,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 16.0,
+      "gpu_busy_seconds": 4.04,
+      "gpu_idle_seconds": 11.96,
+      "allocated_gpu_hours": 0.0044444444444444444,
+      "gpu_effective_busy_hours": 0.0011222222222222222,
+      "gpu_idle_hours": 0.0033222222222222225,
+      "effective_hour_utilization_pct": 25.25
+    },
+    "hold": {
+      "samples": 16,
+      "avg_gpu_util_pct": 0.0,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 16.0,
+      "gpu_busy_seconds": 0.0,
+      "gpu_idle_seconds": 16.0,
+      "allocated_gpu_hours": 0.0044444444444444444,
+      "gpu_effective_busy_hours": 0.0,
+      "gpu_idle_hours": 0.0044444444444444444,
+      "effective_hour_utilization_pct": 0.0
+    },
+    "high_after": {
+      "samples": 8,
+      "avg_gpu_util_pct": 14.75,
+      "max_gpu_mem_mib": 22590.0,
+      "allocated_gpu_seconds": 12.0,
+      "gpu_busy_seconds": 2.36,
+      "gpu_idle_seconds": 9.64,
+      "allocated_gpu_hours": 0.0033333333333333335,
+      "gpu_effective_busy_hours": 0.0006555555555555555,
+      "gpu_idle_hours": 0.002677777777777778,
+      "effective_hour_utilization_pct": 19.666666666666668
+    }
+  },
+  "gpu_accounting": {
+    "high_before": {
+      "allocated_gpu_hours": 0.055966012477874756,
+      "gpu_effective_busy_hours": 0.013851588088274002,
+      "gpu_idle_hours": 0.04211442438960075,
+      "effective_hour_utilization_pct": 24.75
+    },
+    "low_tail": {
+      "allocated_gpu_hours": 0.019637881649865043,
+      "gpu_effective_busy_hours": 0.0024792825582954617,
+      "gpu_idle_hours": 0.017158599091569582,
+      "effective_hour_utilization_pct": 12.625
+    },
+    "high_after": {
+      "allocated_gpu_hours": 0.0565675155321757,
+      "gpu_effective_busy_hours": 0.008343708540995915,
+      "gpu_idle_hours": 0.048223806991179785,
+      "effective_hour_utilization_pct": 14.75
+    }
+  }
+}

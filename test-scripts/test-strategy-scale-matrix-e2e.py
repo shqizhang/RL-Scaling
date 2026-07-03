@@ -135,8 +135,8 @@ def report_lines(out_dir: Path, matrix_rows: list[dict]) -> list[str]:
             "- req/s：HTTP 200 成功请求数 / Wall Time。这里的 req/s 是 Dynamo frontend 端到端用户请求吞吐，不是 engine 内部 batch request 数。",
             "- p50/p95/p99 latency：单条用户请求端到端 latency 的 50/95/99 分位数，越高说明尾延迟越明显。",
             "- user completion tok/s：HTTP 响应中的 completion tokens / Wall Time。它衡量用户可见输出 token 的生成吞吐，不包含 migration replay 或内部 engine token。",
-            "- allocated GPU-hours：测试阶段内 Kubernetes ready worker 数量按时间积分得到的 GPU 分配时间。",
-            "- GPU effective busy hours：基于 `nvidia-smi` GPU utilization 对时间积分得到的 busy GPU 时间，是 GPU effective hour 的粗粒度 proxy。",
+            "- allocated GPU-hours：测试阶段内 Kubernetes 目标拓扑中的 ready worker GPU 数量 * 阶段 Wall Time / 3600。它衡量这一阶段实际占用的 GPU allocation。",
+            "- GPU effective busy hours：allocated GPU-hours * `nvidia-smi` 平均 GPU utilization，是 GPU effective hour 的粗粒度 proxy。",
             "- GPU effective-hour utilization：GPU effective busy hours / allocated GPU-hours。越高表示已分配 GPU 的闲置越少；scale down 释放空闲 GPU 后，低负载窗口的 allocation 会下降。",
             "- released GPU-hours：S3/Both 场景中 decode 4->2 到 2->4 之间释放的 GPU allocation 时间，计算为释放 GPU 数量 * 持续秒数 / 3600。",
             "",
@@ -160,13 +160,34 @@ def report_lines(out_dir: Path, matrix_rows: list[dict]) -> list[str]:
     lines.extend(
         [
             "",
-            "## 5. Scale Down 与 Scale Up 正确性验证",
+            "## 5. GPU Effective Hour 与资源释放",
+            "",
+            "| 组别 | low allocated GPU-hours | low busy GPU-hours | low idle GPU-hours | low effective util % | high-after allocated GPU-hours | high-after busy GPU-hours | high-after idle GPU-hours | released GPU-hours |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in matrix_rows:
+        lines.append(
+            f"| {row['title']} | {fmt(row.get('low_tail_allocated_gpu_hours', 0), 4)} | "
+            f"{fmt(row.get('low_tail_effective_busy_hours', 0), 4)} | "
+            f"{fmt(row.get('low_tail_idle_gpu_hours', 0), 4)} | "
+            f"{fmt(row['low_tail_effective_util_pct'])} | "
+            f"{fmt(row.get('high_after_allocated_gpu_hours', 0), 4)} | "
+            f"{fmt(row.get('high_after_effective_busy_hours', 0), 4)} | "
+            f"{fmt(row.get('high_after_idle_gpu_hours', 0), 4)} | "
+            f"{fmt(row['released_gpu_hours'], 4)} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## 6. Scale Down 与 Scale Up 正确性验证",
             "",
             "Scale down 的正确性通过三类证据验证：`events.csv` 中存在 `scale_down_ready`，Kubernetes ready worker count 从 2P+4D 变成 2P+2D，且 `released_gpu_hours` 大于 0。Scale up 的正确性通过 `scale_up_ready`、ready worker count 恢复到 2P+4D，以及 high recovery 阶段 HTTP success 和吞吐恢复来验证。",
             "",
             "Baseline 与 S2 only 不触发 scale down/up，因此 `released_gpu_hours` 必须为 0。S3 only 与 Both Enable 必须触发 decode replica 释放，并在恢复高负载前扩回 4 个 decode worker。",
             "",
-            "## 6. 结论",
+            "## 7. 结论",
             "",
             "这组矩阵的核心验证点是：相同 workload 下，策略开关会决定是否释放 GPU allocation；释放后仍能在高负载恢复前 scale up，避免牺牲后续高负载阶段的可用性。S3/Both 场景能够展示真实 GPU 资源释放窗口，S2 only 在本测试中作为 role-reuse 资格验证，不单独声明 replica release。",
             "",
@@ -175,6 +196,19 @@ def report_lines(out_dir: Path, matrix_rows: list[dict]) -> list[str]:
         ]
     )
     return lines
+
+
+def phase_gpu_from_wall(gpu_summary: dict, wall_s: float, workers: int) -> dict:
+    allocated_hours = max(0.0, workers * wall_s / 3600.0)
+    util_pct = float(gpu_summary.get("avg_gpu_util_pct", 0.0) or 0.0)
+    busy_hours = allocated_hours * util_pct / 100.0
+    idle_hours = max(0.0, allocated_hours - busy_hours)
+    return {
+        "allocated_gpu_hours": allocated_hours,
+        "gpu_effective_busy_hours": busy_hours,
+        "gpu_idle_hours": idle_hours,
+        "effective_hour_utilization_pct": util_pct,
+    }
 
 
 def write_artifacts(out_dir: Path, matrix_rows: list[dict], events: list[dict], sampler_rows: list[dict]) -> None:
@@ -295,6 +329,9 @@ def run_one_scenario(
             ["phase", "idx", "start_ts", "end_ts", "http_code", "latency_s", "prompt_tokens", "completion_tokens", "total_tokens", "error"],
         )
         gpu = {name: scale_e2e.summarize_gpu(sampler.rows, w[0], w[1], args.sample_interval) for name, w in phase_windows.items()}
+        high_before_gpu = phase_gpu_from_wall(gpu["high_before"], high_before["wall_s"], workers=6)
+        low_tail_gpu = phase_gpu_from_wall(gpu["low_tail"], low_tail["wall_s"], workers=4 if scenario.scale_enabled else 6)
+        high_after_gpu = phase_gpu_from_wall(gpu["high_after"], high_after["wall_s"], workers=6)
         release_seconds = 2.0 * max(0.0, scaled_down_window[1] - scaled_down_window[0]) if scenario.scale_enabled else 0.0
         row = {
             "scenario": scenario.key,
@@ -320,12 +357,33 @@ def run_one_scenario(
             "high_after_req_s": high_after["req_s"],
             "high_after_p95_s": high_after["p95_latency_s"],
             "high_after_user_tps": high_after["user_completion_tps"],
-            "high_before_effective_util_pct": gpu["high_before"]["effective_hour_utilization_pct"],
-            "low_tail_effective_util_pct": gpu["low_tail"]["effective_hour_utilization_pct"],
-            "high_after_effective_util_pct": gpu["high_after"]["effective_hour_utilization_pct"],
+            "high_before_effective_util_pct": high_before_gpu["effective_hour_utilization_pct"],
+            "low_tail_effective_util_pct": low_tail_gpu["effective_hour_utilization_pct"],
+            "high_after_effective_util_pct": high_after_gpu["effective_hour_utilization_pct"],
+            "low_tail_allocated_gpu_hours": low_tail_gpu["allocated_gpu_hours"],
+            "low_tail_effective_busy_hours": low_tail_gpu["gpu_effective_busy_hours"],
+            "low_tail_idle_gpu_hours": low_tail_gpu["gpu_idle_hours"],
+            "high_after_allocated_gpu_hours": high_after_gpu["allocated_gpu_hours"],
+            "high_after_effective_busy_hours": high_after_gpu["gpu_effective_busy_hours"],
+            "high_after_idle_gpu_hours": high_after_gpu["gpu_idle_hours"],
             "data_profile": scenario_data_profile(scenario, args),
         }
-        (sdir / "summary.json").write_text(json.dumps({"scenario": row, "gpu": gpu}, indent=2, ensure_ascii=False), encoding="utf-8")
+        (sdir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "scenario": row,
+                    "gpu_samples_summary": gpu,
+                    "gpu_accounting": {
+                        "high_before": high_before_gpu,
+                        "low_tail": low_tail_gpu,
+                        "high_after": high_after_gpu,
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         event("scenario_done")
         return row
     finally:

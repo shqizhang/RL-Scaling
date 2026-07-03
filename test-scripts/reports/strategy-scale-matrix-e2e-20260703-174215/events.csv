@@ -1,0 +1,56 @@
+ts,iso,scenario,event,s2_enabled,s3_enabled,prefill,decode,ready_prefill,ready_decode,reason,data
+1783071741.8315656,2026-07-03T17:42:21,global,cleanup_old_crashloop_deployments,,,,,,,,
+1783071746.4133494,2026-07-03T17:42:26,baseline,scenario_start,False,False,,,,,,
+1783071912.6582646,2026-07-03T17:45:12,baseline,topology_ready,,,2,4,,,,
+1783071943.680562,2026-07-03T17:45:43,baseline,frontend_port_forward_started,,,,,,,,127.0.0.1:18000
+1783071945.8617446,2026-07-03T17:45:45,baseline,warmup_done,,,,,,,,
+1783071945.86185,2026-07-03T17:45:45,baseline,high_before_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783071979.1467443,2026-07-03T17:46:19,baseline,high_before_done,,,,,,,,
+1783071979.146837,2026-07-03T17:46:19,baseline,no_scale_down,,,,,,,S3 disabled; S2 alone does not release decode replicas in this test,
+1783071979.1468747,2026-07-03T17:46:19,baseline,low_tail_start,,,,,,,,"12 requests, concurrency 2, max_tokens 384"
+1783071997.4557834,2026-07-03T17:46:37,baseline,low_tail_done,,,,,,,,
+1783072027.4561327,2026-07-03T17:47:07,baseline,high_after_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783072060.0575135,2026-07-03T17:47:40,baseline,high_after_done,,,,,,,,
+1783072060.0606058,2026-07-03T17:47:40,baseline,scenario_done,,,,,,,,
+1783072060.074843,2026-07-03T17:47:40,s2_only,scenario_start,True,False,,,,,,
+1783072070.056687,2026-07-03T17:47:50,s2_only,topology_ready,,,2,4,,,,
+1783072100.3728542,2026-07-03T17:48:20,s2_only,frontend_port_forward_started,,,,,,,,127.0.0.1:18000
+1783072102.3382857,2026-07-03T17:48:22,s2_only,warmup_done,,,,,,,,
+1783072102.3384,2026-07-03T17:48:22,s2_only,high_before_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783072135.8371494,2026-07-03T17:48:55,s2_only,high_before_done,,,,,,,,
+1783072135.8373244,2026-07-03T17:48:55,s2_only,no_scale_down,,,,,,,S3 disabled; S2 alone does not release decode replicas in this test,
+1783072135.837384,2026-07-03T17:48:55,s2_only,low_tail_start,,,,,,,,"12 requests, concurrency 2, max_tokens 384"
+1783072153.475178,2026-07-03T17:49:13,s2_only,low_tail_done,,,,,,,,
+1783072183.475384,2026-07-03T17:49:43,s2_only,high_after_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783072217.5458806,2026-07-03T17:50:17,s2_only,high_after_done,,,,,,,,
+1783072217.5493817,2026-07-03T17:50:17,s2_only,scenario_done,,,,,,,,
+1783072217.5658803,2026-07-03T17:50:17,s3_only,scenario_start,False,True,,,,,,
+1783072228.2100363,2026-07-03T17:50:28,s3_only,topology_ready,,,2,4,,,,
+1783072258.7261803,2026-07-03T17:50:58,s3_only,frontend_port_forward_started,,,,,,,,127.0.0.1:18000
+1783072260.8090408,2026-07-03T17:51:00,s3_only,warmup_done,,,,,,,,
+1783072260.8091736,2026-07-03T17:51:00,s3_only,high_before_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783072294.2456005,2026-07-03T17:51:34,s3_only,high_before_done,,,,,,,,
+1783072294.245701,2026-07-03T17:51:34,s3_only,strategy_detected_scale_down_window,,,,,,,S3 enabled and post-burst low/tail window starts; release decode capacity from 4 to 2,
+1783072300.3221378,2026-07-03T17:51:40,s3_only,scale_down_ready,,,2,2,,,,
+1783072320.3223577,2026-07-03T17:52:00,s3_only,low_tail_start,,,,,,,,"12 requests, concurrency 2, max_tokens 384"
+1783072337.3471892,2026-07-03T17:52:17,s3_only,low_tail_done,,,,,,,,
+1783072367.34773,2026-07-03T17:52:47,s3_only,strategy_detected_scale_up_window,,,,,,,recovery high-load wave is about to start; restore decode replicas from 2 to 4,
+1783072522.6737628,2026-07-03T17:55:22,s3_only,scale_up_ready,,,2,4,,,,
+1783072582.6741152,2026-07-03T17:56:22,s3_only,high_after_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783072616.0840178,2026-07-03T17:56:56,s3_only,high_after_done,,,,,,,,
+1783072616.0882657,2026-07-03T17:56:56,s3_only,scenario_done,,,,,,,,
+1783072616.108386,2026-07-03T17:56:56,both,scenario_start,True,True,,,,,,
+1783072626.7299318,2026-07-03T17:57:06,both,topology_ready,,,2,4,,,,
+1783072657.1671395,2026-07-03T17:57:37,both,frontend_port_forward_started,,,,,,,,127.0.0.1:18000
+1783072659.6366966,2026-07-03T17:57:39,both,warmup_done,,,,,,,,
+1783072659.6368062,2026-07-03T17:57:39,both,high_before_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783072693.21871,2026-07-03T17:58:13,both,high_before_done,,,,,,,,
+1783072693.2188137,2026-07-03T17:58:13,both,strategy_detected_scale_down_window,,,,,,,S3 enabled and post-burst low/tail window starts; release decode capacity from 4 to 2,
+1783072699.093212,2026-07-03T17:58:19,both,scale_down_ready,,,2,2,,,,
+1783072719.093472,2026-07-03T17:58:39,both,low_tail_start,,,,,,,,"12 requests, concurrency 2, max_tokens 384"
+1783072736.769737,2026-07-03T17:58:56,both,low_tail_done,,,,,,,,
+1783072766.7701406,2026-07-03T17:59:26,both,strategy_detected_scale_up_window,,,,,,,recovery high-load wave is about to start; restore decode replicas from 2 to 4,
+1783072921.0239534,2026-07-03T18:02:01,both,scale_up_ready,,,2,4,,,,
+1783072981.0238566,2026-07-03T18:03:01,both,high_after_start,,,,,,,,"48 requests, concurrency 6, max_tokens 768"
+1783073014.9666584,2026-07-03T18:03:34,both,high_after_done,,,,,,,,
+1783073014.9704347,2026-07-03T18:03:34,both,scenario_done,,,,,,,,

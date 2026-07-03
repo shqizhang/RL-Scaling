@@ -255,17 +255,20 @@ class Sampler:
             t = now_ts()
             allocated = sum(count_ready_by_component())
             if self.node_nvidia_smi:
-                proc = run(
-                    [
-                        "ssh",
-                        "gpu14",
-                        "nvidia-smi",
-                        "--query-gpu=index,utilization.gpu,memory.used",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    timeout=15,
-                    check=False,
-                )
+                try:
+                    proc = run(
+                        [
+                            "ssh",
+                            "gpu14",
+                            "nvidia-smi",
+                            "--query-gpu=index,utilization.gpu,memory.used",
+                            "--format=csv,noheader,nounits",
+                        ],
+                        timeout=15,
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired:
+                    proc = subprocess.CompletedProcess(args=["ssh", "gpu14", "nvidia-smi"], returncode=124, stdout="", stderr="timeout")
                 if proc.returncode == 0 and proc.stdout.strip():
                     for line in proc.stdout.strip().splitlines():
                         parts = [p.strip() for p in line.split(",")]
