@@ -1,9 +1,5 @@
 # RL-Scaling Controller 端到端测试总结汇报
 
-生成日期：2026-07-02
-
-本文汇总 RL-Scaling / Dynamo 项目当前已经完成的端到端测试结果，目标是证明方案在真实 Dynamo + Kubernetes 环境中的可行性，并用可解释的 timing、throughput、latency、token throughput 和 GPU 使用指标说明方案带来的效能改善。本文特别区分“机制可行性”“controller 自动闭环触发”“同 workload 对比收益”和“scale down 后的最终 GPU hour 收益”，避免把测试触发窗口或 GPU proxy 过度解释成生产效果。
-
 ## 1. 汇报结论
 
 当前实现已经具备完整的 worker-side 机制和 controller-driven 自动闭环验证基础：
@@ -12,7 +8,7 @@
 - **S3 Request Consolidation 可自动触发**：controller 能够识别 decode tail 阶段中 source active request、target capacity、batch completion 和 stable window 条件，并自动执行 migration。四组矩阵测试中 S3-only 记录到 10 轮 consolidation decision，32 个 migrated request，8 个 declined/rollback。
 - **组合启用场景可运行且服务不中断**：四组矩阵测试中 Baseline、S2-only、S3-only、Both Enable 全部保持 100% HTTP success。Both Enable 下 S2 自动触发，GPU effective seconds 相对 baseline 降低 41.09%。
 - **效能收益最明确地体现在 S2 的端到端吞吐，以及 S2/Both 的 GPU 占用下降**：S2 独立策略测试展示了 wall time、req/s、latency、user completion tok/s 的直接提升；四组矩阵测试展示了在同一 workload 下，S2/Both 能触发 role switch，并显著降低 GPU effective seconds。这里的 GPU effective seconds 下降不是“单卡利用率提升”，而是“策略让部分 worker 更早进入低占用/可释放状态”的信号；真正的 auto-scaling 收益需要后续 scale down 或 role reuse 把这部分释放能力转化为 GPU hour 节省。
-- **S3 当前证明了机制可行，但触发窗口仍需收敛**：S3-only 在本轮矩阵测试中成功迁移请求，但 replay/overhead tokens 上升到 16472，p95/p99 latency 和 wall time 变差。这说明 Request Consolidation 机制成立，但当前 workload 和阈值偏激进，后续需要更严格的 stable gating、migration benefit 判断和 target capacity 控制，才能稳定体现正向收益。
+- **S3 当前证明了机制可行，但触发窗口仍需收敛**：S3-only 在本轮矩阵测试中成功迁移请求，但 engine extra/overhead tokens 上升到 16472，p95/p99 latency 和 wall time 变差。这说明 Request Consolidation 机制成立，但当前 workload 和阈值偏激进，后续需要更严格的 stable gating、migration benefit 判断和 target capacity 控制，才能稳定体现正向收益。该 overhead 是 engine counter proxy，不能直接等同于 recompute replay。
 
 ## 2. 测试数据来源
 
@@ -135,9 +131,9 @@ S3 Request Consolidation 的核心条件：
 | p99 latency | 请求 latency 的 99 分位 | 极端长尾耗时 | 用于发现少数慢请求是否被策略放大 |
 | TTFT | curl `time_starttransfer` | 从请求发出到首字节返回 | 非 streaming 模式下近似 first-byte/first-token 响应性，越低越好 |
 | cluster prompt tok/s | vLLM `prompt_tokens_total` delta / Wall Time | prefill 阶段 prompt token 处理吞吐 | 越高表示 prefill 侧处理 prompt 的速度越高 |
-| cluster generation tok/s | vLLM `generation_tokens_total` delta / Wall Time | engine decode 侧生成 token counter 吞吐 | 越高通常表示 decode 引擎产出更快，但可能包含 migration replay/recompute |
+| cluster generation tok/s | vLLM `generation_tokens_total` delta / Wall Time | engine decode 侧生成 token counter 吞吐 | 越高通常表示 decode 引擎产出更快，但可能包含 migration 后 target 侧 resubmit/drain、connector 内部执行或 fallback recompute 等 engine 侧工作，不完全等同用户可见输出 |
 | user completion tok/s | HTTP response `usage.completion_tokens` 总和 / Wall Time | 用户实际拿到的 completion token 吞吐 | 比 engine generation tok/s 更能代表用户可见产出 |
-| replay/overhead tokens | `engine_generation_tokens_delta - user_completion_tokens`，小于 0 时按 0 | engine 额外工作量 proxy | 上升通常意味着 migration replay/recompute 或内部重放成本增加 |
+| engine extra/overhead tokens | `engine_generation_tokens_delta - user_completion_tokens`，小于 0 时按 0 | engine 额外工作量 proxy，不是 recompute replay 的直接计数 | 上升说明 engine 侧存在额外执行、迁移后 resubmit/drain、fallback recompute、rollback/duplicate counter 等成本；只有结合 `migrate_in.path=recompute` 才能证明发生了 recompute replay |
 | GPU active sample % | `nvidia-smi utilization.gpu > 0` 的采样比例 | GPU 是否活跃的粗粒度 proxy | 越低可能表示 GPU 被释放，也可能表示 workload 不足，需要结合 success/throughput 解读 |
 | GPU effective seconds | `sum(gpu_util_pct / 100 * sample_duration)` | 粗粒度 GPU effective time 积分 | 同 workload 下越低表示 worker 更早进入低占用/可释放状态；它体现释放潜力，不等价于已经节省 GPU 成本 |
 | avg GPU util % | `nvidia-smi utilization.gpu` 平均值 | GPU 平均忙碌程度 | 在未 scale down 的测试中，下降通常表示该 worker 不再持续承担 decode 工作；生产目标不是让所有卡 util 下降，而是把空闲卡 scale down 或复用到其他阶段 |
@@ -168,7 +164,7 @@ S3 Request Consolidation 的核心条件：
 1. 所有策略开关组合都能保持 100% request success。
 2. S2/S3 的 controller 自动闭环能够真实触发动作。
 3. S2 和 Both Enable 对 GPU effective seconds 的降低非常明显，说明在当前 workload 下有 worker 更早进入低占用/可释放状态。
-4. S3 在当前窗口下能够迁移 request，但过早或过频迁移会造成 replay overhead，报告清晰暴露了需要优化的策略边界。
+4. S3 在当前窗口下能够迁移 request，但过早或过频迁移会造成 engine extra/overhead 上升，报告清晰暴露了需要优化的策略边界。
 
 这里的 GPU effective seconds 和 avg GPU util 下降需要谨慎解释。按最终 auto-scaling 目标，理想状态不是让所有 GPU 的单卡利用率下降，而是把尾部请求合并到更少 worker 上，让 source worker drain 后被 scale down、切换 role 或承接其他阶段任务。由于本轮四组矩阵中 `CONSOLIDATION_SCALE_DOWN_ENABLED=false`，测试没有执行缩容，所以 GPU 指标只能证明“释放潜力”和“低效占用减少”，不能直接声称已经完成 GPU 成本节省。真正的 GPU effective hour 节省需要在 scale down 或 role reuse 生效后，用 DCGM/GPU busy time 积分进一步验证。
 
@@ -208,20 +204,24 @@ S3 标准测试显示 Request Consolidation 链路可以在保持 100% success �
 | cluster generation tok/s | 1852.78 | 1915.25 | 提升 3.37% |
 | GPU effective seconds | 31.16s | 30.92s | 改善 0.78% |
 
-四组矩阵测试中 S3-only 进一步证明 controller 能自动触发 consolidation：记录到 32 个 migrated request 和 8 个 declined/rollback。但由于 replay/overhead tokens 从 baseline 的 88 增加到 16472，user completion tok/s 下降 9.00%，说明该轮测试中的 S3 触发窗口偏激进。
+四组矩阵测试中 S3-only 进一步证明 controller 能自动触发 consolidation：记录到 32 个 migrated request 和 8 个 declined/rollback。但由于 engine extra/overhead tokens 从 baseline 的 88 增加到 16472，user completion tok/s 下降 9.00%，说明该轮测试中的 S3 触发窗口偏激进。
+
+需要注意，当前实现的 Request Consolidation 优先使用 NIXL connector path，而不是 NCCL，也不是无条件 recompute replay。source 侧在 `DYNAMO_RL_CONNECTOR_ENABLED=1` 且 KVBM block IDs、NIXL metadata 可用时，会返回 `kv_transfer_params` 并进入 block-hold；target 侧提交带有 `kv_transfer_params` 的请求，由 vLLM NixlConnector 通过 NIXL READ 拉取 source GPU blocks 上的 KV。代码中仍会构造 `replay_prompt = prompt_tokens + generated_tokens`，但它在 connector path 中主要表示目标请求的逻辑上下文和 cost gate 输入，不等价于重新计算已生成 KV。只有 connector 关闭、元数据缺失或 connector submit 失败时，才 fallback 到 recompute-prefill。
+
+因此，报告中的 overhead token 不能直接解释成“发生了 replay/recompute”。它是 `engine_generation_tokens_delta - user_completion_tokens` 得到的 proxy，可能来自 target 侧 resubmit 后的内部 drain、connector path 的 engine counter、fallback recompute、rollback/duplicate counter 或迁移尝试成本。要把 overhead 精确拆成 connector overhead 与 recompute replay，需要在后续报告中记录 `migrate_in.path=connector|recompute`、`kv_transfer=true|false` 和每次 migration 的 replay token 数。
 
 因此 S3 的当前结论是：
 
 - 机制可行：controller 能自动发现条件并触发迁移。
 - 服务连续性可接受：HTTP success 保持 100%。
-- 策略窗口仍需优化：要减少 declined/rollback 和 replay overhead，才能让迁移稳定转化为端到端收益。
+- 策略窗口仍需优化：要减少 declined/rollback 和 engine extra/overhead，才能让迁移稳定转化为端到端收益。
 
 建议后续强化：
 
 - source active request 必须连续多个 sample 稳定落在 `1..threshold`。
 - target available capacity 不仅要大于 source active，还应保留安全余量。
 - migration benefit 判断要使用剩余 decode time、已生成 token 数、request age 和 target queue pressure。
-- replay/overhead tokens 应进入 controller 的负反馈，过高时降低迁移频率。
+- engine extra/overhead tokens 应进入 controller 的负反馈，过高时降低迁移频率；同时需要把 connector path 与 recompute fallback 分开统计。
 
 ## 8. Both Enable 组合测试解释
 
@@ -292,7 +292,7 @@ S3 的 user-visible stream reattachment 仍需谨慎表述：当前迁移证明�
 
 1. 接入 DCGM exporter，计算 GPU busy time 积分和 GPU effective hour。
 2. 为 S3 增加更严格的多 sample gating 和 benefit model。
-3. 将 user-visible output tokens 与 engine replay tokens 在 controller/report 中永久分离。
+3. 将 user-visible output tokens、engine extra/overhead tokens、connector migration tokens 和 recompute replay tokens 在 controller/report 中永久分离。
 4. 在至少 3 个 ready decode worker 的拓扑下重跑 Both Enable，验证 S2 + S3 叠加收益。
 5. 增加两阶段 workload：先 decode-tail consolidation，再 prefill-heavy role switch。
 

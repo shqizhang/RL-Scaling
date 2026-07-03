@@ -1090,7 +1090,7 @@ if baseline and strategy:
     lines.append("|---|---:|---|")
     lines.append(f"| end-to-end wall time change | {fmt(improvement)}% | positive means strategy completed faster |")
     lines.append(f"| generation throughput change | {fmt(throughput_gain)}% | positive means more generation tokens/s |")
-    lines.append(f"| user-visible completion throughput change | {fmt(user_throughput_gain)}% | positive means more response completion tokens/s, excluding engine replay |")
+    lines.append(f"| user-visible completion throughput change | {fmt(user_throughput_gain)}% | positive means more response completion tokens/s, excluding engine-internal overhead |")
     lines.append(f"| p95 latency change | {fmt(latency_change)}% | positive means lower p95 latency |")
     lines.append(f"| GPU effective seconds change | {fmt(gpu_effective_change)}% | positive means fewer utilization-weighted GPU seconds for the same workload |")
 else:
@@ -1147,16 +1147,16 @@ lines.append("| req/s | successful frontend HTTP requests per second, `http_200 
 lines.append("| p50 latency | median per-request curl total time | each request start to complete response body | typical user request latency |")
 lines.append("| p95/p99 latency | 95th/99th percentile per-request curl total time | each request start to complete response body | tail latency, sensitive to queueing and stragglers |")
 lines.append("| p50 TTFT | median curl `time_starttransfer` | request start to first response byte | approximates time-to-first-token / first-byte responsiveness |")
-lines.append("| engine gen tok/s | cluster generation token delta divided by wall time | vLLM `generation_tokens_total` sampled before/after scenario | model-side decode throughput; can include migration replay tokens |")
+lines.append("| engine gen tok/s | cluster generation token delta divided by wall time | vLLM `generation_tokens_total` sampled before/after scenario | model-side decode throughput; can include target resubmit/drain, connector work, or fallback recompute, so it is not identical to user-visible output |")
 lines.append("| user completion tok/s | sum of HTTP response `usage.completion_tokens` divided by wall time | successful non-streaming frontend responses in `responses/` | user-visible output throughput, excluding internal replay |")
-lines.append("| replay/overhead tokens | `engine_generation_tokens_delta - user_completion_tokens`, clamped at 0 | vLLM counters minus frontend response usage | indicates extra engine work such as migration replay/recompute |")
+lines.append("| engine extra/overhead tokens | `engine_generation_tokens_delta - user_completion_tokens`, clamped at 0 | vLLM counters minus frontend response usage | proxy for extra engine-side work; not a direct recompute-replay counter unless migration path is confirmed as recompute |")
 lines.append("| GPU active sample % | share of GPU samples where `nvidia-smi utilization.gpu > 0` | sampled per worker pod every configured GPU interval | coarse proxy for GPU active time / effective-hour utilization |")
 lines.append("| GPU effective seconds | sum of `gpu_util_pct / 100 * sample_duration` across worker pods | `nvidia-smi` utilization samples integrated over time | utilization-weighted GPU time; lower is better for equal completed work |")
 lines.append("| GPU memory MiB | device memory used by worker pod at sample time | `nvidia-smi memory.used` | shows whether consolidation/switching changes memory footprint or leaves workers occupied |")
 lines.append("")
 lines.append("### Results")
 lines.append("")
-lines.append("| scenario | completed | success % | wall time (s) | req/s | p50 latency (s) | p95 latency (s) | p99 latency (s) | p50 TTFT (s) | engine gen tok/s | user completion tok/s | replay/overhead tok | GPU active % | GPU effective s | avg GPU util % | max GPU mem MiB |")
+lines.append("| scenario | completed | success % | wall time (s) | req/s | p50 latency (s) | p95 latency (s) | p99 latency (s) | p50 TTFT (s) | engine gen tok/s | user completion tok/s | engine overhead tok | GPU active % | GPU effective s | avg GPU util % | max GPU mem MiB |")
 lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 for row in (baseline, strategy):
     if not row:

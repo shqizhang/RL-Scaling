@@ -390,7 +390,9 @@ replay_prompt = prompt_tokens + generated_tokens
 
 ### 6.7 Phase 2.B：NIXL Pull + Block-Hold
 
-当 `DYNAMO_RL_CONNECTOR_ENABLED=1` 且 KVBM block IDs 与 NIXL metadata 可用时，S3 可以走 connector path。目标端将 `kv_transfer_params` 注入 `sampling_params.extra_args`，由 vLLM NixlConnectorScheduler 发起 NIXL READ，从 source GPU blocks 拉取 KV。
+当 `DYNAMO_RL_CONNECTOR_ENABLED=1` 且 KVBM block IDs 与 NIXL metadata 可用时，S3 可以走 connector path。这里的传输机制是 vLLM / Dynamo 的 NixlConnector 使用 NIXL READ 拉取 KV blocks，不是 NCCL collective。目标端将 `kv_transfer_params` 注入 `sampling_params.extra_args`，由 vLLM NixlConnectorScheduler 发起 NIXL READ，从 source GPU blocks 拉取 KV。
+
+需要特别区分两个概念：实现中 `migrate_in` 仍会构造 `replay_prompt = prompt_tokens + generated_tokens`，这是为了让目标请求具备完整的逻辑上下文，并用于 cost gate 与请求语义恢复；但在 connector path 中，只要 `kv_transfer_params` 生效，目标端并不是重新计算 source 已经产生的 KV，而是通过 NIXL 从 source GPU blocks 拉取这些 KV。只有在 connector 关闭、KVBM/NIXL 元数据缺失，或 connector 提交失败时，才 fallback 到 Phase 2.A 的 recompute-prefill。
 
 为了避免 source 过早 abort 导致 block 被释放或复用，当前实现使用三阶段 block-hold 协议：
 

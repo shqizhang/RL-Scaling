@@ -612,6 +612,15 @@ whose `sampling_params.extra_args["kv_transfer_params"]` is set, and
 the `MultiConnector(DynamoConnector + NixlConnector)` chain on PEER
 will issue an async NIXL READ in the next scheduler step.
 
+This path uses the NIXL connector, not an NCCL collective. `migrate_in`
+still constructs a logical `prompt_tokens + generated_tokens` context
+on both paths; in Phase-2.B that context is used for request semantics,
+cost gating, and target-side submission, while the existing source KV is
+pulled from block-held source GPU blocks through NIXL. Only when the
+connector is disabled, KVBM/NIXL metadata is unavailable, or connector
+submission fails does the migration fall back to Phase-2.A
+recompute-prefill.
+
 The source-side block-hold protocol is implemented as a three-phase
 handshake to prevent the abort/free race:
 

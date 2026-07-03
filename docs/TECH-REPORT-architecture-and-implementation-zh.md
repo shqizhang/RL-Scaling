@@ -469,6 +469,8 @@ S3 的职责：在触发 S2（或缩容）之前，将在途的长请求排空�
 
 线协议已完整实现：`migrate_out` 已经以 vLLM 0.16 的 NixlConnector 在 decode 侧期望的格式返回 `kv_transfer_params`（`do_remote_prefill: true`、`remote_engine_id`、`remote_block_ids`、`remote_host`、`remote_port`、`remote_request_id`——与 Dynamo 正常 disagg PD 路径在 `handlers.py:1577` 中产生的字典相同）。目标侧的 `MigrationHandler.migrate_in` 会将其直接传给一次提交，该提交的 `sampling_params.extra_args["kv_transfer_params"]` 已被设置，PEER 上的 `MultiConnector(DynamoConnector + NixlConnector)` 链将在下一个调度步骤中发出异步 NIXL READ。
 
+这里的传输机制是 NIXL connector path，不是 NCCL collective。`migrate_in` 在两条路径下都会构造 `prompt_tokens + generated_tokens` 形式的逻辑上下文；在 Phase-2.B 中，这个上下文用于请求语义恢复、cost gate 和 target 侧提交，而 source 已有 KV 由 NIXL 从被 block-hold 固定住的 source GPU blocks 拉取。只有 connector 未启用、KVBM/NIXL 元数据不可用，或 connector submit 失败时，才进入 Phase-2.A 的 recompute-prefill。
+
 源侧 block-hold 协议已实现为三阶段握手，以防止 abort/free 竞态：
 
 1. **`migrate_out`** —— 当 `connector_enabled=True` 且 KVBM block ID 和 NIXL
