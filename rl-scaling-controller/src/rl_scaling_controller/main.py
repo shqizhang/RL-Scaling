@@ -128,7 +128,11 @@ def build(
     cfg = cfg or load_config()
     if dgdsa is None:
         try:
-            dgdsa = K8sDGDSAClient(namespace=cfg.namespace, dgd_name=cfg.dgd_name)
+            dgdsa = K8sDGDSAClient(
+                namespace=cfg.namespace,
+                dgd_name=cfg.dgd_name,
+                deployment_fallback_enabled=cfg.k8s_scale_fallback_enabled,
+            )
         except Exception as exc:
             logger.warning("Falling back to InMemoryDGDSAClient: %s", exc)
             dgdsa = InMemoryDGDSAClient()

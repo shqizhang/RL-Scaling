@@ -80,6 +80,12 @@ class ControllerConfig:
     consolidation_stable_samples: int = field(default_factory=lambda: _env_int("CONSOLIDATION_STABLE_SAMPLES", 2))
     consolidation_min_interval_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_MIN_INTERVAL", 10.0))
 
+    # Kubernetes scale transport. Production should use DGDSA when the Dynamo
+    # operator is active. Test clusters can enable this fallback when the
+    # operator is intentionally scaled down and DGDSA no longer reconciles
+    # Deployments.
+    k8s_scale_fallback_enabled: bool = field(default_factory=lambda: _env_bool("K8S_SCALE_FALLBACK_ENABLED", False))
+
     # ─── HTTP server ───
     http_host: str = field(default_factory=lambda: _env_str("HTTP_HOST", "0.0.0.0"))
     http_port: int = field(default_factory=lambda: _env_int("HTTP_PORT", 8080))
