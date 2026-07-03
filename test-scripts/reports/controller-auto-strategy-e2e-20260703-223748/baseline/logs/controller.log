@@ -1,0 +1,134 @@
+/usr/local/lib/python3.11/site-packages/rl_scaling_controller/main.py:198: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+/usr/local/lib/python3.11/site-packages/rl_scaling_controller/main.py:202: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     10.244.0.1:32856 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:45638 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:38948 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:38954 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:58340 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55408 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54002 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54016 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46670 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46714 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33116 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46750 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46796 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46824 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54998 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55038 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55064 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     10.244.0.1:35946 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55106 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55140 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55180 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37918 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37946 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37998 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     10.244.0.1:59104 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38030 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     10.244.0.1:59116 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38072 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38118 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38156 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-03 14:39:32,722 INFO rl_scaling_controller.dgdsa_client Patched deployment vllm-v1-disagg-router-vllmprefillworker-574b777c replicas=2
+2026-07-03 14:39:32,739 INFO rl_scaling_controller.dgdsa_client Patched deployment vllm-v1-disagg-router-vllmdecodeworker-574b777c replicas=4
+2026-07-03 14:39:32,739 INFO rl_scaling_controller.state_machine State transition: State.IDLE -> State.WARM_UP
+INFO:     127.0.0.1:60928 - "POST /api/v1/signals/sampling_progress HTTP/1.1" 200 OK
+2026-07-03 14:39:34,584 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=count%28kube_pod_status_ready%7Bcondition%3D%22true%22%2Cpod%3D~%22.%2Aprefill.%2A%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:39:34,588 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=count%28kube_pod_status_ready%7Bcondition%3D%22true%22%2Cpod%3D~%22.%2Adecode.%2A%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:39:34,589 INFO rl_scaling_controller.state_machine State transition: State.WARM_UP -> State.ACTIVE
+INFO:     127.0.0.1:60976 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:46352 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55550 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55154 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55160 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:41870 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60668 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60718 - "POST /api/v1/signals/sampling_progress HTTP/1.1" 200 OK
+INFO:     10.244.0.1:44446 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55928 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55938 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:41616 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:48236 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:40068 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:40078 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:46980 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:45448 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54066 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54076 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41454 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:50862 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-03 14:41:45,509 INFO rl_scaling_controller.state_machine State transition: State.ACTIVE -> State.COOL_DOWN
+INFO:     127.0.0.1:53330 - "POST /api/v1/signals/batch_complete HTTP/1.1" 200 OK
+2026-07-03 14:41:46,661 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=sum%28dynamo_frontend_queued_requests%7Brole%3D%22prefill%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,665 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=sum%28dynamo_frontend_queued_requests%7Brole%3D%22decode%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,667 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=avg%28dynamo_worker_gpu_utilization%7Brole%3D%22prefill%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,670 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=avg%28dynamo_worker_gpu_utilization%7Brole%3D%22decode%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,704 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,707 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,716 INFO httpx HTTP Request: GET http://10.244.0.34:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,718 INFO httpx HTTP Request: GET http://10.244.0.34:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,723 INFO httpx HTTP Request: GET http://10.244.0.33:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,725 INFO httpx HTTP Request: GET http://10.244.0.33:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,729 INFO httpx HTTP Request: GET http://10.244.0.24:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:46,731 INFO httpx HTTP Request: GET http://10.244.0.24:9091/v1/active_requests "HTTP/1.1 200 OK"
+INFO:     10.244.0.1:33270 - "GET /api/v1/status HTTP/1.1" 200 OK
+2026-07-03 14:41:48,754 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=sum%28dynamo_frontend_queued_requests%7Brole%3D%22prefill%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,760 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=sum%28dynamo_frontend_queued_requests%7Brole%3D%22decode%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,763 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=avg%28dynamo_worker_gpu_utilization%7Brole%3D%22prefill%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,766 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=avg%28dynamo_worker_gpu_utilization%7Brole%3D%22decode%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,810 INFO rl_scaling_controller.dgdsa_client Patched deployment vllm-v1-disagg-router-vllmprefillworker-574b777c replicas=2
+2026-07-03 14:41:48,822 INFO rl_scaling_controller.dgdsa_client Patched deployment vllm-v1-disagg-router-vllmdecodeworker-574b777c replicas=4
+2026-07-03 14:41:48,822 INFO rl_scaling_controller.state_machine State transition: State.COOL_DOWN -> State.WARM_UP
+INFO:     127.0.0.1:53412 - "POST /api/v1/signals/sampling_done HTTP/1.1" 200 OK
+2026-07-03 14:41:48,825 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,828 INFO httpx HTTP Request: GET http://10.244.0.187:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,831 INFO httpx HTTP Request: GET http://10.244.0.34:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,833 INFO httpx HTTP Request: GET http://10.244.0.34:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,835 INFO httpx HTTP Request: GET http://10.244.0.33:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,837 INFO httpx HTTP Request: GET http://10.244.0.33:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,839 INFO httpx HTTP Request: GET http://10.244.0.24:9091/v1/role "HTTP/1.1 200 OK"
+2026-07-03 14:41:48,842 INFO httpx HTTP Request: GET http://10.244.0.24:9091/v1/active_requests "HTTP/1.1 200 OK"
+2026-07-03 14:41:50,862 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=count%28kube_pod_status_ready%7Bcondition%3D%22true%22%2Cpod%3D~%22.%2Aprefill.%2A%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:50,867 INFO httpx HTTP Request: GET http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/query?query=count%28kube_pod_status_ready%7Bcondition%3D%22true%22%2Cpod%3D~%22.%2Adecode.%2A%22%7D%29 "HTTP/1.1 200 OK"
+2026-07-03 14:41:50,868 INFO rl_scaling_controller.state_machine State transition: State.WARM_UP -> State.ACTIVE
+INFO:     10.244.0.1:39356 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:39358 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33864 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:56376 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:35968 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:35974 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:36188 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:42708 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:57440 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:57448 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:44074 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:56794 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33442 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33458 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54700 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:47416 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:50210 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:50224 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34014 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:57234 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:46048 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:47990 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:47994 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51916 - "GET /api/v1/status HTTP/1.1" 200 OK
