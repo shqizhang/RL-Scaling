@@ -1,4 +1,8 @@
-# RBAC for the controller: list DGDSAs and patch their /scale subresource.
+# RBAC for the RL-Scaling controller.
+#
+# The controller normally patches DGDSA scale resources. The apps/deployments
+# fallback is used only when K8S_SCALE_FALLBACK_ENABLED=true, for test clusters
+# where the Dynamo operator is intentionally not reconciling DGDSA -> Deployment.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -10,19 +14,21 @@ kind: ClusterRole
 metadata:
   name: rl-scaling-controller
 rules:
-  - apiGroups: ["dynamo.nvidia.com"]
+  - apiGroups: ["nvidia.com", "dynamo.nvidia.com"]
     resources: ["dynamographdeploymentscalingadapters"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["dynamo.nvidia.com"]
+  - apiGroups: ["nvidia.com", "dynamo.nvidia.com"]
     resources: ["dynamographdeploymentscalingadapters/scale"]
     verbs: ["get", "patch", "update"]
-  # Optional — allows describing target DGD and reading worker pods for diagnostics
-  - apiGroups: ["dynamo.nvidia.com"]
+  - apiGroups: ["nvidia.com", "dynamo.nvidia.com"]
     resources: ["dynamographdeployments"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods", "endpoints"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
