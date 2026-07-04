@@ -1,0 +1,29 @@
+completion_tokens,consolidation,decode_replicas,event,iso,observed,p50_latency_s,p95_latency_s,p99_latency_s,prefill_replicas,ready_decode,ready_prefill,req_s,requests,response,role_switch,scenario,seconds,success,success_pct,ts,user_completion_tps,wall_s
+,False,,controller_configured,2026-07-04T09:25:30,,,,,,,,,,,False,baseline,,,,1783128330.6118538,,
+,,4,topology_ready_2p4d,2026-07-04T09:25:48,,,,,2,4,2,,,,,baseline,,,,1783128348.151461,,
+,,,controller_sampling_progress,2026-07-04T09:26:56,,,,,,,,,,"{'status': 'ok', 'state': 'warm_up'}",,baseline,,,,1783128416.240121,,
+12288,,,high_before_done,2026-07-04T09:27:18,,3.4558184146881104,3.861672878265381,3.862058639526367,,,,1.6500010056054761,24,,,baseline,,24,100.0,1783128438.6735077,844.8005148700038,14.545445680618286
+,,,controller_tail_progress,2026-07-04T09:27:22,,,,,,,,,,"{'status': 'ok', 'state': 'active'}",,baseline,,,,1783128442.1094913,,
+18432,,,low_tail_done,2026-07-04T09:27:45,,3.8417584896087646,4.1448187828063965,4.145458698272705,,,,1.024827157197403,24,,,baseline,,24,100.0,1783128465.5312822,787.0672567276056,23.418583154678345
+,,4,after_low_tail,2026-07-04T09:28:34,,,,,2,4,2,,,,,baseline,,,,1783128514.0867093,,
+,,4,auto_scale_down_observed,2026-07-04T09:28:40,False,,,,,,,,,,,baseline,,,,1783128520.9821963,,
+,,,controller_batch_complete,2026-07-04T09:28:42,,,,,,,,,,"{'status': 'ok', 'state': 'cool_down'}",,baseline,,,,1783128522.9204915,,
+,,,controller_sampling_done_recovery,2026-07-04T09:28:46,,,,,,,,,,"{'status': 'ok', 'state': 'warm_up'}",,baseline,,,,1783128526.6437516,,
+,,,recovery_ready_settle_start,2026-07-04T09:28:52,,,,,,,,,,,,baseline,90,,,1783128532.9289336,,
+,,4,after_recovery_signal,2026-07-04T09:30:24,,,,,2,4,2,,,,,baseline,,,,1783128624.9072511,,
+,,4,auto_scale_up_observed,2026-07-04T09:30:32,True,,,,,,,,,,,baseline,,,,1783128632.288795,,
+12288,,,high_after_done,2026-07-04T09:30:46,,3.469630002975464,3.7794268131256104,3.7847437858581543,,,,1.686426003495743,24,,,baseline,,24,100.0,1783128646.522633,863.4501137898204,14.231279611587524
+,True,,controller_configured,2026-07-04T09:31:22,,,,,,,,,,,True,auto_strategy,,,,1783128682.7559514,,
+,,4,topology_ready_2p4d,2026-07-04T09:31:40,,,,,2,4,2,,,,,auto_strategy,,,,1783128700.6894023,,
+,,,controller_sampling_progress,2026-07-04T09:32:48,,,,,,,,,,"{'status': 'ok', 'state': 'warm_up'}",,auto_strategy,,,,1783128768.435537,,
+12288,,,high_before_done,2026-07-04T09:33:11,,3.457287311553955,4.281561374664307,4.282727479934692,,,,1.5925351685859073,24,,,auto_strategy,,24,100.0,1783128791.1319776,815.3780063159845,15.070310831069946
+,,,controller_tail_progress,2026-07-04T09:33:14,,,,,,,,,,"{'status': 'ok', 'state': 'active'}",,auto_strategy,,,,1783128794.7484164,,
+14583,,,low_tail_done,2026-07-04T09:33:38,,4.041954040527344,4.277570486068726,4.389608383178711,,,,0.8415657353395564,24,,,auto_strategy,,20,83.33333333333333,1783128818.5163093,613.6276559228376,23.765226125717163
+,,2,after_low_tail,2026-07-04T09:34:27,,,,,2,1,2,,,,,auto_strategy,,,,1783128867.6230261,,
+,,2,auto_scale_down_observed,2026-07-04T09:34:34,True,,,,,,,,,,,auto_strategy,,,,1783128874.6568604,,
+,,,controller_batch_complete,2026-07-04T09:34:36,,,,,,,,,,"{'status': 'ok', 'state': 'cool_down'}",,auto_strategy,,,,1783128876.2908804,,
+,,,controller_sampling_done_recovery,2026-07-04T09:34:40,,,,,,,,,,"{'status': 'ok', 'state': 'warm_up'}",,auto_strategy,,,,1783128880.5801446,,
+,,,recovery_ready_settle_start,2026-07-04T09:37:12,,,,,,,,,,,,auto_strategy,90,,,1783129032.9348252,,
+,,4,after_recovery_signal,2026-07-04T09:38:44,,,,,2,4,2,,,,,auto_strategy,,,,1783129124.8984013,,
+,,4,auto_scale_up_observed,2026-07-04T09:38:51,True,,,,,,,,,,,auto_strategy,,,,1783129131.428925,,
+10105,,,high_after_done,2026-07-04T09:39:07,,3.439957857131958,4.650695085525513,4.6793906688690186,,,,1.307383797791475,24,,,auto_strategy,,21,87.5,1783129147.4938927,629.1006322229931,16.062613010406494

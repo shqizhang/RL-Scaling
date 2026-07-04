@@ -1,0 +1,31 @@
+{
+  "wave": {
+    "requests": 48,
+    "success": 48,
+    "success_pct": 100.0,
+    "wall_s": 38.759238481521606,
+    "req_s": 1.2384144240316772,
+    "p50_latency_s": 6.542954683303833,
+    "p95_latency_s": 18.88275384902954,
+    "p99_latency_s": 25.72563600540161,
+    "completion_tokens": 6144,
+    "user_completion_tps": 158.51704627605469
+  },
+  "gpu": {
+    "samples": 32,
+    "avg_gpu_util_pct": 3.15625,
+    "max_gpu_mem_mib": 22590.0,
+    "allocated_gpu_seconds": 24.0,
+    "gpu_busy_seconds": 1.01,
+    "gpu_idle_seconds": 22.99,
+    "allocated_gpu_hours": 0.006666666666666667,
+    "gpu_effective_busy_hours": 0.00028055555555555554,
+    "gpu_idle_hours": 0.006386111111111111,
+    "effective_hour_utilization_pct": 4.208333333333333
+  },
+  "controller": {
+    "s2_history_count": 0,
+    "s2_executed_count": 0,
+    "s2_history": []
+  }
+}

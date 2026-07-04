@@ -1,0 +1,317 @@
+/opt/dynamo/venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+INFO 07-04 01:33:47 [nixl_connector.py:101] Setting UCX_RCACHE_MAX_UNRELEASED to '1024' to avoid a rare memory leak in UCX when using NIXL.
+INFO 07-04 01:33:48 [nixl_connector.py:114] NIXL is available
+[2026-07-04 01:33:53] INFO font_manager.py:1639: generated new fontManager
+[2m2026-07-04T01:33:56.425958Z[0m [32m INFO[0m [2margs.create_kv_events_config[0m[2m:[0m Decode worker detected (disaggregation_mode=decode): kv_events_config disabled (decode workers don't publish KV events)
+[2m2026-07-04T01:33:56.426038Z[0m [32m INFO[0m [2margs.update_engine_config_with_dynamo[0m[2m:[0m Using kv_events_config for publishing vLLM kv events over zmq: None (use_kv_events=False)
+[2m2026-07-04T01:33:57.007054Z[0m [33m WARN[0m [2mdynamo_llm::hub[0m[2m:[0m Cannot connect to ModelExpress server: Transport error: transport error. Using direct download.
+[2m2026-07-04T01:33:57.007095Z[0m [32m INFO[0m [2mmodelexpress_common::download[0m[2m:[0m Downloading model 'Qwen/Qwen3-0.6B' using provider: Hugging Face
+[2m2026-07-04T01:33:57.007236Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Using cache directory: "/home/dynamo/.cache/huggingface/hub"
+[2m2026-07-04T01:34:19.572737Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Downloaded model files for Qwen/Qwen3-0.6B
+[2m2026-07-04T01:34:19.572998Z[0m [32m INFO[0m [2mdynamo_llm::hub[0m[2m:[0m ModelExpress download completed successfully for model: Qwen/Qwen3-0.6B
+[2m2026-07-04T01:34:19.573835Z[0m [33m WARN[0m [2mdynamo_runtime::config[0m[2m:[0m DYN_SYSTEM_USE_ENDPOINT_HEALTH_STATUS is deprecated and no longer used. System health is now determined by endpoints that register with health check payloads. Please update your configuration to register health check payloads directly on endpoints.
+[2m2026-07-04T01:34:19.573887Z[0m [33m WARN[0m [2mdynamo_runtime::config[0m[2m:[0m DYN_SYSTEM_ENABLED is deprecated. System metrics server is now controlled solely by DYN_SYSTEM_PORT. Set DYN_SYSTEM_PORT to a positive value to enable the server, or set to -1 to disable (default).
+[2m2026-07-04T01:34:19.586974Z[0m [33m WARN[0m [2mdynamo_runtime::config[0m[2m:[0m DYN_SYSTEM_USE_ENDPOINT_HEALTH_STATUS is deprecated and no longer used. System health is now determined by endpoints that register with health check payloads. Please update your configuration to register health check payloads directly on endpoints.
+[2m2026-07-04T01:34:19.587003Z[0m [33m WARN[0m [2mdynamo_runtime::config[0m[2m:[0m DYN_SYSTEM_ENABLED is deprecated. System metrics server is now controlled solely by DYN_SYSTEM_PORT. Set DYN_SYSTEM_PORT to a positive value to enable the server, or set to -1 to disable (default).
+[2m2026-07-04T01:34:19.587822Z[0m [32m INFO[0m [2mdynamo_runtime::distributed[0m[2m:[0m Initializing Kubernetes discovery backend
+[2m2026-07-04T01:34:19.587899Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube::utils[0m[2m:[0m Pod identity loaded from environment variables
+[2m2026-07-04T01:34:19.587910Z[0m [33m WARN[0m [2mdynamo_runtime::config[0m[2m:[0m DYN_SYSTEM_USE_ENDPOINT_HEALTH_STATUS is deprecated and no longer used. System health is now determined by endpoints that register with health check payloads. Please update your configuration to register health check payloads directly on endpoints.
+[2m2026-07-04T01:34:19.587921Z[0m [33m WARN[0m [2mdynamo_runtime::config[0m[2m:[0m DYN_SYSTEM_ENABLED is deprecated. System metrics server is now controlled solely by DYN_SYSTEM_PORT. Set DYN_SYSTEM_PORT to a positive value to enable the server, or set to -1 to disable (default).
+[2m2026-07-04T01:34:19.588622Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Initializing KubeDiscoveryClient: pod_name=vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7bbdsg, instance_id=1c8a63fdf4c071, namespace=dynamo-system, pod_uid=225e0a3a-eab7-4f9e-b951-adb96db20677
+[2m2026-07-04T01:34:19.589010Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Discovery daemon started
+[2m2026-07-04T01:34:19.589067Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Discovery daemon starting
+[2m2026-07-04T01:34:19.589157Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Daemon watching EndpointSlices with labels: nvidia.com/dynamo-discovery-backend=kubernetes, nvidia.com/dynamo-discovery-enabled=true
+[2m2026-07-04T01:34:19.589201Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Daemon watching DynamoWorkerMetadata CRs in namespace: dynamo-system
+[2m2026-07-04T01:34:19.589866Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::manager[0m[2m:[0m Initializing NetworkManager with TCP request plane [3mmode[0m[2m=[0mtcp [3mhost[0m[2m=[0m10.244.0.68 [3mport[0m[2m=[0mOS-assigned
+[2m2026-07-04T01:34:19.591301Z[0m [32m INFO[0m [2mdynamo_runtime::system_status_server[0m[2m:[0m [spawn_system_status_server] binding to: 0.0.0.0:9090
+[2m2026-07-04T01:34:19.591361Z[0m [32m INFO[0m [2mdynamo_runtime::system_status_server[0m[2m:[0m [spawn_system_status_server] system status server bound to: 0.0.0.0:9090
+[2m2026-07-04T01:34:19.591385Z[0m [32m INFO[0m [2mdynamo_runtime::distributed[0m[2m:[0m System status server started successfully on 0.0.0.0:9090
+[2m2026-07-04T01:34:19.592012Z[0m [32m INFO[0m [2mgraceful_shutdown.install_signal_handlers[0m[2m:[0m Signal handlers set up for graceful shutdown (discovery unregister + grace period)
+[2m2026-07-04T01:34:19.592456Z[0m [32m INFO[0m [2mmain.init[0m[2m:[0m [RLScaling/DualMode] decode worker will also publish prefill endpoint URI for hot role flips: dynamo-system-vllm-v1-disagg-router-574b777c.prefill.generate
+[2m2026-07-04T01:34:19.593046Z[0m [33mWARNING[0m [2mprometheus.setup_multiprocess_prometheus[0m[2m:[0m Found PROMETHEUS_MULTIPROC_DIR was set by user. This directory must be wiped between vLLM runs or you will find inaccurate metrics. Unset the variable and vLLM will properly handle cleanup.
+[2m2026-07-04T01:34:20.176185Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=0): 4 instances, added=["d2097465d9a29", "19d4c7ba89c265", "101f0512e9530c", "1638b252f3f3aa"], removed=[], updated=[]
+[2m2026-07-04T01:34:23.550442Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+[2m2026-07-04T01:34:31.848541Z[0m [32m INFO[0m [2mmodel.__post_init__[0m[2m:[0m Resolved architecture: Qwen3ForCausalLM
+[2m2026-07-04T01:34:31.848977Z[0m [32m INFO[0m [2mmodel.get_and_verify_max_len[0m[2m:[0m Using max model len 40960
+[2m2026-07-04T01:34:32.094862Z[0m [33mWARNING[0m [2mmodel.get_diff_sampling_param[0m[2m:[0m Default vLLM sampling parameters have been overridden by the model's `generation_config.json`: `{'temperature': 0.6, 'top_k': 20, 'top_p': 0.95}`. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`.
+[2m2026-07-04T01:34:33.045083Z[0m [32m INFO[0m [2mmodel.__post_init__[0m[2m:[0m Resolved architecture: Qwen3ForCausalLM
+[2m2026-07-04T01:34:33.045511Z[0m [32m INFO[0m [2mmodel.get_and_verify_max_len[0m[2m:[0m Using max model len 40960
+[2m2026-07-04T01:34:33.508591Z[0m [32m INFO[0m [2mscheduler.__post_init__[0m[2m:[0m Chunked prefill is enabled with max_num_batched_tokens=2048.
+[2m2026-07-04T01:34:33.509636Z[0m [32m INFO[0m [2mvllm.__post_init__[0m[2m:[0m Asynchronous scheduling is enabled.
+[2m2026-07-04T01:34:33.509978Z[0m [33mWARNING[0m [2mvllm.__post_init__[0m[2m:[0m Turning off hybrid kv cache manager because `--kv-transfer-config` is set. This will reduce the performance of vLLM on LLMs with sliding window attention or Mamba attention. If you are a developer of kv connector, please consider supporting hybrid kv cache manager for your connector by making sure your connector is a subclass of `SupportsHMA` defined in kv_connector/v1/base.py and use --no-disable-hybrid-kv-cache-manager to start vLLM.
+[2m2026-07-04T01:34:33.550432Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+/opt/dynamo/venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+/opt/dynamo/venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (6.0.0.post1)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+INFO 07-04 01:34:43 [nixl_connector.py:114] NIXL is available
+INFO 07-04 01:34:43 [nixl_connector.py:114] NIXL is available
+(EngineCore_DP0 pid=713) INFO 07-04 01:34:43 [core.py:97] Initializing a V1 LLM engine (v0.16.0) with config: model='Qwen/Qwen3-0.6B', speculative_config=None, tokenizer='Qwen/Qwen3-0.6B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=40960, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-0.6B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'level': None, 'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update'], 'compile_mm_encoder': False, 'compile_sizes': [], 'compile_ranges_split_points': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'eliminate_noops': True, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'fuse_act_padding': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+[2m2026-07-04T01:34:43.551106Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+(EngineCore_DP0 pid=713) INFO 07-04 01:34:45 [parallel_state.py:1234] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://10.244.0.68:52203 backend=nccl
+(EngineCore_DP0 pid=713) INFO 07-04 01:34:45 [parallel_state.py:1445] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A
+[2m2026-07-04T01:34:53.550548Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+[2m2026-07-04T01:35:03.550978Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+[2m2026-07-04T01:35:13.550673Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:17 [topk_topp_sampler.py:47] Using FlashInfer for top-p & top-k sampling.
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:17 [gpu_model_runner.py:4124] Starting to load model Qwen/Qwen3-0.6B...
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:18 [cuda.py:367] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:20 [weight_utils.py:579] No model.safetensors.index.json found in remote.
+(EngineCore_DP0 pid=713) Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+(EngineCore_DP0 pid=713) Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  2.07it/s]
+(EngineCore_DP0 pid=713) Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:00<00:00,  2.07it/s]
+(EngineCore_DP0 pid=713) 
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:21 [default_loader.py:293] Loading weights took 0.56 seconds
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:22 [gpu_model_runner.py:4221] Model loading took 1.12 GiB memory and 3.531836 seconds
+[2m2026-07-04T01:35:23.550689Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:31 [backends.py:916] Using cache directory: /home/dynamo/.cache/vllm/torch_compile_cache/f9b39103e9/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:31 [backends.py:976] Dynamo bytecode transform time: 9.13 s
+[2m2026-07-04T01:35:33.550826Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+[2m2026-07-04T01:35:43.550983Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:45 [backends.py:351] Cache the graph of compile range (1, 2048) for later use
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:51 [backends.py:368] Compiling a graph for compile range (1, 2048) takes 15.17 s
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:51 [monitor.py:34] torch.compile takes 24.30 s in total
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:52 [gpu_worker.py:373] Available KV cache memory: 19.53 GiB
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:52 [kv_cache_utils.py:1307] GPU KV cache size: 182,816 tokens
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:52 [kv_cache_utils.py:1312] Maximum concurrency for 40,960 tokens per request: 4.46x
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:52 [factory.py:64] Creating v1 connector with name: NixlConnector and engine_id: 94d667a1-ef19-4bc5-98c5-56062551d4f8
+(EngineCore_DP0 pid=713) WARNING 07-04 01:35:52 [base.py:166] Initializing KVConnectorBase_V1. This API is experimental and subject to change in the future as we iterate the design.
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:52 [nixl_connector.py:861] Initializing NIXL wrapper
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:52 [nixl_connector.py:862] Initializing NIXL worker 94d667a1-ef19-4bc5-98c5-56062551d4f8
+W0704 01:35:52.733081     713 nixl_agent.cpp:137] NIXL telemetry is enabled through config, ignoring the NIXL_TELEMETRY_ENABLE environment variable
+(EngineCore_DP0 pid=713) 2026-07-04 01:35:53 NIXL INFO    _api.py:363 Backend UCX was instantiated
+(EngineCore_DP0 pid=713) 2026-07-04 01:35:53 NIXL INFO    _api.py:253 Initialized NIXL agent: 1c3186b2-a990-4d21-86bb-d3723ff27b19
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:53 [nixl_connector.py:360] NixlConnector setting KV cache layout to HND for better xfer performance.
+(EngineCore_DP0 pid=713) [2026-07-04 01:35:53] INFO dynamo_block_bridge.py:295: [BlockBridge] NIXL meta exported: engine_id=94d667a1-ef19-4bc5-98c5-56062551d4f8 host=10.244.0.68 port=14579
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:53 [nixl_connector.py:1323] Registering KV_Caches. use_mla: False, kv_buffer_device: cuda, use_host_buffer: False
+[2m2026-07-04T01:35:53.551159Z[0m [31mERROR[0m [1mhttp-request[0m: [2mtower_http::trace::on_failure[0m[2m:[0m response failed [3mclassification[0m[2m=[0mStatus code: 503 Service Unavailable [3mlatency[0m[2m=[0m0 ms [2m[3mmethod[0m[2m=[0mGET [3muri[0m[2m=[0m/live [3mversion[0m[2m=[0mHTTP/1.1[0m
+(EngineCore_DP0 pid=713) Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   6%|▌         | 3/51 [00:00<00:02, 21.85it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  12%|█▏        | 6/51 [00:00<00:01, 22.90it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  18%|█▊        | 9/51 [00:00<00:01, 23.53it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  24%|██▎       | 12/51 [00:00<00:01, 24.07it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  29%|██▉       | 15/51 [00:00<00:01, 24.66it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  35%|███▌      | 18/51 [00:00<00:01, 24.93it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  41%|████      | 21/51 [00:00<00:01, 25.04it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  47%|████▋     | 24/51 [00:00<00:01, 24.53it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  53%|█████▎    | 27/51 [00:01<00:01, 23.72it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  59%|█████▉    | 30/51 [00:01<00:00, 22.93it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  65%|██████▍   | 33/51 [00:01<00:00, 23.09it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  71%|███████   | 36/51 [00:01<00:00, 23.48it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  76%|███████▋  | 39/51 [00:01<00:00, 23.57it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  82%|████████▏ | 42/51 [00:01<00:00, 23.76it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  88%|████████▊ | 45/51 [00:01<00:00, 23.08it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  94%|█████████▍| 48/51 [00:02<00:00, 23.48it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 51/51 [00:02<00:00, 22.39it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 51/51 [00:02<00:00, 23.45it/s]
+(EngineCore_DP0 pid=713) Capturing CUDA graphs (decode, FULL):   0%|          | 0/35 [00:00<?, ?it/s]Capturing CUDA graphs (decode, FULL):   9%|▊         | 3/35 [00:00<00:01, 21.63it/s]Capturing CUDA graphs (decode, FULL):  17%|█▋        | 6/35 [00:00<00:01, 24.24it/s]Capturing CUDA graphs (decode, FULL):  26%|██▌       | 9/35 [00:00<00:01, 25.53it/s]Capturing CUDA graphs (decode, FULL):  34%|███▍      | 12/35 [00:00<00:00, 26.11it/s]Capturing CUDA graphs (decode, FULL):  43%|████▎     | 15/35 [00:00<00:00, 26.63it/s]Capturing CUDA graphs (decode, FULL):  51%|█████▏    | 18/35 [00:00<00:00, 23.98it/s]Capturing CUDA graphs (decode, FULL):  60%|██████    | 21/35 [00:00<00:00, 23.75it/s]Capturing CUDA graphs (decode, FULL):  69%|██████▊   | 24/35 [00:01<00:00, 22.39it/s]Capturing CUDA graphs (decode, FULL):  77%|███████▋  | 27/35 [00:01<00:00, 22.76it/s]Capturing CUDA graphs (decode, FULL):  86%|████████▌ | 30/35 [00:01<00:00, 21.98it/s]Capturing CUDA graphs (decode, FULL):  94%|█████████▍| 33/35 [00:01<00:00, 23.59it/s]Capturing CUDA graphs (decode, FULL): 100%|██████████| 35/35 [00:01<00:00, 23.96it/s]
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:57 [gpu_model_runner.py:5246] Graph capturing finished in 5 secs, took 0.42 GiB
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:57 [core.py:278] init engine (profile, create kv cache, warmup model) took 35.54 seconds
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:59 [factory.py:64] Creating v1 connector with name: NixlConnector and engine_id: 94d667a1-ef19-4bc5-98c5-56062551d4f8
+(EngineCore_DP0 pid=713) WARNING 07-04 01:35:59 [base.py:166] Initializing KVConnectorBase_V1. This API is experimental and subject to change in the future as we iterate the design.
+(EngineCore_DP0 pid=713) INFO 07-04 01:35:59 [nixl_connector.py:535] Initializing NIXL Scheduler 94d667a1-ef19-4bc5-98c5-56062551d4f8
+(EngineCore_DP0 pid=713) [2026-07-04 01:35:59] INFO dynamo_block_bridge.py:164: [BlockBridge] Server started at /tmp/dynamo_kv_block_bridge.sock (pid=713)
+(EngineCore_DP0 pid=713) INFO 07-04 01:36:00 [vllm.py:689] Asynchronous scheduling is enabled.
+[2m2026-07-04T01:36:00.412820Z[0m [32m INFO[0m [2mmain.setup_vllm_engine[0m[2m:[0m VllmWorker for Qwen/Qwen3-0.6B has been initialized
+[2m2026-07-04T01:36:00.413065Z[0m [32m INFO[0m [2mengine_monitor.__init__[0m[2m:[0m VllmEngineMonitor initialized and health check task started.
+[2m2026-07-04T01:36:00.413181Z[0m [33m WARN[0m [2mhandlers.get_dp_range_for_worker[0m[2m:[0m vLLM selects internal DP load balancing. If you are launching multiple workers for DP deployment, hybrid or external load balancing is recommended.
+[2m2026-07-04T01:36:00.537852Z[0m [32m INFO[0m [2mrl_scaling_sidecar.start_sidecar[0m[2m:[0m [RLScalingSidecar] listening on 0.0.0.0:9091 (dual_mode=True, migration=True)
+[2m2026-07-04T01:36:00.537946Z[0m [32m INFO[0m [2mmain.setup_kv_event_publisher[0m[2m:[0m Skipping KV event publisher setup for decode worker
+[2m2026-07-04T01:36:00.538478Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering event channel: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=, topic=kv_metrics, instance_id=1c8a63fdf4c071
+[2m2026-07-04T01:36:00.538611Z[0m [32m INFO[0m [2mmain.init[0m[2m:[0m Registered engine routes: /engine/sleep, /engine/wake_up
+[2m2026-07-04T01:36:00.538678Z[0m [32m INFO[0m [2mmain.init[0m[2m:[0m Registering model with endpoint types: chat,completions
+[2m2026-07-04T01:36:00.538776Z[0m [32m INFO[0m [2mmain.register_vllm_model[0m[2m:[0m Getting engine runtime configuration metadata from vLLM engine for chat,completions...
+[2m2026-07-04T01:36:00.538830Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Cache config values: {'num_gpu_blocks': 11426, 'block_size': 16}
+[2m2026-07-04T01:36:00.538864Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Scheduler config values: {'max_num_seqs': 256, 'max_num_batched_tokens': 2048}
+[2m2026-07-04T01:36:00.538930Z[0m [33m WARN[0m [2mhandlers.get_dp_range_for_worker[0m[2m:[0m vLLM selects internal DP load balancing. If you are launching multiple workers for DP deployment, hybrid or external load balancing is recommended.
+[2m2026-07-04T01:36:00.541240Z[0m [33m WARN[0m [2mdynamo_llm::hub[0m[2m:[0m Cannot connect to ModelExpress server: Transport error: transport error. Using direct download.
+[2m2026-07-04T01:36:00.541287Z[0m [32m INFO[0m [2mmodelexpress_common::download[0m[2m:[0m Downloading model 'Qwen/Qwen3-0.6B' using provider: Hugging Face
+[2m2026-07-04T01:36:00.541340Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Using cache directory: "/home/dynamo/.cache/huggingface/hub"
+[2m2026-07-04T01:36:00.583580Z[0m [32m INFO[0m [2mdynamo_runtime::transports::event_plane[0m[2m:[0m EventPublisher registered with discovery [3mtopic[0m[2m=[0mkv_metrics [3mtransport[0m[2m=[0mNats [3minstance_id[0m[2m=[0m8033461414969457
+[2m2026-07-04T01:36:00.814415Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Downloaded model files for Qwen/Qwen3-0.6B
+[2m2026-07-04T01:36:00.814710Z[0m [32m INFO[0m [2mdynamo_llm::hub[0m[2m:[0m ModelExpress download completed successfully for model: Qwen/Qwen3-0.6B
+[2m2026-07-04T01:36:00.830274Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=1c8a63fdf4c071
+[2m2026-07-04T01:36:00.840660Z[0m [32m INFO[0m [2m_core[0m[2m:[0m Registered base model 'Qwen/Qwen3-0.6B' MDC
+[2m2026-07-04T01:36:00.841560Z[0m [32m INFO[0m [2mengine_monitor.__init__[0m[2m:[0m VllmEngineMonitor initialized and health check task started.
+[2m2026-07-04T01:36:00.841755Z[0m [33m WARN[0m [2mhandlers.get_dp_range_for_worker[0m[2m:[0m vLLM selects internal DP load balancing. If you are launching multiple workers for DP deployment, hybrid or external load balancing is recommended.
+[2m2026-07-04T01:36:00.842371Z[0m [32m INFO[0m [2mmain.init[0m[2m:[0m [RLScaling/DualMode] generate endpoint installed with role-aware dispatcher (decode|partner-prefill); prefill MDC will be published on /switch_role
+[2m2026-07-04T01:36:00.843677Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::manager[0m[2m:[0m Creating TCP request plane server [3mbind_addr[0m[2m=[0m10.244.0.68:0 [3mport_source[0m[2m=[0m"OS-assigned"
+[2m2026-07-04T01:36:00.843716Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Initializing TCP server with dispatcher (concurrency=1500, queue=6000)
+[2m2026-07-04T01:36:00.843741Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Started TCP worker dispatcher with concurrency limit 1500
+[2m2026-07-04T01:36:00.843798Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Binding TCP server to 10.244.0.68:0
+[2m2026-07-04T01:36:00.843842Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m TCP server bound successfully [3mrequested[0m[2m=[0m10.244.0.68:0 [3mactual[0m[2m=[0m10.244.0.68:33667
+[2m2026-07-04T01:36:00.843860Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::manager[0m[2m:[0m TCP request plane server started [3mactual_addr[0m[2m=[0m10.244.0.68:33667 [3mactual_port[0m[2m=[0m33667
+[2m2026-07-04T01:36:00.844408Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Registered endpoint 'generate' with shared TCP server on 10.244.0.68:33667
+[2m2026-07-04T01:36:00.844471Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Registered endpoint 'clear_kv_blocks' with shared TCP server on 10.244.0.68:33667
+[2m2026-07-04T01:36:00.844648Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=1c8a63fdf4c071
+[2m2026-07-04T01:36:00.855541Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=clear_kv_blocks, instance_id=1c8a63fdf4c071
+[2m2026-07-04T01:36:04.102353Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=4): 5 instances, added=["1c8a63fdf4c071"], removed=[], updated=[]
+[2m2026-07-04T01:37:10.857006Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=7): 7 instances, added=["1b2e3fb353070a", "b34544708c9a9"], removed=[], updated=[]
+(EngineCore_DP0 pid=713) INFO 07-04 01:38:52 [nixl_connector.py:1104] NIXL compatibility check passed (hash: dbb2848cbaefc84f6db09834b6d47a09b8266fec2abb3dbbba3c3f553be60df9)
+(EngineCore_DP0 pid=713) INFO 07-04 01:38:53 [nixl_connector.py:1104] NIXL compatibility check passed (hash: dbb2848cbaefc84f6db09834b6d47a09b8266fec2abb3dbbba3c3f553be60df9)
+[2m2026-07-04T01:38:55.029463Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7x28qh': invalid type: null, expected a map
+[2m2026-07-04T01:38:55.029608Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7tbqnm': invalid type: null, expected a map
+[2m2026-07-04T01:38:55.029648Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=8): 5 instances, added=[], removed=["b34544708c9a9", "1b2e3fb353070a"], updated=[]
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263] NIXL transfer failure: handshake_setup_failed | Context: {'failure_type': 'handshake_setup_failed', 'request_id': None, 'engine_id': '94d667a1-ef19-4bc5-98c5-56062551d4f8', 'remote_engine_id': '2c367fc4-cf97-4ca4-8270-610322329884'}
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263] Traceback (most recent call last):
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1261, in done_callback
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]     self._remote_agents[eid] = f.result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]                                ^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]     return self.__get_result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]     raise self._exception
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "/usr/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]     result = self.fn(*self.args, **self.kwargs)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1067, in _nixl_handshake
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]     handshake_bytes = sock.recv()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]                       ^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "_zmq.py", line 1147, in zmq.backend.cython._zmq.Socket.recv
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "_zmq.py", line 1182, in zmq.backend.cython._zmq.Socket.recv
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "_zmq.py", line 1342, in zmq.backend.cython._zmq._recv_copy
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "_zmq.py", line 1337, in zmq.backend.cython._zmq._recv_copy
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263]   File "_zmq.py", line 176, in zmq.backend.cython._zmq._check_rc
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1263] zmq.error.Again: Resource temporarily unavailable
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280] NIXL transfer failure: handshake_failed | Context: {'failure_type': 'handshake_failed', 'request_id': '19bf03bd-8931-48d6-a82f-6420c533112d-b955f64c', 'engine_id': '94d667a1-ef19-4bc5-98c5-56062551d4f8', 'remote_engine_id': '2c367fc4-cf97-4ca4-8270-610322329884', 'remote_request_id': '19bf03bd-8931-48d6-a82f-6420c533112d', 'remote_host': '10.244.0.72', 'remote_port': 14579, 'num_local_blocks': 11, 'num_remote_blocks': 43, 'local_block_ids_sample': [81, 82, 83, 84, 85, 86, 87, 88, 89, 90]}
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280] Traceback (most recent call last):
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1276, in request_ready
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     f.result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     return self.__get_result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     raise self._exception
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1261, in done_callback
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     self._remote_agents[eid] = f.result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]                                ^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     return self.__get_result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     raise self._exception
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/usr/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     result = self.fn(*self.args, **self.kwargs)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1067, in _nixl_handshake
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]     handshake_bytes = sock.recv()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]                       ^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "_zmq.py", line 1147, in zmq.backend.cython._zmq.Socket.recv
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "_zmq.py", line 1182, in zmq.backend.cython._zmq.Socket.recv
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "_zmq.py", line 1342, in zmq.backend.cython._zmq._recv_copy
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "_zmq.py", line 1337, in zmq.backend.cython._zmq._recv_copy
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280]   File "_zmq.py", line 176, in zmq.backend.cython._zmq._check_rc
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [nixl_connector.py:1280] zmq.error.Again: Resource temporarily unavailable
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [dump_input.py:72] Dumping input data for V1 LLM engine (v0.16.0) with config: model='Qwen/Qwen3-0.6B', speculative_config=None, tokenizer='Qwen/Qwen3-0.6B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=40960, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-0.6B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'level': None, 'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '/home/dynamo/.cache/vllm/torch_compile_cache/f9b39103e9', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update'], 'compile_mm_encoder': False, 'compile_sizes': [], 'compile_ranges_split_points': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'eliminate_noops': True, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'fuse_act_padding': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': '/home/dynamo/.cache/vllm/torch_compile_cache/f9b39103e9/rank_0_0/backbone', 'fast_moe_cold_start': True, 'static_all_moe_layers': []}, 
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [dump_input.py:79] Dumping scheduler output for model execution: SchedulerOutput(scheduled_new_reqs=[], scheduled_cached_reqs=CachedRequestData(req_ids=[],resumed_req_ids=set(),new_token_ids_lens=[],all_token_ids_lens={},new_block_ids=[],num_computed_tokens=[],num_output_tokens=[]), num_scheduled_tokens={}, total_num_scheduled_tokens=0, scheduled_spec_decode_tokens={}, scheduled_encoder_inputs={}, num_common_prefix_blocks=[0], finished_req_ids=[], free_encoder_mm_hashes=[], preempted_req_ids=[], has_structured_output_requests=false, pending_structured_output_tokens=false, num_invalid_spec_tokens=null, kv_connector_metadata=NixlConnectorMetadata(reqs_to_recv={}, reqs_to_save={}, reqs_to_send={}, reqs_in_batch=[], reqs_not_processed=[]), ec_connector_metadata=null)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [dump_input.py:81] Dumping scheduler stats: SchedulerStats(num_running_reqs=0, num_waiting_reqs=2, step_counter=0, current_wave=0, kv_cache_usage=0.0021006564551422358, encoder_cache_usage=0.0, prefix_cache_stats=PrefixCacheStats(reset=False, requests=0, queries=0, hits=0, preempted_requests=0, preempted_queries=0, preempted_hits=0), connector_prefix_cache_stats=PrefixCacheStats(reset=False, requests=0, queries=0, hits=0, preempted_requests=0, preempted_queries=0, preempted_hits=0), kv_cache_eviction_events=[], spec_decoding_stats=None, kv_connector_stats=None, waiting_lora_adapters={}, running_lora_adapters={}, cudagraph_stats=None, perf_stats=None)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008] EngineCore encountered a fatal error.
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008] Traceback (most recent call last):
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 999, in run_engine_core
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     engine_core.run_busy_loop()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1026, in run_busy_loop
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     self._process_engine_step()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1060, in _process_engine_step
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     outputs, model_executed = self.step_fn()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]                               ^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 514, in step_with_batch_queue
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     model_output = future.result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]                    ^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return self.__get_result()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     raise self._exception
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/executor/uniproc_executor.py", line 79, in collective_rpc
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     result = run_method(self.driver_worker, method, args, kwargs)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/serial_utils.py", line 459, in run_method
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return func(*args, **kwargs)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 361, in execute_model
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return self.worker.execute_model(scheduler_output)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return func(*args, **kwargs)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 652, in execute_model
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     output = self.model_runner.execute_model(
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return func(*args, **kwargs)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_model_runner.py", line 3367, in execute_model
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return self.kv_connector_no_forward(scheduler_output, self.vllm_config)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/kv_connector_model_runner_mixin.py", line 52, in kv_connector_no_forward
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     with (
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/usr/lib/python3.12/contextlib.py", line 144, in __exit__
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     next(self.gen)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/kv_connector_model_runner_mixin.py", line 104, in _get_kv_connector_output
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     kv_connector.get_finished(scheduler_output.finished_req_ids)
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 436, in get_finished
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     return self.connector_worker.get_finished()
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1952, in get_finished
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     block_size_ratio = self.kv_topo.block_size_ratio_from_engine_id(
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/utils.py", line 442, in block_size_ratio_from_engine_id
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]     remote_block_size = self.remote_block_size[remote_engine_id]
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008]                         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) ERROR 07-04 01:38:59 [core.py:1008] KeyError: '2c367fc4-cf97-4ca4-8270-610322329884'
+[2m2026-07-04T01:38:59.335871Z[0m [31mERROR[0m [2masync_llm.output_handler[0m[2m:[0m AsyncLLM output_handler failed.
+[2m2026-07-04T01:38:59.336629Z[0m [33m WARN[0m [2mrl_scaling_sidecar._drain[0m[2m:[0m [Sidecar] resubmitted request 19bf03bd-8931-48d6-a82f-6420c533112d drain raised: EngineCore encountered an issue. See stack trace (above) for the root cause.
+[2m2026-07-04T01:38:59.336823Z[0m [33m WARN[0m [2mrl_scaling_sidecar._drain[0m[2m:[0m [Sidecar] resubmitted request 844081f6-3c2b-49b4-9f62-412638220125 drain raised: EngineCore encountered an issue. See stack trace (above) for the root cause.
+(EngineCore_DP0 pid=713) Process EngineCore_DP0:
+(EngineCore_DP0 pid=713) Traceback (most recent call last):
+(EngineCore_DP0 pid=713)   File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore_DP0 pid=713)     self.run()
+(EngineCore_DP0 pid=713)   File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+(EngineCore_DP0 pid=713)     self._target(*self._args, **self._kwargs)
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1010, in run_engine_core
+(EngineCore_DP0 pid=713)     raise e
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 999, in run_engine_core
+(EngineCore_DP0 pid=713)     engine_core.run_busy_loop()
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1026, in run_busy_loop
+(EngineCore_DP0 pid=713)     self._process_engine_step()
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1060, in _process_engine_step
+(EngineCore_DP0 pid=713)     outputs, model_executed = self.step_fn()
+(EngineCore_DP0 pid=713)                               ^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 514, in step_with_batch_queue
+(EngineCore_DP0 pid=713)     model_output = future.result()
+(EngineCore_DP0 pid=713)                    ^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+(EngineCore_DP0 pid=713)     return self.__get_result()
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+(EngineCore_DP0 pid=713)     raise self._exception
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/executor/uniproc_executor.py", line 79, in collective_rpc
+(EngineCore_DP0 pid=713)     result = run_method(self.driver_worker, method, args, kwargs)
+(EngineCore_DP0 pid=713)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/serial_utils.py", line 459, in run_method
+(EngineCore_DP0 pid=713)     return func(*args, **kwargs)
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/worker_base.py", line 361, in execute_model
+(EngineCore_DP0 pid=713)     return self.worker.execute_model(scheduler_output)
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+(EngineCore_DP0 pid=713)     return func(*args, **kwargs)
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_worker.py", line 652, in execute_model
+(EngineCore_DP0 pid=713)     output = self.model_runner.execute_model(
+(EngineCore_DP0 pid=713)              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+(EngineCore_DP0 pid=713)     return func(*args, **kwargs)
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/gpu_model_runner.py", line 3367, in execute_model
+(EngineCore_DP0 pid=713)     return self.kv_connector_no_forward(scheduler_output, self.vllm_config)
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/kv_connector_model_runner_mixin.py", line 52, in kv_connector_no_forward
+(EngineCore_DP0 pid=713)     with (
+(EngineCore_DP0 pid=713)   File "/usr/lib/python3.12/contextlib.py", line 144, in __exit__
+(EngineCore_DP0 pid=713)     next(self.gen)
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/v1/worker/kv_connector_model_runner_mixin.py", line 104, in _get_kv_connector_output
+(EngineCore_DP0 pid=713)     kv_connector.get_finished(scheduler_output.finished_req_ids)
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 436, in get_finished
+(EngineCore_DP0 pid=713)     return self.connector_worker.get_finished()
+(EngineCore_DP0 pid=713)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py", line 1952, in get_finished
+(EngineCore_DP0 pid=713)     block_size_ratio = self.kv_topo.block_size_ratio_from_engine_id(
+(EngineCore_DP0 pid=713)                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713)   File "/opt/dynamo/venv/lib/python3.12/site-packages/vllm/distributed/kv_transfer/kv_connector/utils.py", line 442, in block_size_ratio_from_engine_id
+(EngineCore_DP0 pid=713)     remote_block_size = self.remote_block_size[remote_engine_id]
+(EngineCore_DP0 pid=713)                         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=713) KeyError: '2c367fc4-cf97-4ca4-8270-610322329884'
+[2m2026-07-04T01:38:59.926788Z[0m [31mERROR[0m [2mhandlers.generate_tokens[0m[2m:[0m vLLM EngineDeadError: EngineCore encountered an issue. See stack trace (above) for the root cause.
+[2m2026-07-04T01:38:59.926905Z[0m [33m WARN[0m [2mhandlers.generate_tokens[0m[2m:[0m Initiating Dynamo Runtime shutdown.
+[2m2026-07-04T01:38:59.926950Z[0m [32m INFO[0m [2mdynamo_runtime::runtime[0m[2m:[0m Runtime shutdown initiated
+[2m2026-07-04T01:38:59.927095Z[0m [32m INFO[0m [2mdynamo_runtime::runtime[0m[2m:[0m Phase 1: Cancelling endpoint shutdown token
+[2m2026-07-04T01:38:59.927181Z[0m [32m INFO[0m [2mdynamo_runtime::runtime[0m[2m:[0m Phase 2: Waiting for graceful endpoints to complete
+[2m2026-07-04T01:38:59.927193Z[0m [32m INFO[0m [2mdynamo_runtime::runtime[0m[2m:[0m Active graceful endpoints: 2
+[2m2026-07-04T01:38:59.927255Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Unregistered TCP endpoint handler [3mendpoint_name[0m[2m=[0mclear_kv_blocks [3mendpoint_path[0m[2m=[0m1c8a63fdf4c071/clear_kv_blocks
+[2m2026-07-04T01:38:59.927329Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Unregistered TCP endpoint handler [3mendpoint_name[0m[2m=[0mgenerate [3mendpoint_path[0m[2m=[0m1c8a63fdf4c071/generate
+[2m2026-07-04T01:38:59.927372Z[0m [32m INFO[0m [2mdynamo_runtime::pipeline::network::ingress::shared_tcp_endpoint[0m[2m:[0m Waiting for inflight TCP requests to complete [3mendpoint_name[0m[2m=[0mgenerate [3minflight_count[0m[2m=[0m1
