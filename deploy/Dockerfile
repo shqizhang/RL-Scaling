@@ -3,7 +3,8 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app/rl-scaling-controller/src:/app/rl-signal-sdk/src
 
 WORKDIR /app
 
@@ -11,8 +12,8 @@ WORKDIR /app
 COPY rl-signal-sdk     /app/rl-signal-sdk
 COPY rl-scaling-controller /app/rl-scaling-controller
 
-RUN pip install /app/rl-signal-sdk \
- && pip install "/app/rl-scaling-controller[k8s]" || pip install /app/rl-scaling-controller
+RUN pip install -e /app/rl-signal-sdk \
+ && pip install -e "/app/rl-scaling-controller[k8s]" || pip install -e /app/rl-scaling-controller
 
 EXPOSE 8080
 
