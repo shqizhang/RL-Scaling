@@ -43,7 +43,9 @@ def main() -> int:
     stop = threading.Event()
     sampler = e2e.PodSampler(out_dir, args.sample_interval, stop)
     sampler_thread = threading.Thread(target=sampler.run, daemon=True)
+    sampler_thread.start()
     pf_frontend = pf_controller = None
+    pf_sidecar = None
     phase_summary = {}
     switched_url = ""
     try:
@@ -72,7 +74,9 @@ def main() -> int:
         if not args.use_controller_auto:
             decode_pods = [p for p in e2e.ready_worker_pods() if p["component"] == "VllmDecodeWorker"]
             target = decode_pods[-1]
-            switched_url = f"http://{target['pod_ip']}:9091"
+            pf_sidecar = e2e.start_port_forward(f"pod/{target['name']}", 19091, 9091, e2e.NS)
+            e2e.wait_http("http://127.0.0.1:19091/healthz")
+            switched_url = "http://127.0.0.1:19091"
             e2e.event(events, "manual_switch_decode_to_prefill_start", pod=target["name"], worker_url=switched_url)
             e2e.event(events, "manual_switch_decode_to_prefill_done", result=switch_role(switched_url, "prefill"))
         else:
@@ -100,6 +104,8 @@ def main() -> int:
             pf_frontend.terminate()
         if pf_controller:
             pf_controller.terminate()
+        if pf_sidecar:
+            pf_sidecar.terminate()
         try:
             e2e.disable_controller_strategies()
             e2e.set_topology(prefill=2, decode=4)

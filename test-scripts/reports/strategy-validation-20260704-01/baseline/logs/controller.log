@@ -1,0 +1,12 @@
+INFO:     10.244.0.1:49670 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49680 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54562 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:42230 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51886 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51916 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:35994 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:36006 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:38548 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41324 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55220 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:51850 - "GET /api/v1/status HTTP/1.1" 200 OK

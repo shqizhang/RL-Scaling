@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-07-04T19:36:40",
+  "phase_summaries": {
+    "s2_prefill_heavy_wave": {
+      "requests": 24,
+      "success": 24,
+      "success_pct": 100.0,
+      "valid_decode": 24,
+      "valid_decode_pct": 100.0,
+      "wall_s": 20.481255769729614,
+      "req_s": 1.1718031486853913,
+      "p50_latency_s": 5.818041801452637,
+      "p95_latency_s": 13.472381114959717,
+      "p99_latency_s": 13.479365110397339,
+      "completion_tokens": 3072,
+      "user_completion_tps": 149.99080303173008
+    }
+  },
+  "s2_history_count": 0,
+  "s2_executed_count": 0,
+  "s3_history_count": 0,
+  "s3_executed_pairs": 0,
+  "s3_migrated_requests": 0,
+  "s3_scaled_down_to": [],
+  "s3_drained_sources": [],
+  "scenario": "s2_only",
+  "role_switch_enabled": true,
+  "consolidation_enabled": false,
+  "manual_switched_worker_url": "http://127.0.0.1:19091"
+}

@@ -1,0 +1,7 @@
+completion_tokens,controller_auto,event,iso,p50_latency_s,p95_latency_s,p99_latency_s,pod,req_s,requests,result,success,success_pct,ts,user_completion_tps,valid_decode,valid_decode_pct,wall_s,worker_url
+,False,controller_configured_s2_only,2026-07-04T19:32:14,,,,,,,,,,1783164734.8017926,,,,,
+,,topology_1p3d_ready,2026-07-04T19:32:31,,,,,,,,,,1783164751.158039,,,,,
+,,manual_switch_decode_to_prefill_start,2026-07-04T19:32:54,,,,vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7wxp27,,,,,,1783164774.1394334,,,,,http://127.0.0.1:19091
+,,manual_switch_decode_to_prefill_done,2026-07-04T19:32:56,,,,,,,"{'status': 'ok', 'new_role': 'prefill', 'switch_time_ms': 433.5784800350666, 'timings_ms': {'sleep': 73.546, 'unregister_mdc': 10.057, 'reconfig_nixl': 0.111, 'reset_prefix_cache': 1.375, 'register_mdc': 308.224, 'wake': 26.983}}",,,1783164776.0364323,,,,,
+3072,,s2_prefill_heavy_wave_done,2026-07-04T19:33:16,5.818041801452637,13.472381114959717,13.479365110397339,,1.1718031486853913,24,,24,100.0,1783164796.5204265,149.99080303173008,24,100.0,20.481255769729614,
+,,cleanup_switch_back_decode,2026-07-04T19:33:19,,,,,,,"{'status': 'ok', 'new_role': 'decode', 'switch_time_ms': 407.35257137566805, 'timings_ms': {'sleep': 63.188, 'unregister_mdc': 19.953, 'reconfig_nixl': 0.082, 'reset_prefix_cache': 1.377, 'register_mdc': 300.474, 'wake': 22.264}}",,,1783164799.9548187,,,,,

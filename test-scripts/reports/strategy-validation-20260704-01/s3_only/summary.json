@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-07-04T19:48:28",
+  "phase_summaries": {
+    "s3_head_wave": {
+      "requests": 24,
+      "success": 21,
+      "success_pct": 87.5,
+      "valid_decode": 21,
+      "valid_decode_pct": 87.5,
+      "wall_s": 11.262637615203857,
+      "req_s": 1.8645721115674814,
+      "p50_latency_s": 2.7468535900115967,
+      "p95_latency_s": 3.2332451343536377,
+      "p99_latency_s": 3.236046314239502,
+      "completion_tokens": 6463,
+      "user_completion_tps": 573.8442646219349
+    },
+    "s3_tail_wave": {
+      "requests": 48,
+      "success": 44,
+      "success_pct": 91.66666666666667,
+      "valid_decode": 44,
+      "valid_decode_pct": 91.66666666666667,
+      "wall_s": 19.14263081550598,
+      "req_s": 2.2985346384238348,
+      "p50_latency_s": 3.044799327850342,
+      "p95_latency_s": 4.26257848739624,
+      "p99_latency_s": 8.139444828033447,
+      "completion_tokens": 18262,
+      "user_completion_tps": 953.9963537930926
+    }
+  },
+  "s2_history_count": 0,
+  "s2_executed_count": 0,
+  "s3_history_count": 4,
+  "s3_executed_pairs": 4,
+  "s3_migrated_requests": 6,
+  "s3_scaled_down_to": [
+    3,
+    2,
+    3,
+    2
+  ],
+  "s3_drained_sources": [
+    "vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7gzr9b",
+    "vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk",
+    "vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7gzr9b",
+    "vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk"
+  ],
+  "scenario": "s3_only",
+  "role_switch_enabled": false,
+  "consolidation_enabled": true
+}

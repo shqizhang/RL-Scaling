@@ -30,21 +30,22 @@ def main() -> int:
     stop = threading.Event()
     sampler = e2e.PodSampler(out_dir, args.sample_interval, stop)
     sampler_thread = threading.Thread(target=sampler.run, daemon=True)
+    sampler_thread.start()
     pf_frontend = pf_controller = None
     phase_summary = {}
     try:
         e2e.configure_controller(
             {
                 "ROLE_SWITCH_ENABLED": "true",
-                "CONSOLIDATION_ENABLED": "true",
-                "CONSOLIDATION_SCALE_DOWN_ENABLED": "true",
+                "CONSOLIDATION_ENABLED": "false",
+                "CONSOLIDATION_SCALE_DOWN_ENABLED": "false",
                 "PREFILL_QUEUE_THRESHOLD": "0",
                 "DECODE_IDLE_THRESHOLD": "1.0",
                 "DECODE_QUEUE_THRESHOLD": "999",
                 "PREFILL_IDLE_THRESHOLD": "1.0",
                 "MIN_SWITCH_INTERVAL": "5",
-                "MIN_DECODE_REPLICAS": "1",
-                "MIN_PREFILL_REPLICAS": "1",
+                "MIN_DECODE_REPLICAS": "2",
+                "MIN_PREFILL_REPLICAS": "2",
                 "CONSOLIDATION_THRESHOLD": "8",
                 "CONSOLIDATION_STABLE_SAMPLES": "2",
                 "CONSOLIDATION_MIN_INTERVAL": "5",
@@ -54,9 +55,9 @@ def main() -> int:
                 "K8S_SCALE_FALLBACK_ENABLED": "true",
             }
         )
-        e2e.event(events, "controller_configured_mixed_strategy", note="S2 threshold=0 is used to force an observable controller decision window")
-        e2e.set_topology(prefill=1, decode=3)
-        e2e.event(events, "low_pd_topology_ready", prefill=1, decode=3)
+        e2e.event(events, "controller_configured_d_to_p", note="PREFILL_QUEUE_THRESHOLD=0 is used to force an observable controller D->P decision window")
+        e2e.set_topology(prefill=2, decode=4)
+        e2e.event(events, "healthy_topology_ready", prefill=2, decode=4)
         pf_frontend = e2e.start_frontend_pf()
         pf_controller = e2e.start_controller_pf()
         e2e.status_sample(status_rows, "initial")
@@ -76,20 +77,64 @@ def main() -> int:
         e2e.event(events, f"{phase}_done", **phase_summary[phase])
         e2e.status_sample(status_rows, "after_prefill_peak")
 
-        e2e.event(events, "scale_up_prefill_if_needed_start", note="controller S1 may scale from signal; script records actual pod counts and enforces 2P minimum for the test path")
+        e2e.event(events, "scale_up_prefill_if_needed_start", note="script records actual pod counts and enforces 3 prefill deployment replicas for the next phase")
         p, d = e2e.count_ready_by_component()
-        if p < 2:
-            e2e.scale_deployment(e2e.PREFILL_DEPLOY, 2)
+        if p < 3:
+            e2e.scale_deployment(e2e.PREFILL_DEPLOY, 3)
             e2e.wait_deployment(e2e.PREFILL_DEPLOY)
-            e2e.wait_ready_counts(prefill=2, decode=max(1, d))
+            e2e.wait_ready_counts(prefill=3, decode=max(2, d))
         e2e.event(events, "scale_up_prefill_window_ready", ready_prefill=e2e.count_ready_by_component()[0], ready_decode=e2e.count_ready_by_component()[1])
+
+        e2e.configure_controller(
+            {
+                "ROLE_SWITCH_ENABLED": "true",
+                "CONSOLIDATION_ENABLED": "false",
+                "CONSOLIDATION_SCALE_DOWN_ENABLED": "false",
+                "PREFILL_QUEUE_THRESHOLD": "999",
+                "DECODE_QUEUE_THRESHOLD": "0",
+                "PREFILL_IDLE_THRESHOLD": "1.0",
+                "MIN_PREFILL_REPLICAS": "2",
+                "MIN_DECODE_REPLICAS": "2",
+                "MIN_SWITCH_INTERVAL": "5",
+                "CONTROL_LOOP_INTERVAL": "1",
+            }
+        )
+        e2e.event(events, "controller_configured_p_to_d")
+        if pf_controller:
+            pf_controller.terminate()
+        pf_controller = e2e.start_controller_pf()
+        deadline = time.time() + args.observe_seconds
+        while time.time() < deadline:
+            e2e.status_sample(status_rows, "observe_s2_p_to_d")
+            if any(item.get("executed") and item.get("from_role") == "prefill" and item.get("to_role") == "decode" for item in e2e.s2_history(status_rows)):
+                break
+            time.sleep(2)
 
         e2e.event(events, "sampling_done_decoder_recovery", response=e2e.send_done())
         e2e.scale_deployment(e2e.DECODE_DEPLOY, 4)
         e2e.wait_deployment(e2e.DECODE_DEPLOY)
-        e2e.wait_ready_counts(prefill=2, decode=4)
-        e2e.event(events, "decoder_capacity_ready", prefill=2, decode=4)
+        e2e.wait_ready_counts(prefill=3, decode=4)
+        e2e.event(events, "decoder_capacity_ready", prefill=3, decode=4)
 
+        e2e.configure_controller(
+            {
+                "ROLE_SWITCH_ENABLED": "false",
+                "CONSOLIDATION_ENABLED": "true",
+                "CONSOLIDATION_SCALE_DOWN_ENABLED": "true",
+                "CONSOLIDATION_THRESHOLD": "8",
+                "CONSOLIDATION_STABLE_SAMPLES": "1",
+                "CONSOLIDATION_MIN_INTERVAL": "5",
+                "MIN_BATCH_COMPLETION": "0.60",
+                "MIN_DECODE_REPLICAS": "2",
+                "MAX_CONCURRENT_PER_DECODE": "16",
+                "CONTROL_LOOP_INTERVAL": "1",
+                "K8S_SCALE_FALLBACK_ENABLED": "true",
+            }
+        )
+        e2e.event(events, "controller_configured_s3_tail")
+        if pf_controller:
+            pf_controller.terminate()
+        pf_controller = e2e.start_controller_pf()
         e2e.event(events, "sampling_progress_tail", response=e2e.send_progress(0.95, batch_size=64, avg_isl=1024, avg_osl=1024))
         phase = "strategy_decode_tail"
         rows = e2e.run_wave(phase, args.tail_count, args.tail_concurrency, 128, 768, out_dir)

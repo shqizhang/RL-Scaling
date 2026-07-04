@@ -1,0 +1,44 @@
+[2m2026-07-04T11:49:23.449700Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=5): 7 instances, added=[], removed=[], updated=["101f0512e9530c"]
+[2m2026-07-04T11:49:23.970527Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=6): 7 instances, added=[], removed=[], updated=["101f0512e9530c"]
+[2m2026-07-04T11:49:28.930531Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=2473c31425e7f
+[2m2026-07-04T11:49:28.949216Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully unregistered endpoint instance from discovery - worker removed from routing pool [3minstance_id[0m[2m=[0m641273803464319
+[2m2026-07-04T11:49:28.949704Z[0m [32m INFO[0m [2mhandlers.sleep[0m[2m:[0m [Sleep] Unregistered endpoint from discovery - worker removed from routing pool
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:28 [block_pool.py:452] Successfully reset prefix cache
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:28 [block_pool.py:452] Successfully reset prefix cache
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:29 [cumem.py:213] CuMemAllocator: sleep freed 0.00 GiB memory in total, of which 0.00 GiB is backed up in CPU and the rest 0.00 GiB is discarded directly.
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:29 [gpu_worker.py:140] Sleep mode freed 0.52 GiB memory, 21.54 GiB memory is still in use.
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:29 [abstract.py:312] It took 0.055500 seconds to fall asleep.
+[2m2026-07-04T11:49:29.023199Z[0m [32m INFO[0m [2mmain.unregister[0m[2m:[0m [VllmReregistrar] unregister role=decode endpoint=<builtins.Endpoint object at 0x7f42a1381590>
+[2m2026-07-04T11:49:29.023404Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=2473c31425e7f
+[2m2026-07-04T11:49:29.029848Z[0m [32m INFO[0m [2mdynamo_llm::local_model[0m[2m:[0m Successfully unregistered model from discovery
+[2m2026-07-04T11:49:29.030053Z[0m [32m INFO[0m [2mdual_mode._reconfig_nixl[0m[2m:[0m [DualMode] reconfig_nixl(prefill): no cached nixl connector; nothing to drop
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:29 [block_pool.py:452] Successfully reset prefix cache
+[2m2026-07-04T11:49:29.032199Z[0m [32m INFO[0m [2mdual_mode._reconfig_kv_pool[0m[2m:[0m [DualMode] reconfig_kv_pool(prefill): reset_prefix_cache OK
+[2m2026-07-04T11:49:29.032280Z[0m [32m INFO[0m [2mmain.register[0m[2m:[0m [VllmReregistrar] register role=prefill model_type=prefill endpoint=<builtins.Endpoint object at 0x7f42a13817f0>
+[2m2026-07-04T11:49:29.032339Z[0m [32m INFO[0m [2mmain.register_vllm_model[0m[2m:[0m Getting engine runtime configuration metadata from vLLM engine for prefill...
+[2m2026-07-04T11:49:29.032393Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Cache config values: {'num_gpu_blocks': 11426, 'block_size': 16}
+[2m2026-07-04T11:49:29.032428Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Scheduler config values: {'max_num_seqs': 256, 'max_num_batched_tokens': 2048}
+[2m2026-07-04T11:49:29.032498Z[0m [33m WARN[0m [2mhandlers.get_dp_range_for_worker[0m[2m:[0m vLLM selects internal DP load balancing. If you are launching multiple workers for DP deployment, hybrid or external load balancing is recommended.
+[2m2026-07-04T11:49:29.033499Z[0m [33m WARN[0m [2mdynamo_llm::hub[0m[2m:[0m Cannot connect to ModelExpress server: Transport error: transport error. Using direct download.
+[2m2026-07-04T11:49:29.033544Z[0m [32m INFO[0m [2mmodelexpress_common::download[0m[2m:[0m Downloading model 'Qwen/Qwen3-0.6B' using provider: Hugging Face
+[2m2026-07-04T11:49:29.033601Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Using cache directory: "/home/dynamo/.cache/huggingface/hub"
+[2m2026-07-04T11:49:29.318027Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Downloaded model files for Qwen/Qwen3-0.6B
+[2m2026-07-04T11:49:29.318168Z[0m [32m INFO[0m [2mdynamo_llm::hub[0m[2m:[0m ModelExpress download completed successfully for model: Qwen/Qwen3-0.6B
+[2m2026-07-04T11:49:29.326505Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=prefill, endpoint=generate, instance_id=2473c31425e7f
+[2m2026-07-04T11:49:29.339418Z[0m [32m INFO[0m [2m_core[0m[2m:[0m Registered base model 'Qwen/Qwen3-0.6B' MDC
+(EngineCore_DP0 pid=694) INFO 07-04 11:49:29 [abstract.py:330] It took 0.006135 seconds to wake up tags {'weights', 'kv_cache'}.
+[2m2026-07-04T11:49:29.348936Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=2473c31425e7f
+[2m2026-07-04T11:49:29.359050Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully re-registered endpoint instance to discovery - worker added back to routing pool [3minstance_id[0m[2m=[0m641273803464319
+[2m2026-07-04T11:49:29.359346Z[0m [32m INFO[0m [2mhandlers.wake_up[0m[2m:[0m [Wake] Re-registered endpoint to discovery - worker added back to routing pool
+[2m2026-07-04T11:49:29.359843Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=prefill, endpoint=generate, instance_id=2473c31425e7f
+[2m2026-07-04T11:49:29.371783Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully re-registered endpoint instance to discovery - worker added back to routing pool [3minstance_id[0m[2m=[0m641273803464319
+[2m2026-07-04T11:49:29.371983Z[0m [32m INFO[0m [2mdual_mode.switch_role[0m[2m:[0m [DualMode] registered prefill endpoint instance
+[2m2026-07-04T11:49:29.372095Z[0m [32m INFO[0m [2mdual_mode.switch_role[0m[2m:[0m [DualMode] switch_role decode->prefill OK total=442.84ms timings={'sleep': 93.875, 'unregister_mdc': 6.878, 'reconfig_nixl': 0.12, 'reset_prefix_cache': 2.142, 'register_mdc': 307.355, 'wake': 19.819}
+[2m2026-07-04T11:49:29.383967Z[0m [33m WARN[0m [2mrl_scaling_sidecar._patch_self_pod_label[0m[2m:[0m [RLScalingSidecar] pod label patch returned HTTP 403: {"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"pods \"vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7nmh8t\" is forbidden: User \"system:serviceaccount:dynam
+[2m2026-07-04T11:49:29.452687Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=7): 7 instances, added=[], removed=[], updated=["2473c31425e7f"]
+[2m2026-07-04T11:49:35.318187Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=8): 7 instances, added=[], removed=[], updated=["17f4b35c7ec69c"]
+[2m2026-07-04T11:49:39.245153Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=9): 6 instances, added=[], removed=["1e9af1afa4914d"], updated=[]
+[2m2026-07-04T11:49:41.741115Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7wxp27': invalid type: null, expected a map
+[2m2026-07-04T11:49:41.741507Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=10): 5 instances, added=[], removed=["fdb35e993ec69"], updated=[]
+[2m2026-07-04T11:49:51.095809Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7wxp27': invalid type: null, expected a map
+[2m2026-07-04T11:52:51.728631Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=18): 7 instances, added=["142f4f5287330a", "d9196760de5b8"], removed=[], updated=[]

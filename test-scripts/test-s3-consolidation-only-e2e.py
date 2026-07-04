@@ -19,6 +19,8 @@ def main() -> int:
     parser.add_argument("--head-concurrency", type=int, default=6)
     parser.add_argument("--tail-count", type=int, default=24)
     parser.add_argument("--tail-concurrency", type=int, default=4)
+    parser.add_argument("--head-max-tokens", type=int, default=384)
+    parser.add_argument("--tail-max-tokens", type=int, default=1536)
     parser.add_argument("--tail-observe-seconds", type=int, default=45)
     args = parser.parse_args()
 
@@ -30,6 +32,7 @@ def main() -> int:
     stop = threading.Event()
     sampler = e2e.PodSampler(out_dir, args.sample_interval, stop)
     sampler_thread = threading.Thread(target=sampler.run, daemon=True)
+    sampler_thread.start()
     pf_frontend = pf_controller = None
     phase_summary = {}
     try:
@@ -39,7 +42,7 @@ def main() -> int:
                 "CONSOLIDATION_ENABLED": "true",
                 "CONSOLIDATION_SCALE_DOWN_ENABLED": "true",
                 "CONSOLIDATION_THRESHOLD": "8",
-                "CONSOLIDATION_STABLE_SAMPLES": "2",
+                "CONSOLIDATION_STABLE_SAMPLES": "1",
                 "CONSOLIDATION_MIN_INTERVAL": "5",
                 "MIN_BATCH_COMPLETION": "0.60",
                 "CONTROL_LOOP_INTERVAL": "1",
@@ -57,7 +60,7 @@ def main() -> int:
         e2e.event(events, "sampling_progress_70", response=e2e.send_progress(0.70))
 
         phase = "s3_head_wave"
-        rows = e2e.run_wave(phase, args.head_count, args.head_concurrency, 192, 384, out_dir)
+        rows = e2e.run_wave(phase, args.head_count, args.head_concurrency, 192, args.head_max_tokens, out_dir)
         requests.extend(rows)
         phase_summary[phase] = e2e.summarize_wave(rows)
         e2e.event(events, f"{phase}_done", **phase_summary[phase])
@@ -65,7 +68,7 @@ def main() -> int:
 
         e2e.event(events, "sampling_progress_95", response=e2e.send_progress(0.95))
         phase = "s3_tail_wave"
-        rows = e2e.run_wave(phase, args.tail_count, args.tail_concurrency, 128, 768, out_dir)
+        rows = e2e.run_wave(phase, args.tail_count, args.tail_concurrency, 128, args.tail_max_tokens, out_dir)
         requests.extend(rows)
         phase_summary[phase] = e2e.summarize_wave(rows)
         e2e.event(events, f"{phase}_done", **phase_summary[phase])

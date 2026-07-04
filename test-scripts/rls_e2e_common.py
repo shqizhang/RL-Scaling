@@ -43,7 +43,15 @@ def ts_utc_since() -> str:
 
 
 def run(cmd: list[str], timeout: int = 60, check: bool = True) -> subprocess.CompletedProcess:
-    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    proc = subprocess.run(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        encoding="utf-8",
+        errors="replace",
+    )
     if check and proc.returncode != 0:
         raise RuntimeError(f"command failed: {' '.join(cmd)}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
     return proc
@@ -159,11 +167,11 @@ def start_port_forward(service: str, local_port: int, remote_port: int, namespac
     return proc
 
 
-def wait_http(url: str, timeout_s: int = 30) -> None:
+def wait_http(url: str, timeout_s: int = 60) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
-            urllib.request.urlopen(url, timeout=1).read()
+            urllib.request.urlopen(url, timeout=15).read()
             return
         except Exception:
             time.sleep(0.5)
@@ -172,13 +180,21 @@ def wait_http(url: str, timeout_s: int = 30) -> None:
 
 def start_frontend_pf() -> subprocess.Popen:
     proc = start_port_forward(FRONTEND_SVC, FRONTEND_LOCAL, 8000, NS)
-    wait_http(f"http://127.0.0.1:{FRONTEND_LOCAL}/health")
+    try:
+        wait_http(f"http://127.0.0.1:{FRONTEND_LOCAL}/health")
+    except Exception:
+        proc.terminate()
+        raise
     return proc
 
 
 def start_controller_pf() -> subprocess.Popen:
     proc = start_port_forward(f"svc/{CONTROLLER_DEPLOY}", CONTROLLER_LOCAL, 8080, CONTROLLER_NS)
-    wait_http(f"http://127.0.0.1:{CONTROLLER_LOCAL}/healthz")
+    try:
+        wait_http(f"http://127.0.0.1:{CONTROLLER_LOCAL}/healthz")
+    except Exception:
+        proc.terminate()
+        raise
     return proc
 
 
@@ -336,12 +352,25 @@ class PodSampler:
 
     def run(self) -> None:
         while not self.stop.is_set():
-            p, d = count_ready_by_component()
-            for row in pod_rows():
-                row["ready_prefill_count"] = p
-                row["ready_decode_count"] = d
-                row["allocated_worker_gpus"] = p + d
-                self.rows.append(row)
+            try:
+                p, d = count_ready_by_component()
+                for row in pod_rows():
+                    row["ready_prefill_count"] = p
+                    row["ready_decode_count"] = d
+                    row["allocated_worker_gpus"] = p + d
+                    self.rows.append(row)
+            except Exception as exc:  # noqa: BLE001
+                self.rows.append(
+                    {
+                        "ts": now_ts(),
+                        "iso": ts_iso(),
+                        "name": "sampler_error",
+                        "component": "sampler",
+                        "phase": "error",
+                        "ready": False,
+                        "error": str(exc),
+                    }
+                )
             time.sleep(self.interval)
 
 

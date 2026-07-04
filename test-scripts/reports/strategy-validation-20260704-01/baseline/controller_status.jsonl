@@ -1,0 +1,2 @@
+{"ts": 1783164038.925091, "iso": "2026-07-04T19:20:38", "event": "initial", "status": {"state": "idle", "current_target": null, "history": [], "strategy": {"batch_completion_pct": 0.0, "s2_enabled": false, "s3_enabled": false, "s2_history": [], "s3_history": [], "tick_errors": []}}}
+{"ts": 1783164052.8691573, "iso": "2026-07-04T19:20:52", "event": "after_wave", "status": {"state": "idle", "current_target": null, "history": [], "strategy": {"batch_completion_pct": 0.0, "s2_enabled": false, "s3_enabled": false, "s2_history": [], "s3_history": [], "tick_errors": []}}}

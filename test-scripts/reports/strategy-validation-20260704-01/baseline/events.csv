@@ -1,0 +1,6 @@
+completion_tokens,concurrency,count,event,iso,p50_latency_s,p95_latency_s,p99_latency_s,req_s,requests,success,success_pct,ts,user_completion_tps,valid_decode,valid_decode_pct,wall_s
+,,,configure_controller_disabled,2026-07-04T19:20:04,,,,,,,,1783164004.2585099,,,,
+,,,topology_2p4d_start,2026-07-04T19:20:08,,,,,,,,1783164008.1171355,,,,
+,,,topology_2p4d_ready,2026-07-04T19:20:24,,,,,,,,1783164024.01711,,,,
+,6,24,baseline_wave_start,2026-07-04T19:20:38,,,,,,,,1783164038.9251134,,,,
+6144,,,baseline_wave_done,2026-07-04T19:20:51,2.766820192337036,3.7919087409973145,3.794053792953491,1.9376585604765475,24,24,100.0,1783164051.313838,496.04059148199616,24,100.0,12.386083126068115

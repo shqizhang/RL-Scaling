@@ -1,0 +1,81 @@
+[2m2026-07-04T11:32:21.744352Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=32): 6 instances, added=[], removed=["19b87407f6d8be"], updated=[]
+[2m2026-07-04T11:32:24.247962Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b77dbmk': invalid type: null, expected a map
+[2m2026-07-04T11:32:24.248707Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=33): 5 instances, added=[], removed=["b6398f555add8"], updated=[]
+[2m2026-07-04T11:32:31.524901Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b77dbmk': invalid type: null, expected a map
+[2m2026-07-04T11:32:32.261168Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b77dbmk': invalid type: null, expected a map
+[2m2026-07-04T11:32:55.230596Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:32:55.250615Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully unregistered endpoint instance from discovery - worker removed from routing pool [3minstance_id[0m[2m=[0m4463149249195113
+[2m2026-07-04T11:32:55.251135Z[0m [32m INFO[0m [2mhandlers.sleep[0m[2m:[0m [Sleep] Unregistered endpoint from discovery - worker removed from routing pool
+(EngineCore_DP0 pid=710) WARNING 07-04 11:32:55 [block_pool.py:435] Failed to reset prefix cache because some blocks (222) are not freed yet
+(EngineCore_DP0 pid=710) WARNING 07-04 11:32:55 [block_pool.py:435] Failed to reset prefix cache because some blocks (222) are not freed yet
+(EngineCore_DP0 pid=710) INFO 07-04 11:32:55 [cumem.py:213] CuMemAllocator: sleep freed 0.00 GiB memory in total, of which 0.00 GiB is backed up in CPU and the rest 0.00 GiB is discarded directly.
+(EngineCore_DP0 pid=710) INFO 07-04 11:32:55 [gpu_worker.py:140] Sleep mode freed 0.0 GiB memory, 21.54 GiB memory is still in use.
+(EngineCore_DP0 pid=710) INFO 07-04 11:32:55 [abstract.py:312] It took 0.039255 seconds to fall asleep.
+[2m2026-07-04T11:32:55.301154Z[0m [32m INFO[0m [2mmain.unregister[0m[2m:[0m [VllmReregistrar] unregister role=decode endpoint=<builtins.Endpoint object at 0x7fc69af85590>
+[2m2026-07-04T11:32:55.301576Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:32:55.310968Z[0m [32m INFO[0m [2mdynamo_llm::local_model[0m[2m:[0m Successfully unregistered model from discovery
+[2m2026-07-04T11:32:55.311215Z[0m [32m INFO[0m [2mdual_mode._reconfig_nixl[0m[2m:[0m [DualMode] reconfig_nixl(prefill): no cached nixl connector; nothing to drop
+(EngineCore_DP0 pid=710) WARNING 07-04 11:32:55 [block_pool.py:435] Failed to reset prefix cache because some blocks (222) are not freed yet
+[2m2026-07-04T11:32:55.312587Z[0m [32m INFO[0m [2mdual_mode._reconfig_kv_pool[0m[2m:[0m [DualMode] reconfig_kv_pool(prefill): reset_prefix_cache OK
+[2m2026-07-04T11:32:55.312691Z[0m [32m INFO[0m [2mmain.register[0m[2m:[0m [VllmReregistrar] register role=prefill model_type=prefill endpoint=<builtins.Endpoint object at 0x7fc69af857f0>
+[2m2026-07-04T11:32:55.312789Z[0m [32m INFO[0m [2mmain.register_vllm_model[0m[2m:[0m Getting engine runtime configuration metadata from vLLM engine for prefill...
+[2m2026-07-04T11:32:55.312875Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Cache config values: {'num_gpu_blocks': 11426, 'block_size': 16}
+[2m2026-07-04T11:32:55.312927Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Scheduler config values: {'max_num_seqs': 256, 'max_num_batched_tokens': 2048}
+[2m2026-07-04T11:32:55.313005Z[0m [33m WARN[0m [2mhandlers.get_dp_range_for_worker[0m[2m:[0m vLLM selects internal DP load balancing. If you are launching multiple workers for DP deployment, hybrid or external load balancing is recommended.
+[2m2026-07-04T11:32:55.314318Z[0m [33m WARN[0m [2mdynamo_llm::hub[0m[2m:[0m Cannot connect to ModelExpress server: Transport error: transport error. Using direct download.
+[2m2026-07-04T11:32:55.314370Z[0m [32m INFO[0m [2mmodelexpress_common::download[0m[2m:[0m Downloading model 'Qwen/Qwen3-0.6B' using provider: Hugging Face
+[2m2026-07-04T11:32:55.314543Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Using cache directory: "/home/dynamo/.cache/huggingface/hub"
+[2m2026-07-04T11:32:55.601508Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Downloaded model files for Qwen/Qwen3-0.6B
+[2m2026-07-04T11:32:55.601729Z[0m [32m INFO[0m [2mdynamo_llm::hub[0m[2m:[0m ModelExpress download completed successfully for model: Qwen/Qwen3-0.6B
+[2m2026-07-04T11:32:55.607279Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=prefill, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:32:55.620693Z[0m [32m INFO[0m [2m_core[0m[2m:[0m Registered base model 'Qwen/Qwen3-0.6B' MDC
+(EngineCore_DP0 pid=710) INFO 07-04 11:32:55 [abstract.py:330] It took 0.006904 seconds to wake up tags {'weights', 'kv_cache'}.
+[2m2026-07-04T11:32:55.631388Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:32:55.647460Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully re-registered endpoint instance to discovery - worker added back to routing pool [3minstance_id[0m[2m=[0m4463149249195113
+[2m2026-07-04T11:32:55.647769Z[0m [32m INFO[0m [2mhandlers.wake_up[0m[2m:[0m [Wake] Re-registered endpoint to discovery - worker added back to routing pool
+[2m2026-07-04T11:32:55.648199Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=prefill, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:32:55.660802Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully re-registered endpoint instance to discovery - worker added back to routing pool [3minstance_id[0m[2m=[0m4463149249195113
+[2m2026-07-04T11:32:55.661065Z[0m [32m INFO[0m [2mdual_mode.switch_role[0m[2m:[0m [DualMode] registered prefill endpoint instance
+[2m2026-07-04T11:32:55.661180Z[0m [32m INFO[0m [2mdual_mode.switch_role[0m[2m:[0m [DualMode] switch_role decode->prefill OK total=433.58ms timings={'sleep': 73.546, 'unregister_mdc': 10.057, 'reconfig_nixl': 0.111, 'reset_prefix_cache': 1.375, 'register_mdc': 308.224, 'wake': 26.983}
+[2m2026-07-04T11:32:55.674406Z[0m [33m WARN[0m [2mrl_scaling_sidecar._patch_self_pod_label[0m[2m:[0m [RLScalingSidecar] pod label patch returned HTTP 403: {"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"pods \"vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7wxp27\" is forbidden: User \"system:serviceaccount:dynam
+[2m2026-07-04T11:32:55.753065Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=37): 5 instances, added=[], removed=[], updated=["fdb35e993ec69"]
+[2m2026-07-04T11:33:00.399652Z[0m [32m INFO[0m [2mloggers.log[0m[2m:[0m Engine 000: Avg prompt throughput: 0.8 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 3.9%, Prefix cache hit rate: 22.5%, External prefix cache hit rate: 13.7%
+[2m2026-07-04T11:33:00.400200Z[0m [32m INFO[0m [2mloggers.log[0m[2m:[0m Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 3.9%, Prefix cache hit rate: 22.5%, External prefix cache hit rate: 13.7%
+[2m2026-07-04T11:33:19.152747Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:33:19.172129Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully unregistered endpoint instance from discovery - worker removed from routing pool [3minstance_id[0m[2m=[0m4463149249195113
+[2m2026-07-04T11:33:19.172526Z[0m [32m INFO[0m [2mhandlers.sleep[0m[2m:[0m [Sleep] Unregistered endpoint from discovery - worker removed from routing pool
+(EngineCore_DP0 pid=710) WARNING 07-04 11:33:19 [block_pool.py:435] Failed to reset prefix cache because some blocks (445) are not freed yet
+(EngineCore_DP0 pid=710) WARNING 07-04 11:33:19 [block_pool.py:435] Failed to reset prefix cache because some blocks (445) are not freed yet
+(EngineCore_DP0 pid=710) INFO 07-04 11:33:19 [cumem.py:213] CuMemAllocator: sleep freed 0.00 GiB memory in total, of which 0.00 GiB is backed up in CPU and the rest 0.00 GiB is discarded directly.
+(EngineCore_DP0 pid=710) INFO 07-04 11:33:19 [gpu_worker.py:140] Sleep mode freed 0.0 GiB memory, 21.54 GiB memory is still in use.
+(EngineCore_DP0 pid=710) INFO 07-04 11:33:19 [abstract.py:312] It took 0.034774 seconds to fall asleep.
+[2m2026-07-04T11:33:19.215600Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=prefill, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:33:19.225107Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully unregistered endpoint instance from discovery - worker removed from routing pool [3minstance_id[0m[2m=[0m4463149249195113
+[2m2026-07-04T11:33:19.225310Z[0m [32m INFO[0m [2mdual_mode.switch_role[0m[2m:[0m [DualMode] unregistered prefill endpoint instance
+[2m2026-07-04T11:33:19.225373Z[0m [32m INFO[0m [2mmain.unregister[0m[2m:[0m [VllmReregistrar] unregister role=prefill endpoint=<builtins.Endpoint object at 0x7fc69af857f0>
+[2m2026-07-04T11:33:19.225468Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Unregistering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=prefill, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:33:19.234860Z[0m [32m INFO[0m [2mdynamo_llm::local_model[0m[2m:[0m Successfully unregistered model from discovery
+[2m2026-07-04T11:33:19.235020Z[0m [32m INFO[0m [2mdual_mode._reconfig_nixl[0m[2m:[0m [DualMode] reconfig_nixl(decode): no cached nixl connector; nothing to drop
+(EngineCore_DP0 pid=710) WARNING 07-04 11:33:19 [block_pool.py:435] Failed to reset prefix cache because some blocks (445) are not freed yet
+[2m2026-07-04T11:33:19.236411Z[0m [32m INFO[0m [2mdual_mode._reconfig_kv_pool[0m[2m:[0m [DualMode] reconfig_kv_pool(decode): reset_prefix_cache OK
+[2m2026-07-04T11:33:19.236465Z[0m [32m INFO[0m [2mmain.register[0m[2m:[0m [VllmReregistrar] register role=decode model_type=chat,completions endpoint=<builtins.Endpoint object at 0x7fc69af85590>
+[2m2026-07-04T11:33:19.236511Z[0m [32m INFO[0m [2mmain.register_vllm_model[0m[2m:[0m Getting engine runtime configuration metadata from vLLM engine for chat,completions...
+[2m2026-07-04T11:33:19.236556Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Cache config values: {'num_gpu_blocks': 11426, 'block_size': 16}
+[2m2026-07-04T11:33:19.236588Z[0m [32m INFO[0m [2mmain.get_engine_cache_info[0m[2m:[0m Scheduler config values: {'max_num_seqs': 256, 'max_num_batched_tokens': 2048}
+[2m2026-07-04T11:33:19.236636Z[0m [33m WARN[0m [2mhandlers.get_dp_range_for_worker[0m[2m:[0m vLLM selects internal DP load balancing. If you are launching multiple workers for DP deployment, hybrid or external load balancing is recommended.
+[2m2026-07-04T11:33:19.237720Z[0m [33m WARN[0m [2mdynamo_llm::hub[0m[2m:[0m Cannot connect to ModelExpress server: Transport error: transport error. Using direct download.
+[2m2026-07-04T11:33:19.237748Z[0m [32m INFO[0m [2mmodelexpress_common::download[0m[2m:[0m Downloading model 'Qwen/Qwen3-0.6B' using provider: Hugging Face
+[2m2026-07-04T11:33:19.237798Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Using cache directory: "/home/dynamo/.cache/huggingface/hub"
+[2m2026-07-04T11:33:19.519250Z[0m [32m INFO[0m [2mmodelexpress_common::providers::huggingface[0m[2m:[0m Downloaded model files for Qwen/Qwen3-0.6B
+[2m2026-07-04T11:33:19.519397Z[0m [32m INFO[0m [2mdynamo_llm::hub[0m[2m:[0m ModelExpress download completed successfully for model: Qwen/Qwen3-0.6B
+[2m2026-07-04T11:33:19.525541Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering model card: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:33:19.536765Z[0m [32m INFO[0m [2m_core[0m[2m:[0m Registered base model 'Qwen/Qwen3-0.6B' MDC
+(EngineCore_DP0 pid=710) INFO 07-04 11:33:19 [abstract.py:330] It took 0.006083 seconds to wake up tags {'weights', 'kv_cache'}.
+[2m2026-07-04T11:33:19.545348Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::kube[0m[2m:[0m Registering endpoint: namespace=dynamo-system-vllm-v1-disagg-router-574b777c, component=backend, endpoint=generate, instance_id=fdb35e993ec69
+[2m2026-07-04T11:33:19.558980Z[0m [32m INFO[0m [2mdynamo_runtime::component::endpoint[0m[2m:[0m Successfully re-registered endpoint instance to discovery - worker added back to routing pool [3minstance_id[0m[2m=[0m4463149249195113
+[2m2026-07-04T11:33:19.559139Z[0m [32m INFO[0m [2mhandlers.wake_up[0m[2m:[0m [Wake] Re-registered endpoint to discovery - worker added back to routing pool
+[2m2026-07-04T11:33:19.559222Z[0m [32m INFO[0m [2mdual_mode.switch_role[0m[2m:[0m [DualMode] switch_role prefill->decode OK total=407.35ms timings={'sleep': 63.188, 'unregister_mdc': 19.953, 'reconfig_nixl': 0.082, 'reset_prefix_cache': 1.377, 'register_mdc': 300.474, 'wake': 22.264}
+[2m2026-07-04T11:33:19.567349Z[0m [33m WARN[0m [2mrl_scaling_sidecar._patch_self_pod_label[0m[2m:[0m [RLScalingSidecar] pod label patch returned HTTP 403: {"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"pods \"vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7wxp27\" is forbidden: User \"system:serviceaccount:dynam
+[2m2026-07-04T11:33:19.673192Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=38): 5 instances, added=[], removed=[], updated=["fdb35e993ec69"]
+[2m2026-07-04T11:36:03.670497Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=42): 6 instances, added=["1e9af1afa4914d"], removed=[], updated=[]
+[2m2026-07-04T11:36:15.977534Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=44): 7 instances, added=["946d05b4015b3"], removed=[], updated=[]
