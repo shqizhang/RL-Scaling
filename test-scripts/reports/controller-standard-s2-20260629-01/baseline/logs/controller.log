@@ -1,2 +1,0 @@
-INFO:     10.244.0.1:33452 - "GET /api/v1/status HTTP/1.1" 200 OK
-INFO:     10.244.0.1:56072 - "GET /api/v1/status HTTP/1.1" 200 OK

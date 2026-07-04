@@ -1,4 +1,0 @@
-completion_tokens,event,iso,p50_latency_s,p95_latency_s,p99_latency_s,prefill_threshold,req_s,requests,success,success_pct,ts,user_completion_tps,wall_s
-,controller_configured,2026-07-04T09:04:17,,,,1,,,,,1783127057.2148614,,
-,topology_ready_2p4d,2026-07-04T09:04:31,,,,,,,,,1783127071.9663973,,
-6144,prefill_heavy_done,2026-07-04T09:06:12,6.542954683303833,18.88275384902954,25.72563600540161,,1.2384144240316772,48,48,100.0,1783127172.8204052,158.51704627605469,38.759238481521606

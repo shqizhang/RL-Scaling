@@ -1,8 +1,0 @@
-Forwarding from 127.0.0.1:18081 -> 8080
-Forwarding from [::1]:18081 -> 8080
-Handling connection for 18081
-E0702 03:19:25.259732 1001623 portforward.go:391] "Unhandled Error" err="error copying from remote stream to local connection: readfrom tcp4 127.0.0.1:18081->127.0.0.1:53550: write tcp4 127.0.0.1:18081->127.0.0.1:53550: write: broken pipe"
-Handling connection for 18081
-E0702 03:19:25.319616 1001623 portforward.go:404] "Unhandled Error" err="error copying from local connection to remote stream: writeto tcp4 127.0.0.1:18081->127.0.0.1:53558: read tcp4 127.0.0.1:18081->127.0.0.1:53558: read: connection reset by peer"
-Handling connection for 18081
-Handling connection for 18081
