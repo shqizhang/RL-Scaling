@@ -79,6 +79,8 @@ class ControllerConfig:
     consolidation_scale_down_enabled: bool = field(default_factory=lambda: _env_bool("CONSOLIDATION_SCALE_DOWN_ENABLED", True))
     consolidation_stable_samples: int = field(default_factory=lambda: _env_int("CONSOLIDATION_STABLE_SAMPLES", 2))
     consolidation_min_interval_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_MIN_INTERVAL", 10.0))
+    consolidation_drain_timeout_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_DRAIN_TIMEOUT", 20.0))
+    consolidation_drain_poll_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_DRAIN_POLL_INTERVAL", 2.0))
 
     # Kubernetes scale transport. Production should use DGDSA when the Dynamo
     # operator is active. Test clusters can enable this fallback when the

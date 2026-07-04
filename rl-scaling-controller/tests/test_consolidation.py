@@ -129,14 +129,23 @@ class TestConsolidationController:
 
     @pytest.mark.asyncio
     async def test_executes_plans_and_scales_down(self):
-        workers = [
+        workers_before = [
             _w("a", in_flight=2, capacity=10, remaining=60),
             _w("b", in_flight=8, capacity=50, remaining=60),
         ]
+        workers_after = [
+            _w("a", in_flight=0, capacity=10, remaining=0),
+            _w("b", in_flight=10, capacity=48, remaining=60),
+        ]
 
         class M(InMemoryMetricsCollector):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
             async def get_decode_worker_states(self):
-                return workers
+                self.calls += 1
+                return workers_before if self.calls == 1 else workers_after
 
         m = M()
         d = InMemoryDGDSAClient()
@@ -152,8 +161,41 @@ class TestConsolidationController:
         assert decision is not None
         assert decision.executed_pairs == 1
         assert client.migrate_one.call_count == 2  # 2 requests on source 'a'
+        assert decision.drained_sources == ["a"]
         assert decision.scaled_down_to == 3
         assert d.get_replicas("decode") == 3
+
+    @pytest.mark.asyncio
+    async def test_does_not_scale_down_until_source_drained(self):
+        workers = [
+            _w("a", in_flight=2, capacity=10, remaining=60),
+            _w("b", in_flight=8, capacity=50, remaining=60),
+        ]
+
+        class M(InMemoryMetricsCollector):
+            async def get_decode_worker_states(self):
+                return workers
+
+        d = InMemoryDGDSAClient()
+        d.patch("decode", 4)
+        client = MagicMock()
+        client.migrate_one.return_value = {"status": "ok"}
+        ctrl = ConsolidationController(
+            config=_cfg(
+                consolidation_threshold=3,
+                per_request_migration_overhead=0.5,
+                consolidation_drain_timeout_seconds=0,
+            ),
+            metrics=M(), dgdsa=d, client=client,
+            batch_completion_fn=lambda: 0.9,
+        )
+        decision = await ctrl.control_loop_tick()
+        assert decision is not None
+        assert decision.executed_pairs == 1
+        assert decision.drained_sources == []
+        assert decision.scaled_down_to is None
+        assert decision.scale_down_blocked_reason == "sources_not_drained:a"
+        assert d.get_replicas("decode") == 4
 
     @pytest.mark.asyncio
     async def test_waits_for_stable_samples_before_migrating(self):
@@ -221,14 +263,23 @@ class TestConsolidationController:
 
     @pytest.mark.asyncio
     async def test_scale_down_clamped_to_min(self):
-        workers = [
+        workers_before = [
             _w("a", in_flight=1, capacity=10, remaining=60),
             _w("b", in_flight=8, capacity=50, remaining=60),
         ]
+        workers_after = [
+            _w("a", in_flight=0, capacity=10, remaining=0),
+            _w("b", in_flight=9, capacity=49, remaining=60),
+        ]
 
         class M(InMemoryMetricsCollector):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
             async def get_decode_worker_states(self):
-                return workers
+                self.calls += 1
+                return workers_before if self.calls == 1 else workers_after
 
         d = InMemoryDGDSAClient()
         d.patch("decode", 1)  # already at min

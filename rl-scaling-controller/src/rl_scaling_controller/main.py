@@ -79,7 +79,9 @@ class StrategyRuntime:
                         "migration_attempts": getattr(item, "migration_attempts", 0),
                         "migrated_requests": getattr(item, "migrated_requests", 0),
                         "declined_requests": getattr(item, "declined_requests", 0),
+                        "drained_sources": getattr(item, "drained_sources", []),
                         "scaled_down_to": item.scaled_down_to,
+                        "scale_down_blocked_reason": getattr(item, "scale_down_blocked_reason", None),
                         "error": item.error,
                     }
                 )

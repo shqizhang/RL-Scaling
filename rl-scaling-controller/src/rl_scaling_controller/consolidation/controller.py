@@ -7,6 +7,7 @@ decode replicas (subject to ``min_decode_replicas``).
 from __future__ import annotations
 
 import logging
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
@@ -27,7 +28,9 @@ class ConsolidationDecision:
     migration_attempts: int = 0
     migrated_requests: int = 0
     declined_requests: int = 0
+    drained_sources: List[str] = field(default_factory=list)
     scaled_down_to: Optional[int] = None
+    scale_down_blocked_reason: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -109,6 +112,7 @@ class ConsolidationController:
             ],
         )
         try:
+            candidate_drained_sources: set[str] = set()
             for pair in ready_plans:
                 # The controller can only see in_flight at decision time; we
                 # honestly don't know the request_ids without another metrics
@@ -141,6 +145,8 @@ class ConsolidationController:
                     break
                 if pair_migrated:
                     decision.executed_pairs += 1
+                if pair_migrated == pair.request_count:
+                    candidate_drained_sources.add(pair.source.worker_id)
                 logger.info(
                     "S3 consolidation executed: source=%s target=%s request_count=%s migrated=%s",
                     pair.source.worker_id,
@@ -152,16 +158,51 @@ class ConsolidationController:
                 self.last_action_ts = time.monotonic()
                 self.pending_windows.clear()
 
-            if self.config.consolidation_scale_down_enabled:
-                # Drop the drained decode replicas down to (current - drained).
+            if self.config.consolidation_scale_down_enabled and candidate_drained_sources:
+                decision.drained_sources = await self._wait_for_drained_sources(candidate_drained_sources)
+                drained_count = len(decision.drained_sources)
+                if drained_count < len(candidate_drained_sources):
+                    pending = sorted(candidate_drained_sources - set(decision.drained_sources))
+                    decision.scale_down_blocked_reason = (
+                        "sources_not_drained:" + ",".join(pending)
+                    )
+                    logger.info(
+                        "S3 scale down blocked until source drain: drained=%s pending=%s",
+                        decision.drained_sources,
+                        pending,
+                    )
+                    drained_count = 0
+
+                # Drop only replicas whose source workers are confirmed drained.
                 current = self.dgdsa.get_replicas("decode")
-                new_count = max(self.config.min_decode_replicas, current - decision.executed_pairs)
+                new_count = max(self.config.min_decode_replicas, current - drained_count)
                 if new_count != current:
                     self.dgdsa.patch("decode", new_count)
                     decision.scaled_down_to = new_count
                     logger.info("S3 consolidation scaled decode replicas: %s -> %s", current, new_count)
+            elif self.config.consolidation_scale_down_enabled:
+                decision.scale_down_blocked_reason = "no_fully_migrated_source"
         except Exception as exc:  # noqa: BLE001
             logger.exception("consolidation tick failed")
             decision.error = str(exc)
         self.history.append(decision)
         return decision
+
+    async def _wait_for_drained_sources(self, source_ids: set[str]) -> list[str]:
+        if not source_ids:
+            return []
+        timeout = max(0.0, float(self.config.consolidation_drain_timeout_seconds))
+        poll = max(0.1, float(self.config.consolidation_drain_poll_seconds))
+        deadline = time.monotonic() + timeout
+        drained: set[str] = set()
+        while True:
+            workers = await self.metrics.get_decode_worker_states() or []
+            by_id = {worker.worker_id: worker for worker in workers}
+            drained = {
+                source_id
+                for source_id in source_ids
+                if source_id not in by_id or by_id[source_id].in_flight_requests <= 0
+            }
+            if drained == source_ids or time.monotonic() >= deadline:
+                return sorted(drained)
+            await asyncio.sleep(poll)
