@@ -1,0 +1,205 @@
+{
+  "generated_at": "2026-07-05T19:26:29",
+  "phase_summaries": {
+    "prefill_burst": {
+      "requests": 48,
+      "success": 48,
+      "success_pct": 100.0,
+      "valid_decode": 48,
+      "valid_decode_pct": 100.0,
+      "wall_s": 15.462881565093994,
+      "req_s": 3.1042079574841663,
+      "p50_latency_s": 4.061515808105469,
+      "p95_latency_s": 7.372836351394653,
+      "p99_latency_s": 7.376612424850464,
+      "completion_tokens": 4242,
+      "user_completion_tps": 274.3343782426632,
+      "prompt_tokens": 310270,
+      "total_tokens": 314512,
+      "prompt_tps": 20065.470895179424,
+      "total_tps": 20339.805273422087
+    },
+    "decode_bulk": {
+      "requests": 32,
+      "success": 32,
+      "success_pct": 100.0,
+      "valid_decode": 32,
+      "valid_decode_pct": 100.0,
+      "wall_s": 13.519670963287354,
+      "req_s": 2.366921509176958,
+      "p50_latency_s": 3.2597503662109375,
+      "p95_latency_s": 3.5700409412384033,
+      "p99_latency_s": 3.7701244354248047,
+      "completion_tokens": 12282,
+      "user_completion_tps": 908.4540617409812,
+      "prompt_tokens": 25540,
+      "total_tokens": 37822,
+      "prompt_tps": 1889.0992295118597,
+      "total_tps": 2797.5532912528406
+    },
+    "decode_tail": {
+      "requests": 24,
+      "success": 24,
+      "success_pct": 100.0,
+      "valid_decode": 24,
+      "valid_decode_pct": 100.0,
+      "wall_s": 13.853781938552856,
+      "req_s": 1.732378934968786,
+      "p50_latency_s": 3.162050247192383,
+      "p95_latency_s": 3.7916224002838135,
+      "p99_latency_s": 4.104543924331665,
+      "completion_tokens": 11491,
+      "user_completion_tps": 829.44859757193,
+      "prompt_tokens": 10141,
+      "total_tokens": 21632,
+      "prompt_tps": 732.0022824799357,
+      "total_tps": 1561.4508800518656
+    }
+  },
+  "overall_summary": {
+    "requests": 104,
+    "success": 104,
+    "success_pct": 100.0,
+    "valid_decode": 104,
+    "valid_decode_pct": 100.0,
+    "wall_s": 59.35057306289673,
+    "req_s": 1.7522998453576188,
+    "p50_latency_s": 3.567883014678955,
+    "p95_latency_s": 7.362310409545898,
+    "p99_latency_s": 7.376489162445068,
+    "completion_tokens": 28015,
+    "user_completion_tps": 472.0257708432086,
+    "prompt_tokens": 345951,
+    "total_tokens": 373966,
+    "prompt_tps": 5828.941190397246,
+    "total_tps": 6300.966961240455
+  },
+  "pod_allocation": {
+    "sample_count": 71,
+    "gpu_allocated_seconds": 986.3399624824524,
+    "prefill_allocated_seconds": 505.4195468425751,
+    "decode_allocated_seconds": 480.9204156398773,
+    "avg_ready_workers": 3.0142857142857142,
+    "min_ready_workers": 2,
+    "max_ready_workers": 6
+  },
+  "request_window_pod_allocation": {
+    "sample_count": 13,
+    "gpu_allocated_seconds": 198.62333846092224,
+    "prefill_allocated_seconds": 113.09993648529053,
+    "decode_allocated_seconds": 85.52340197563171,
+    "avg_ready_workers": 3.5,
+    "min_ready_workers": 3,
+    "max_ready_workers": 4
+  },
+  "s2_history_count": 7,
+  "s2_executed_count": 1,
+  "s2_evaluation_summary": {
+    "count": 259,
+    "max_prefill_queue_depth": 2,
+    "max_decode_queue_depth": 16,
+    "max_prefill_worker_active": 0,
+    "max_decode_worker_active": 16,
+    "selected_actions": [
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode",
+      "prefill_to_decode"
+    ],
+    "top_skip_reasons": [
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1,decode_worker_count=0>1,decode_target_available=0>0;p_to_d_blocked:decode_queue_depth=0>=1",
+        97
+      ],
+      [
+        "d_to_p_blocked:decode_worker_count=0>1,decode_target_available=0>0;p_to_d_blocked:decode_queue_depth=0>=1",
+        40
+      ],
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1,decode_worker_count=1>1;p_to_d_blocked:decode_queue_depth=0>=1",
+        35
+      ],
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1;p_to_d_blocked:decode_queue_depth=0>=1",
+        25
+      ],
+      [
+        "d_to_p_blocked:decode_worker_count=1>1;p_to_d_blocked:decode_queue_depth=0>=1",
+        12
+      ]
+    ]
+  },
+  "s3_history_count": 2,
+  "s3_executed_pairs": 1,
+  "s3_migrated_requests": 8,
+  "s3_scaled_down_to": [
+    1
+  ],
+  "s3_drained_sources": [
+    "vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b72z8dk"
+  ],
+  "scenario": "mixed_strategy",
+  "manifest_request_count": 104,
+  "initial_topology": {
+    "prefill": 1,
+    "decode": 1
+  },
+  "warmup_target": {
+    "prefill": 2,
+    "decode": 2
+  },
+  "preparation": {
+    "setup_start_ts": 1783250238.7916288,
+    "signal_ts": 1783250285.5131657,
+    "ready_ts": 1783250441.4391599,
+    "serving_start_ts": 1783250457.0316076,
+    "preparation_s": 218.2399787902832,
+    "signal_to_ready_s": 155.92599415779114
+  }
+}

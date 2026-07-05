@@ -188,6 +188,33 @@ def start_frontend_pf() -> subprocess.Popen:
     return proc
 
 
+def wait_frontend_chat_ready(timeout_s: int = 180) -> None:
+    deadline = time.time() + timeout_s
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": "RL_SCALING_READINESS ping"}],
+        "max_tokens": 1,
+        "temperature": 0,
+        "stream": False,
+    }
+    while time.time() < deadline:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{FRONTEND_LOCAL}/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.getcode() == 200:
+                    return
+        except Exception:
+            time.sleep(2)
+            continue
+        time.sleep(2)
+    raise TimeoutError("Dynamo frontend chat completion endpoint did not become model-ready")
+
+
 def start_controller_pf() -> subprocess.Popen:
     proc = start_port_forward(f"svc/{CONTROLLER_DEPLOY}", CONTROLLER_LOCAL, 8080, CONTROLLER_NS)
     try:

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
+from math import ceil
 from typing import Optional
 
 import uvicorn
@@ -33,6 +35,46 @@ class StrategyRuntime:
     s2: Optional[ElasticRoleSwitchController] = None
     s3: Optional[ConsolidationController] = None
     tick_errors: list[str] = field(default_factory=list)
+    prefill_pressure_hint: int = 0
+    prefill_pressure_hint_until: float = 0.0
+    decode_pressure_hint: int = 0
+    decode_pressure_hint_until: float = 0.0
+    latest_batch_meta: dict = field(default_factory=dict)
+
+    def record_sampling_progress(self, progress: float, batch_meta: dict) -> None:
+        self.batch_completion_pct = progress
+        self.latest_batch_meta = dict(batch_meta or {})
+        now = time.monotonic()
+        batch_size = int(self.latest_batch_meta.get("batch_size") or 0)
+        avg_isl = int(self.latest_batch_meta.get("avg_isl") or 0)
+        avg_osl = int(self.latest_batch_meta.get("avg_osl") or 0)
+        if avg_isl >= 1024 and batch_size > 0:
+            self.prefill_pressure_hint = max(1, ceil(batch_size / 64))
+            self.prefill_pressure_hint_until = now + 45.0
+        elif progress >= 0.9:
+            self.prefill_pressure_hint = 0
+            self.prefill_pressure_hint_until = 0.0
+        if progress >= 0.9 and avg_osl >= 512 and batch_size > 0:
+            self.decode_pressure_hint = max(1, ceil(batch_size / 64))
+            self.decode_pressure_hint_until = now + 45.0
+
+    def record_sampling_done(self, batch_meta: dict) -> None:
+        self.latest_batch_meta = dict(batch_meta or {})
+        self.prefill_pressure_hint = 0
+        self.prefill_pressure_hint_until = 0.0
+        batch_size = int(self.latest_batch_meta.get("batch_size") or 0)
+        avg_osl = int(self.latest_batch_meta.get("avg_osl") or 0)
+        if avg_osl >= 512 and batch_size > 0:
+            self.decode_pressure_hint = max(1, ceil(batch_size / 64))
+            self.decode_pressure_hint_until = time.monotonic() + 45.0
+
+    def apply_signal_hints(self, cluster):
+        now = time.monotonic()
+        if self.prefill_pressure_hint and now <= self.prefill_pressure_hint_until:
+            cluster.prefill_queue_depth = max(cluster.prefill_queue_depth, self.prefill_pressure_hint)
+        if self.decode_pressure_hint and now <= self.decode_pressure_hint_until:
+            cluster.decode_queue_depth = max(cluster.decode_queue_depth, self.decode_pressure_hint)
+        return cluster
 
     def status(self) -> dict:
         def _s2_history():
@@ -115,6 +157,17 @@ class StrategyRuntime:
             "batch_completion_pct": self.batch_completion_pct,
             "s2_enabled": self.s2 is not None,
             "s3_enabled": self.s3 is not None,
+            "signal_hints": {
+                "prefill_pressure_hint": self.prefill_pressure_hint,
+                "prefill_pressure_active": bool(
+                    self.prefill_pressure_hint and time.monotonic() <= self.prefill_pressure_hint_until
+                ),
+                "decode_pressure_hint": self.decode_pressure_hint,
+                "decode_pressure_active": bool(
+                    self.decode_pressure_hint and time.monotonic() <= self.decode_pressure_hint_until
+                ),
+                "latest_batch_meta": self.latest_batch_meta,
+            },
             "s2_history": _s2_history(),
             "s2_evaluations": _s2_evaluations(),
             "s3_history": _s3_history(),
@@ -186,10 +239,12 @@ def build(
             config=cfg,
             metrics=metrics,
             client=DualModeClient(timeout=90.0),
+            cluster_metrics_adjuster=strategy.apply_signal_hints,
         )
     app = create_app(
         lambda: sm,
-        on_sampling_progress=lambda progress: setattr(strategy, "batch_completion_pct", progress),
+        on_sampling_progress=strategy.record_sampling_progress,
+        on_sampling_done=strategy.record_sampling_done,
         strategy_status_factory=strategy.status,
     )
     return cfg, sm, app, strategy

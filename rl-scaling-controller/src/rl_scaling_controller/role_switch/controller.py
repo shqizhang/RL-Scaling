@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from ..config import ControllerConfig
 from ..metrics_collector import ClusterMetrics, MetricsCollectorProtocol
@@ -51,6 +51,7 @@ class ElasticRoleSwitchController:
     metrics: MetricsCollectorProtocol
     client: DualModeClient
     clock: callable = field(default=time.monotonic)
+    cluster_metrics_adjuster: Optional[Callable[[ClusterMetrics], ClusterMetrics]] = None
     _last_switch_time: float = field(default=-1e18, init=False)
     history: List[RoleSwitchDecision] = field(default_factory=list, init=False)
     evaluation_history: List[RoleSwitchEvaluation] = field(default_factory=list, init=False)
@@ -220,6 +221,8 @@ class ElasticRoleSwitchController:
         if not self._can_switch():
             return None
         cluster = await self.metrics.get_cluster_metrics()
+        if self.cluster_metrics_adjuster is not None:
+            cluster = self.cluster_metrics_adjuster(cluster)
         decode_workers = list(getattr(cluster, "decode_workers", []) or [])
         prefill_workers = list(getattr(cluster, "prefill_workers", []) or [])
         if not decode_workers:

@@ -31,7 +31,8 @@ class _SamplingDoneBody(BaseModel):
 def create_app(
     state_machine_factory: Callable[[], ScalingStateMachine],
     *,
-    on_sampling_progress: Optional[Callable[[float], None]] = None,
+    on_sampling_progress: Optional[Callable[[float, Dict[str, Any]], None]] = None,
+    on_sampling_done: Optional[Callable[[Dict[str, Any]], None]] = None,
     strategy_status_factory: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> FastAPI:
     """Build a FastAPI app that delegates to the supplied state machine.
@@ -75,7 +76,7 @@ def create_app(
     async def sampling_progress(body: _SamplingProgressBody) -> Dict[str, Any]:
         sm = state_machine_factory()
         if on_sampling_progress is not None:
-            on_sampling_progress(body.progress)
+            on_sampling_progress(body.progress, body.batch_meta.model_dump())
         try:
             new_state = sm.on_sampling_progress(body.progress, body.batch_meta.model_dump())
         except ValueError as exc:
@@ -85,6 +86,8 @@ def create_app(
     @app.post("/api/v1/signals/sampling_done")
     async def sampling_done(body: _SamplingDoneBody) -> Dict[str, Any]:
         sm = state_machine_factory()
+        if on_sampling_done is not None:
+            on_sampling_done(body.batch_meta.model_dump())
         try:
             new_state = sm.on_sampling_done(body.batch_meta.model_dump())
         except ValueError as exc:

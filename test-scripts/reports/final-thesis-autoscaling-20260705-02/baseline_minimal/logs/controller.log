@@ -1,0 +1,110 @@
+/app/rl-scaling-controller/src/rl_scaling_controller/main.py:280: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+/app/rl-scaling-controller/src/rl_scaling_controller/main.py:284: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     10.244.0.1:58556 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:37466 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:40664 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:40672 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:44846 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43224 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60752 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60764 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60806 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60838 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60914 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:34610 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60980 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57176 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57222 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:50814 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57290 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:50824 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37650 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37726 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37758 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37798 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37794 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37866 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:54546 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53466 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53516 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53578 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:57268 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47218 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47234 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47262 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47270 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47328 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:36340 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47400 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:36344 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48926 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48990 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49034 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49048 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:52300 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49096 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44560 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44622 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44660 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:59978 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44714 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50760 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50820 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:53054 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50900 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:53058 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42848 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42900 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42978 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:47552 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43046 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40922 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40968 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41034 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:32834 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52608 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52650 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52682 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:37510 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:37518 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:34024 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:44564 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49804 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49818 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:48498 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33974 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33620 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33628 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33502 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:52550 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49970 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49982 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:34212 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:33946 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:42644 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:42656 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49706 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:38192 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49312 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49328 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:42108 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:52116 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:35976 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:35990 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:40716 - "GET /api/v1/status HTTP/1.1" 200 OK
