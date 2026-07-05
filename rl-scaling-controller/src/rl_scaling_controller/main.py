@@ -87,11 +87,36 @@ class StrategyRuntime:
                 )
             return rows
 
+        def _s2_evaluations():
+            if not self.s2:
+                return []
+            rows = []
+            for item in self.s2.evaluation_history[-30:]:
+                rows.append(
+                    {
+                        "at": item.at,
+                        "prefill_queue_depth": item.prefill_queue_depth,
+                        "decode_queue_depth": item.decode_queue_depth,
+                        "prefill_utilization": item.prefill_utilization,
+                        "decode_utilization": item.decode_utilization,
+                        "prefill_worker_count": item.prefill_worker_count,
+                        "decode_worker_count": item.decode_worker_count,
+                        "prefill_worker_active": item.prefill_worker_active,
+                        "decode_worker_active": item.decode_worker_active,
+                        "prefill_workers": item.prefill_workers,
+                        "decode_workers": item.decode_workers,
+                        "selected_action": item.selected_action,
+                        "skip_reason": item.skip_reason,
+                    }
+                )
+            return rows
+
         return {
             "batch_completion_pct": self.batch_completion_pct,
             "s2_enabled": self.s2 is not None,
             "s3_enabled": self.s3 is not None,
             "s2_history": _s2_history(),
+            "s2_evaluations": _s2_evaluations(),
             "s3_history": _s3_history(),
             "tick_errors": self.tick_errors[-20:],
         }

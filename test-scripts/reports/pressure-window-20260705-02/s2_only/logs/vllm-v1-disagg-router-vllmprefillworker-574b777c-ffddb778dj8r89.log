@@ -1,0 +1,2 @@
+[2m2026-07-05T08:50:52.693033Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=589): 6 instances, added=[], removed=["14c5061cf202a9"], updated=[]
+[2m2026-07-05T08:54:25.048380Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=594): 7 instances, added=["1c650509c45d82"], removed=[], updated=[]

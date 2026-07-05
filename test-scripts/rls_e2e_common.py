@@ -572,6 +572,46 @@ def s3_history(status_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def s2_evaluations(status_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in status_rows:
+        for item in ((row.get("status") or {}).get("strategy") or {}).get("s2_evaluations") or []:
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key not in seen:
+                seen.add(key)
+                rows.append(item)
+    return rows
+
+
+def summarize_s2_evaluations(status_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = s2_evaluations(status_rows)
+    if not rows:
+        return {
+            "count": 0,
+            "max_prefill_queue_depth": 0,
+            "max_decode_queue_depth": 0,
+            "max_prefill_worker_active": 0,
+            "max_decode_worker_active": 0,
+            "selected_actions": [],
+            "top_skip_reasons": [],
+        }
+    skip_counts: dict[str, int] = {}
+    for row in rows:
+        reason = str(row.get("skip_reason") or "")
+        if reason:
+            skip_counts[reason] = skip_counts.get(reason, 0) + 1
+    return {
+        "count": len(rows),
+        "max_prefill_queue_depth": max(int(row.get("prefill_queue_depth", 0) or 0) for row in rows),
+        "max_decode_queue_depth": max(int(row.get("decode_queue_depth", 0) or 0) for row in rows),
+        "max_prefill_worker_active": max(int(row.get("prefill_worker_active", 0) or 0) for row in rows),
+        "max_decode_worker_active": max(int(row.get("decode_worker_active", 0) or 0) for row in rows),
+        "selected_actions": [row.get("selected_action") for row in rows if row.get("selected_action")],
+        "top_skip_reasons": sorted(skip_counts.items(), key=lambda item: item[1], reverse=True)[:5],
+    }
+
+
 def capture_logs(out_dir: Path, since_iso: str) -> None:
     log_dir = out_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -634,6 +674,7 @@ def finalize_artifacts(
         ),
         "s2_history_count": len(s2_history(status_rows)),
         "s2_executed_count": sum(1 for item in s2_history(status_rows) if item.get("executed")),
+        "s2_evaluation_summary": summarize_s2_evaluations(status_rows),
         "s3_history_count": len(s3_history(status_rows)),
         "s3_executed_pairs": sum(int(item.get("executed_pairs", 0) or 0) for item in s3_history(status_rows)),
         "s3_migrated_requests": sum(int(item.get("migrated_requests", 0) or 0) for item in s3_history(status_rows)),
