@@ -1,0 +1,37 @@
+/app/rl-scaling-controller/src/rl_scaling_controller/main.py:200: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+/app/rl-scaling-controller/src/rl_scaling_controller/main.py:204: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     10.244.0.1:39214 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:47024 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:52438 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:41404 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:34210 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55566 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:55570 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:48086 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:45086 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:59266 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:59272 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:37210 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49092 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49294 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:49296 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:44098 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:41814 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:52648 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     10.244.0.1:52654 - "GET /api/v1/status HTTP/1.1" 200 OK

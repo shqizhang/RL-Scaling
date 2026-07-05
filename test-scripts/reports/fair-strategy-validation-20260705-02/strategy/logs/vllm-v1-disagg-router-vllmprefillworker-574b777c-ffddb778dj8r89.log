@@ -1,0 +1,7 @@
+[2m2026-07-05T04:10:51.394188Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=535): 6 instances, added=[], removed=["15487874c98b88"], updated=[]
+[2m2026-07-05T04:10:53.578471Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7djwr8': invalid type: null, expected a map
+[2m2026-07-05T04:10:53.578839Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=536): 5 instances, added=[], removed=["17e6965a3c75d3"], updated=[]
+[2m2026-07-05T04:11:01.405067Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7djwr8': invalid type: null, expected a map
+[2m2026-07-05T04:11:03.811825Z[0m [33m WARN[0m [2mdynamo_runtime::discovery::kube::daemon[0m[2m:[0m Failed to deserialize metadata from CR 'vllm-v1-disagg-router-vllmdecodeworker-574b777c-54d9c4d8b7djwr8': invalid type: null, expected a map
+[2m2026-07-05T04:14:07.117996Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=544): 6 instances, added=["1a9f33f02cda23"], removed=[], updated=[]
+[2m2026-07-05T04:16:35.221851Z[0m [32m INFO[0m [2mdynamo_runtime::discovery::metadata[0m[2m:[0m Snapshot (seq=549): 7 instances, added=["180360fc8ebb76"], removed=[], updated=[]

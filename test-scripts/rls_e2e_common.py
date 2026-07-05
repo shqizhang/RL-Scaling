@@ -236,6 +236,68 @@ def prompt_text(phase: str, idx: int, words: int) -> str:
     return base + filler
 
 
+def build_fair_manifest(total_repeats: int = 1) -> list[dict[str, Any]]:
+    """Build one deterministic workload manifest shared by all fair scenarios.
+
+    The manifest intentionally mixes prefill-heavy, balanced decode, and long
+    tail decode requests. Every scenario consumes the same list in the same
+    order so timing and GPU allocation comparisons are not distorted by
+    request-count or prompt-shape differences.
+    """
+    rows: list[dict[str, Any]] = []
+    idx = 1
+    for repeat in range(total_repeats):
+        for i in range(24):
+            rows.append(
+                {
+                    "manifest_id": idx,
+                    "phase": "prefill_peak",
+                    "words": 1200,
+                    "max_tokens": 128,
+                    "concurrency": 8,
+                    "repeat": repeat,
+                    "shape": "long_prompt_short_decode",
+                }
+            )
+            idx += 1
+        for i in range(24):
+            rows.append(
+                {
+                    "manifest_id": idx,
+                    "phase": "decode_head",
+                    "words": 256,
+                    "max_tokens": 384,
+                    "concurrency": 8,
+                    "repeat": repeat,
+                    "shape": "balanced_decode",
+                }
+            )
+            idx += 1
+        for i in range(24):
+            rows.append(
+                {
+                    "manifest_id": idx,
+                    "phase": "decode_tail",
+                    "words": 128,
+                    "max_tokens": 1536,
+                    "concurrency": 6,
+                    "repeat": repeat,
+                    "shape": "short_prompt_long_tail_decode",
+                }
+            )
+            idx += 1
+    return rows
+
+
+def write_manifest(path: Path, manifest: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in manifest) + "\n", encoding="utf-8")
+
+
+def load_manifest(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def parse_response(raw: bytes) -> dict[str, Any]:
     try:
         obj = json.loads(raw.decode("utf-8"))
@@ -303,6 +365,21 @@ def submit_request(phase: str, idx: int, words: int, max_tokens: int, out_dir: P
     }
 
 
+def submit_manifest_request(item: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+    phase = str(item["phase"])
+    idx = int(item["manifest_id"])
+    row = submit_request(phase, idx, int(item["words"]), int(item["max_tokens"]), out_dir)
+    row.update(
+        {
+            "manifest_id": idx,
+            "shape": item.get("shape", ""),
+            "manifest_words": item.get("words", ""),
+            "manifest_max_tokens": item.get("max_tokens", ""),
+        }
+    )
+    return row
+
+
 def run_wave(phase: str, count: int, concurrency: int, words: int, max_tokens: int, out_dir: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -310,6 +387,20 @@ def run_wave(phase: str, count: int, concurrency: int, words: int, max_tokens: i
         for future in as_completed(futures):
             rows.append(future.result())
     rows.sort(key=lambda r: int(r["idx"]))
+    return rows
+
+
+def run_manifest_phase(manifest: list[dict[str, Any]], phase: str, out_dir: Path) -> list[dict[str, Any]]:
+    items = [row for row in manifest if row["phase"] == phase]
+    if not items:
+        return []
+    concurrency = max(1, int(items[0].get("concurrency", 1)))
+    rows: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(submit_manifest_request, item, out_dir) for item in items]
+        for future in as_completed(futures):
+            rows.append(future.result())
+    rows.sort(key=lambda r: int(r["manifest_id"]))
     return rows
 
 
@@ -340,6 +431,75 @@ def summarize_wave(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "p99_latency_s": percentile(lats, 0.99),
         "completion_tokens": completion,
         "user_completion_tps": (completion / wall) if wall > 0 else 0.0,
+    }
+
+
+def summarize_all_requests(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = summarize_wave(rows)
+    summary["prompt_tokens"] = sum(int(r.get("prompt_tokens", 0) or 0) for r in rows if int(r.get("http_code", 0)) == 200)
+    summary["total_tokens"] = sum(int(r.get("total_tokens", 0) or 0) for r in rows if int(r.get("http_code", 0)) == 200)
+    wall = float(summary.get("wall_s", 0.0) or 0.0)
+    summary["prompt_tps"] = (summary["prompt_tokens"] / wall) if wall > 0 else 0.0
+    summary["total_tps"] = (summary["total_tokens"] / wall) if wall > 0 else 0.0
+    return summary
+
+
+def summarize_pod_allocation(rows: list[dict[str, Any]], start_ts: float | None = None, end_ts: float | None = None) -> dict[str, Any]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            ts = float(row.get("ts", 0.0))
+        except Exception:
+            continue
+        if start_ts is not None and ts < start_ts:
+            continue
+        if end_ts is not None and ts > end_ts:
+            continue
+        if row.get("name") == "sampler_error":
+            continue
+        key = str(row.get("iso") or round(ts))
+        bucket = by_key.setdefault(key, {"ts": ts, "prefill": 0, "decode": 0, "total": 0})
+        bucket["ts"] = min(float(bucket["ts"]), ts)
+        if row.get("ready_prefill_count") not in (None, "") and row.get("ready_decode_count") not in (None, ""):
+            prefill = int(float(row.get("ready_prefill_count") or 0))
+            decode = int(float(row.get("ready_decode_count") or 0))
+            bucket["prefill"] = max(int(bucket["prefill"]), prefill)
+            bucket["decode"] = max(int(bucket["decode"]), decode)
+            bucket["total"] = max(int(bucket["total"]), prefill + decode)
+            continue
+        if row.get("phase") == "Running" and str(row.get("ready")) in {"True", "true", "1"}:
+            if row.get("component") == "VllmPrefillWorker":
+                bucket["prefill"] += 1
+            elif row.get("component") == "VllmDecodeWorker":
+                bucket["decode"] += 1
+            bucket["total"] = int(bucket["prefill"]) + int(bucket["decode"])
+    points = sorted((float(v["ts"]), v) for v in by_key.values())
+    if len(points) < 2:
+        return {
+            "sample_count": len(points),
+            "gpu_allocated_seconds": 0.0,
+            "prefill_allocated_seconds": 0.0,
+            "decode_allocated_seconds": 0.0,
+            "avg_ready_workers": 0.0,
+            "min_ready_workers": 0,
+            "max_ready_workers": 0,
+        }
+    gpu_s = prefill_s = decode_s = 0.0
+    totals: list[int] = []
+    for (ts, value), (next_ts, _) in zip(points, points[1:]):
+        dt = max(0.0, next_ts - ts)
+        gpu_s += value["total"] * dt
+        prefill_s += value["prefill"] * dt
+        decode_s += value["decode"] * dt
+        totals.append(value["total"])
+    return {
+        "sample_count": len(points),
+        "gpu_allocated_seconds": gpu_s,
+        "prefill_allocated_seconds": prefill_s,
+        "decode_allocated_seconds": decode_s,
+        "avg_ready_workers": (sum(totals) / len(totals)) if totals else 0.0,
+        "min_ready_workers": min(totals) if totals else 0,
+        "max_ready_workers": max(totals) if totals else 0,
     }
 
 
@@ -390,15 +550,25 @@ def status_sample(status_rows: list[dict[str, Any]], label: str) -> None:
 
 def s2_history(status_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for row in status_rows:
-        rows.extend(((row.get("status") or {}).get("strategy") or {}).get("s2_history") or [])
+        for item in ((row.get("status") or {}).get("strategy") or {}).get("s2_history") or []:
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key not in seen:
+                seen.add(key)
+                rows.append(item)
     return rows
 
 
 def s3_history(status_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for row in status_rows:
-        rows.extend(((row.get("status") or {}).get("strategy") or {}).get("s3_history") or [])
+        for item in ((row.get("status") or {}).get("strategy") or {}).get("s3_history") or []:
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key not in seen:
+                seen.add(key)
+                rows.append(item)
     return rows
 
 
@@ -432,6 +602,8 @@ def finalize_artifacts(
         requests,
         [
             "phase",
+            "manifest_id",
+            "shape",
             "idx",
             "start_ts",
             "end_ts",
@@ -453,6 +625,13 @@ def finalize_artifacts(
     summary = {
         "generated_at": ts_iso(),
         "phase_summaries": phase_summaries,
+        "overall_summary": summarize_all_requests(requests),
+        "pod_allocation": summarize_pod_allocation(pod_samples),
+        "request_window_pod_allocation": summarize_pod_allocation(
+            pod_samples,
+            min((float(r["start_ts"]) for r in requests), default=None),
+            max((float(r["end_ts"]) for r in requests), default=None),
+        ),
         "s2_history_count": len(s2_history(status_rows)),
         "s2_executed_count": sum(1 for item in s2_history(status_rows) if item.get("executed")),
         "s3_history_count": len(s3_history(status_rows)),
