@@ -174,14 +174,21 @@ class PrometheusMetricsCollector:
 
     async def get_worker_states(self) -> List[WorkerState]:
         workers: List[WorkerState] = []
-        for component, role in (
-            ("VllmDecodeWorker", "decode"),
-            ("VllmPrefillWorker", "prefill"),
+        # Only the decode-origin component runs with DYNAMO_RL_DUAL_MODE=1 and can
+        # flip its role via the sidecar's /switch_role. Native prefill workers now
+        # also expose a *read-only* sidecar (/v1/role, /v1/active_requests) but have
+        # no DualModeWorker, so /switch_role returns 503. They must never be picked
+        # as an S2 switch target — hence dual_mode_capable is carried per component.
+        for component, role, dual_mode_capable in (
+            ("VllmDecodeWorker", "decode", True),
+            ("VllmPrefillWorker", "prefill", False),
         ):
-            workers.extend(await self._discover_component_workers(component, role))
+            workers.extend(await self._discover_component_workers(component, role, dual_mode_capable))
         return workers
 
-    async def _discover_component_workers(self, component: str, expected_role: str) -> List[WorkerState]:
+    async def _discover_component_workers(
+        self, component: str, expected_role: str, dual_mode_capable: bool = True
+    ) -> List[WorkerState]:
         label_selector = (
             f"nvidia.com/dynamo-component={component},"
             f"nvidia.com/dynamo-graph-deployment-name={self.dgd_name}"
@@ -210,7 +217,13 @@ class PrometheusMetricsCollector:
             addr = f"http://{pod_ip}:{self.worker_sidecar_port}"
             role = await self._sidecar_role(addr)
             active = await self._sidecar_active_count(addr)
-            switch_capable = role in {"prefill", "decode"} and active is not None
+            # A worker can only be an S2 switch target if it originates from the
+            # dual-mode component (decode worker). A native prefill worker answers
+            # /v1/role and /v1/active_requests but cannot flip role (/switch_role
+            # -> 503), so it must be excluded from switch-target selection.
+            switch_capable = (
+                dual_mode_capable and role in {"prefill", "decode"} and active is not None
+            )
             if not switch_capable and expected_role == "prefill":
                 role = "prefill"
                 healthy = True

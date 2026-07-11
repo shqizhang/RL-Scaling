@@ -62,6 +62,16 @@ spec:
           value: "1"
         - name: DYNAMO_RL_SIDECAR_PORT
           value: "9091"
+        # S2: serve a real partner-prefill endpoint after a D->P switch so
+        # the frontend router actually dispatches prefill traffic to this
+        # worker (without this the switch is in-process only and prefill
+        # throughput does not improve).
+        - name: DYNAMO_RL_DUAL_PARTNER_PREFILL
+          value: "1"
+        # S3: use the NIXL connector migration path (kv_transfer_params /
+        # src_block_ids) instead of the recompute-prefill fallback.
+        - name: DYNAMO_RL_CONNECTOR_ENABLED
+          value: "1"
       resources:
         limits:
           gpu: "1"

@@ -232,14 +232,27 @@ def wait_http(url: str, timeout_s: int = 60) -> None:
 
 def controller_json(port: int, path: str, method: str = "GET", body: dict[str, Any] | None = None) -> dict[str, Any]:
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method=method,
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    # Retry on transient errors. These calls go through a kubectl port-forward
+    # over an SSH tunnel, which can momentarily drop or stall; a single blip on
+    # a control signal (send_progress/send_done) must not crash the whole suite
+    # and pollute the run with an infra-induced failure.
+    attempts = 4
+    last_error: Exception | None = None
+    for i in range(attempts):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+            last_error = exc
+            if i < attempts - 1:
+                time.sleep(1.5 * (i + 1))
+    raise TimeoutError(f"controller_json failed after {attempts} attempts: {method} {path}: {last_error}")
 
 
 def local_post_json(port: int, path: str, body: dict[str, Any], timeout: int = 30) -> Any:
