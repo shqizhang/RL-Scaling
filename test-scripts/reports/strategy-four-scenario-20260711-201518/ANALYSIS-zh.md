@@ -66,6 +66,32 @@
 4. **Mixed**：拿到 S2 prefill 收益，但同样被 disagg tail 挂起拖累，S3 未触发。
 5. **限制/根因**：核心阻塞是 Dynamo/vLLM/NIXL disagg KV 传输在「动态 2P2D」和「role 切回」下会挂起 / 泄漏 connector 显存；这不在 RL-Scaling S2/S3 逻辑内，RL-Scaling 侧的镜像、RBAC、controller、telemetry、trigger、drain 均已正确实现并部署。
 
+## 5.1 为什么 mixed 的 prefill(178.9s) 比 s2_only(146.8s) 还慢？
+
+结论先行：**这不是 S2 timeout 问题，而是 run-to-run 方差 + 测量口径混淆（prefill 阶段其实是 decode-bound）。**
+
+1. **不是 timeout**：三个场景的 `prefill_burst` 都是 80/80 valid、**timeout=0**。tail timeout 在 decode_tail 阶段，与 prefill 阶段无关。
+2. **不是拓扑扰动**：mixed 的 D->P 在 20:58:16 完成，prefill_burst 20:58:18→21:01:17 全程稳定 3P1D，P->D 直到 21:01:52（prefill 结束后）才发生；S2 恰好 2 次切换、无 churn，switch latency 与 s2_only 相当。整个延迟分布均匀上移（p50 32.6 vs 24.7、p95 59.7 vs 49.1），不是个别慢请求。
+3. **根因：prefill_burst 在 3P1D 下是 decode-bound，不是 prefill-bound**。该阶段每请求只出 48 个 token，3 个 prefill worker 让 prefill 很快，真正的瓶颈是**唯一的那 1 个 decode worker**（3P1D 只剩 1 decode）。证据：completion_tps baseline=12.9（1P 被 prefill 卡住）、s2_only=26.2、mixed=21.5——都在「1 个 decode worker 的出 token 速率」量级。所以 s2_only 与 mixed 都落在同一个 decode-bound 地板上，146.8 vs 178.9 的差异是那 1 个 decode worker（叠加不稳定的 NIXL disagg 传输）throughput 的方差。
+4. **为什么单看数据会误导**：本轮每场景只跑 1 次（`test-strategy.md` 明确本轮不估方差）。在一个 decode-bound、且底层 disagg 传输本就不稳定的阶段，单次 22% 的差异完全落在噪声范围内，不能解读为「S2 vs mixed 有系统性差异」。事实上正如你所说，mixed 里 S2 已经执行、拓扑与 s2_only 相同，二者 prefill 期望应当相等——数据也支持这一点，差异是噪声。
+
+**如何让该对比更合理：**
+
+- (a) **每场景多跑（>=3 次）报 mean±stdev**：单次无法区分 22% 噪声与信号。这是本轮最大的口径缺陷。
+- (b) **去混淆 prefill 测量**：prefill_burst 用 `max_tokens=48`，在 3P1D 下被单个 decode worker 卡住，测的是 decode throughput 而非 prefill 容量。要纯测 prefill 容量，应把该阶段 `max_tokens` 设为 1（或极小），使其 prefill-bound；此时 s2_only 与 mixed 的 prefill 应当相等（都是 3P），才能干净对比 S2 的 prefill 收益。
+- (c) **先修 §3 的 disagg 传输不稳定**：稳定后 decode/传输 throughput 方差下降，跨场景可比性提高。
+- (d) 加同拓扑 baseline、并 interleave/随机化请求顺序。
+
+## 5.2 NIXL connector 泄漏为什么无法在 RL-Scaling 层修复（调查结论）
+
+对「切回后释放已传输 KV block」的修复做了完整调查，结论是**当前 vLLM 版本没有可用的干净接口，须改 vLLM 本身**：
+
+- `NixlConnector.reset_cache()` 在本版本是 **no-op**（只打日志「does not implement」），调用它不释放任何 block。
+- 被 pin 的 block 由 `NixlConnectorWorker`（引擎子进程内）的传输 bookkeeping 持有，且是 **NIXL/UCX 为 RDMA 注册（registered/pinned）的显存**——因此它们**连 `sleep(level=2)`（应丢弃 KV cache）都无法释放**，`reset_prefix_cache` 更无从释放（报「some blocks (2773) are not freed yet」）。
+- `AsyncLLM` 暴露的方法里（`reset_prefix_cache/reset_encoder_cache/reset_mm_cache/abort/wait_for_requests_to_drain/sleep/wake_up/collective_rpc`）没有任何一个能触发 connector 释放注册显存。理论上可用 `collective_rpc` 调 worker 内部方法，但 `NixlConnectorWorker` 没有暴露「释放全部注册 block / 清空 pending 传输」的方法，盲调内部方法风险高且难验证。
+
+因此正确修复必须在 **vLLM NixlConnector / Dynamo disagg 层**：实现一个真正的 connector reset（清空 pending send/recv、de-register 注册显存、释放 block ref），并通过 EngineCore RPC 暴露给 role-switch 调用。这是有风险的引擎级改动，需专门验证，不宜在本轮盲改。
+
 ## 6. 建议下一步（按优先级）
 
 1. **修 disagg KV 传输挂起（最高优先，解锁一切）**：在 vLLM NixlConnector / Dynamo disagg 层排查——(a) 多 decode worker 下 prefill→decode 传输是否路由到了持有该 KV 的正确 decode worker；(b) role/topology 变更后 connector 的注册显存与在途传输是否被正确 abort/释放（对应 `reset_prefix_cache` 报的数千 pinned block）。可先用「静态 2P2D（不 warmup、不切换）跑同 workload」与「动态 warmup 2P2D」对照复现：minimal S2 静态 2P2D 能干净服务 `max_tokens=48`，而 warmup 后不能。
