@@ -1,0 +1,23 @@
+{
+  "wall_by_scenario": {
+    "s3_only": 182.89704704284668
+  },
+  "tokens_per_gpu_s_by_scenario": {
+    "s3_only": 15.670028435094116
+  },
+  "best_wall_scenario": "s3_only",
+  "best_tokens_per_gpu_s_scenario": "s3_only",
+  "s2_prefill_wall_improvement_pct": 0.0,
+  "s2_wall_improvement_pct": 0.0,
+  "s3_wall_improvement_pct": 0.0,
+  "mixed_wall_improvement_pct": 0.0,
+  "s2_tokens_per_gpu_s_improvement_pct": 0.0,
+  "s3_tokens_per_gpu_s_improvement_pct": 0.0,
+  "mixed_tokens_per_gpu_s_improvement_pct": 0.0,
+  "s3_tail_decode_gpu_s_savings_pct": 100.0,
+  "mixed_tail_decode_gpu_s_savings_pct": 0.0,
+  "s2_only_s2_executed_count": 0,
+  "s3_only_migrated_requests": 1,
+  "mixed_s2_executed_count": 0,
+  "mixed_migrated_requests": 0
+}

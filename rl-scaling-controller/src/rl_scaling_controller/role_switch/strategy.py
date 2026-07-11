@@ -13,7 +13,11 @@ def find_most_idle_worker(
 
     Returns ``None`` when no worker matches.
     """
-    candidates: Sequence[WorkerState] = [w for w in workers if w.role == role]
+    candidates: Sequence[WorkerState] = [
+        w
+        for w in workers
+        if w.role == role and getattr(w, "healthy", True) and getattr(w, "switch_capable", True)
+    ]
     if not candidates:
         return None
     return min(candidates, key=lambda w: w.in_flight_requests)

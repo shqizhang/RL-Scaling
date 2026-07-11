@@ -1,0 +1,16 @@
+client_signal_send,completion_tokens,completion_tps,decode,env,event,http_5xx_count,iso,p50_latency_s,p95_latency_s,p99_latency_s,phase,prefill,prompt_tokens,prompt_tps,reason,req_s,requests,response,scenario,success,success_pct,timeout_count,total_tokens,total_tps,ts,valid_decode,valid_decode_pct,wall_s
+,,,,"{'CONTROL_LOOP_INTERVAL': '1', 'K8S_SCALE_FALLBACK_ENABLED': 'true', 'MAX_GPUS': '4', 'MIN_PREFILL_REPLICAS': '1', 'MIN_DECODE_REPLICAS': '1', 'MAX_CONCURRENT_PER_DECODE': '64', 'SINGLE_PREFILL_TPS': '50000', 'TARGET_PREFILL_SECONDS': '5', 'COOLDOWN_SECONDS': '20', 'DRAIN_TIMEOUT_SECONDS': '120', 'CONSOLIDATION_DRAIN_TIMEOUT': '120', 'CONSOLIDATION_DRAIN_POLL_INTERVAL': '1', 'PRE_WARM_THRESHOLD': '0.80', 'ROLE_SWITCH_ENABLED': 'true', 'CONSOLIDATION_ENABLED': 'false', 'CONSOLIDATION_SCALE_DOWN_ENABLED': 'false', 'PREFILL_QUEUE_THRESHOLD': '1', 'DECODE_QUEUE_THRESHOLD': '2', 'DECODE_IDLE_THRESHOLD': '0.30', 'PREFILL_IDLE_THRESHOLD': '0.30', 'MIN_SWITCH_INTERVAL': '60', 'RLS_TEST_RUN_ID': 's2_only-run-1-1783654512'}",controller_configured,,2026-07-10T11:35:29,,,,,,,,,,,,s2_only,,,,,,1783654529.0058503,,,
+,,,,,initial_1p1d_ready,,2026-07-10T11:35:47,,,,,,,,,,,,,,,,,,1783654547.96088,,,
+1783654561.3618686,,,,,T_signal_recv,,2026-07-10T11:36:03,,,,,,,,,,,"{'status': 'ok', 'state': 'warm_up'}",s2_only,,,,,,1783654563.3715923,,,
+,,,,,T_warmup_start,,2026-07-10T11:36:03,,,,,,,,,,,,s2_only,,,,,,1783654563.3716571,,,
+,,,2,,T_ready,,2026-07-10T11:39:23,,,,,2,,,,,,,s2_only,,,,,,1783654763.608095,,,
+,,,,,T_burst_arrival,,2026-07-10T11:39:23,,,,,,,,,,,,s2_only,,,,,,1783654763.608188,,,
+,,,,,prefill_pressure_signal,,2026-07-10T11:39:25,,,,,,,,,,,"{'status': 'ok', 'state': 'active'}",,,,,,,1783654765.6064687,,,
+,,,,,prefill_burst_start,,2026-07-10T11:39:32,,,,,,,,,,,,,,,,,,1783654772.0114534,,,
+,3840,79.29198576646756,,,prefill_burst_done,0,2026-07-10T11:40:20,9.348280429840088,13.082693338394165,14.62382960319519,,,887712,18330.32480956314,,1.6519163701347408,80,,,80,100.0,0,891552,18409.616795329606,1783654820.4442642,80,100.0,48.42860174179077
+,,,,,decode_pressure_signal,,2026-07-10T11:40:24,,,,,,,,,,,"{'status': 'ok', 'state': 'active'}",,,,,,,1783654824.3145475,,,
+,,,,,balanced_decode_start,,2026-07-10T11:40:29,,,,,,,,,,,,,,,,,,1783654829.453992,,,
+,12288,892.4878900990979,,,balanced_decode_done,0,2026-07-10T11:40:43,3.2728428840637207,3.964153289794922,3.966031789779663,,,45602,3312.1120413654835,,2.324187213799734,32,,,32,100.0,0,57890,4204.5999314645815,1783654843.22735,32,100.0,13.768254041671753
+,,,,,decode_tail_start,,2026-07-10T11:40:46,,,,,,,,,,,,,,,,,,1783654846.8605871,,,
+,512,3.767628491619053,,,decode_tail_done,0,2026-07-10T11:43:02,2.0182583332061768,2.249483823776245,120.01293277740479,,,5894,43.371879550005275,,0.12509703976078887,18,,,17,94.44444444444444,1,6406,47.139508041624325,1783654982.7570724,17,94.44444444444444,135.8945026397705
+,,,,,run_aborted_on_timeout,,2026-07-10T11:43:32,,,,decode_tail,,,,decode_tail timeout_count=1,,,,s2_only,,,,,,1783655012.7640786,,,

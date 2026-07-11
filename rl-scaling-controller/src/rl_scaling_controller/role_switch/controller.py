@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
@@ -242,7 +243,7 @@ class ElasticRoleSwitchController:
         )
         try:
             decision.result = self.client.switch_role(decision.worker_url, decision.to_role)
-            decision.executed = decision.result.status == "ok"
+            decision.executed = decision.result.status == "ok" and await self._verify_switch(decision)
             if decision.executed:
                 self._last_switch_time = self.clock()
             logger.info(
@@ -258,3 +259,45 @@ class ElasticRoleSwitchController:
             decision.executed = False
         self.history.append(decision)
         return decision
+
+    async def _verify_switch(self, decision: RoleSwitchDecision) -> bool:
+        deadline = self.clock() + self.config.role_switch_verify_timeout_seconds
+        last_role = "unknown"
+        last_discovered = False
+        while self.clock() < deadline:
+            try:
+                last_role = self.client.get_role(decision.worker_url)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("S2 post-switch role probe failed: worker=%s error=%s", decision.worker_url, exc)
+                last_role = "unknown"
+            try:
+                cluster = await self.metrics.get_cluster_metrics()
+                target_workers = (
+                    cluster.decode_workers if decision.to_role == "decode" else cluster.prefill_workers
+                )
+                last_discovered = any(
+                    worker is not None
+                    and getattr(worker, "addr", "") == decision.worker_url
+                    and getattr(worker, "role", "") == decision.to_role
+                    and getattr(worker, "healthy", True)
+                    for worker in target_workers
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("S2 post-switch discovery probe failed: worker=%s error=%s", decision.worker_url, exc)
+                last_discovered = False
+            if last_role == decision.to_role and last_discovered:
+                logger.info(
+                    "S2 post-switch verification passed: worker=%s role=%s",
+                    decision.worker_url,
+                    decision.to_role,
+                )
+                return True
+            await asyncio.sleep(self.config.role_switch_verify_poll_seconds)
+        logger.warning(
+            "S2 post-switch verification failed: worker=%s expected_role=%s last_role=%s discovered=%s",
+            decision.worker_url,
+            decision.to_role,
+            last_role,
+            last_discovered,
+        )
+        return False

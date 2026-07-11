@@ -70,6 +70,8 @@ class ControllerConfig:
     decode_idle_threshold: float = field(default_factory=lambda: _env_float("DECODE_IDLE_THRESHOLD", 0.2))
     prefill_idle_threshold: float = field(default_factory=lambda: _env_float("PREFILL_IDLE_THRESHOLD", 0.2))
     min_switch_interval_seconds: float = field(default_factory=lambda: _env_float("MIN_SWITCH_INTERVAL", 30.0))
+    role_switch_verify_timeout_seconds: float = field(default_factory=lambda: _env_float("ROLE_SWITCH_VERIFY_TIMEOUT", 30.0))
+    role_switch_verify_poll_seconds: float = field(default_factory=lambda: _env_float("ROLE_SWITCH_VERIFY_POLL_INTERVAL", 1.0))
 
     # ─── S3: Consolidation ───
     consolidation_enabled: bool = field(default_factory=lambda: _env_bool("CONSOLIDATION_ENABLED", False))

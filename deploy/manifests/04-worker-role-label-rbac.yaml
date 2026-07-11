@@ -1,0 +1,28 @@
+# Allows RL-Scaling sidecars inside Dynamo worker pods to publish their
+# runtime role as nvidia.com/dynamo-current-role on their own Pod object.
+#
+# The sidecar treats this label patch as best-effort observability; S2
+# correctness must still be validated through /v1/role and frontend probes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rl-scaling-worker-role-labeler
+  namespace: dynamo-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rl-scaling-worker-role-labeler
+  namespace: dynamo-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rl-scaling-worker-role-labeler
+subjects:
+  - kind: ServiceAccount
+    name: vllm-v1-disagg-router-k8s-service-discovery
+    namespace: dynamo-system

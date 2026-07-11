@@ -1,0 +1,2 @@
+event,iso,response,ts
+readiness_prefill_signal,2026-07-10T11:30:49,"{'status': 'ok', 'state': 'idle'}",1783654249.4405599

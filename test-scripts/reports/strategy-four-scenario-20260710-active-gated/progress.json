@@ -1,0 +1,9 @@
+{
+  "ts": 1783655031.3110876,
+  "iso": "2026-07-10T11:43:51",
+  "stage": "suite_aborted_on_timeout",
+  "scenario": "s2_only",
+  "repeat": 1,
+  "reason": "decode_tail timeout_count=1",
+  "report": "C:\\projects\\IP\\RL-Scaling\\test-scripts\\reports\\strategy-four-scenario-20260710-active-gated\\REPORT-zh.md"
+}

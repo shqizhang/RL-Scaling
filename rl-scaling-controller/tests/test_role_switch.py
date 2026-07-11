@@ -34,10 +34,15 @@ class FakeDualModeClient:
         self.status = status
         self.switch_time_ms = switch_time_ms
         self.calls = []
+        self.roles = {}
 
     def switch_role(self, worker_url: str, target_role: str) -> SwitchResult:
         self.calls.append((worker_url, target_role))
+        self.roles[worker_url] = target_role
         return SwitchResult(status=self.status, switch_time_ms=self.switch_time_ms, new_role=target_role)
+
+    def get_role(self, worker_url: str) -> str:
+        return self.roles.get(worker_url, "unknown")
 
 
 def _cfg(**overrides) -> ControllerConfig:
@@ -49,15 +54,35 @@ def _metrics_with(workers, cluster) -> InMemoryMetricsCollector:
     m = InMemoryMetricsCollector()
     m.cluster = cluster
 
+    def _sync_workers():
+        cluster.prefill_workers = [w for w in workers if w is not None and w.role == "prefill"]
+        cluster.decode_workers = [w for w in workers if w is not None and w.role == "decode"]
+
     async def _get_workers():
+        _sync_workers()
         return workers
 
     async def _get_cluster():
+        _sync_workers()
         return cluster
 
     m.get_decode_worker_states = _get_workers
     m.get_cluster_metrics = _get_cluster
     return m
+
+
+class VerifyingFakeDualModeClient(FakeDualModeClient):
+    def __init__(self, workers, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.workers = workers
+
+    def switch_role(self, worker_url: str, target_role: str) -> SwitchResult:
+        result = super().switch_role(worker_url, target_role)
+        if self.status == "ok":
+            for worker in self.workers:
+                if worker is not None and worker.addr == worker_url:
+                    worker.role = target_role
+        return result
 
 
 # --------------------------------------------------------------------- tests
@@ -89,7 +114,7 @@ class TestDecodeToPrefill:
             prefill_workers=[None, None], decode_workers=workers,
         )
         metrics = _metrics_with(workers, cluster)
-        client = FakeDualModeClient()
+        client = VerifyingFakeDualModeClient(workers)
         ctrl = ElasticRoleSwitchController(
             config=_cfg(min_decode_replicas=1, prefill_queue_threshold=10),
             metrics=metrics, client=client, clock=FakeClock(100.0),
@@ -123,7 +148,7 @@ class TestPrefillToDecode:
             prefill_workers=workers, decode_workers=[None, None],
         )
         metrics = _metrics_with(workers, cluster)
-        client = FakeDualModeClient()
+        client = VerifyingFakeDualModeClient(workers)
         ctrl = ElasticRoleSwitchController(
             config=_cfg(min_prefill_replicas=1, decode_queue_threshold=10),
             metrics=metrics, client=client, clock=FakeClock(100.0),
@@ -145,12 +170,13 @@ class TestDebounce:
         clock = FakeClock(1000.0)
         ctrl = ElasticRoleSwitchController(
             config=_cfg(min_switch_interval_seconds=30.0),
-            metrics=metrics, client=FakeDualModeClient(), clock=clock,
+            metrics=metrics, client=VerifyingFakeDualModeClient(workers), clock=clock,
         )
         first = await ctrl.evaluate_and_execute()
         assert first is not None and first.executed
         clock.advance(5)
         assert await ctrl.evaluate_and_execute() is None
+        workers[0].role = "decode"
         clock.advance(30)
         second = await ctrl.evaluate_and_execute()
         assert second is not None and second.executed

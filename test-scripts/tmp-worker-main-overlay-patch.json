@@ -1,0 +1,39 @@
+{
+  "spec": {
+    "template": {
+      "metadata": {
+        "annotations": {
+          "rl-scaling.openai.com/main-py-overlay": "2026-07-10T18:55:00+08:00"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "main",
+            "volumeMounts": [
+              {
+                "mountPath": "/opt/dynamo/venv/lib/python3.12/site-packages/dynamo/vllm/main.py",
+                "name": "rl-sidecar-main-patch",
+                "subPath": "main.py"
+              },
+              {
+                "mountPath": "/opt/dynamo/venv/lib/python3.12/site-packages/dynamo/vllm/dual_mode.py",
+                "name": "rl-sidecar-main-patch",
+                "subPath": "dual_mode.py"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "configMap": {
+              "defaultMode": 420,
+              "name": "rl-sidecar-main-patch"
+            },
+            "name": "rl-sidecar-main-patch"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -49,6 +49,13 @@ class DualModeClient:
             new_role=body.get("new_role", target_role),
         )
 
+    def get_role(self, worker_url: str) -> str:
+        url = worker_url.rstrip("/") + "/v1/role"
+        resp = self._client.get(url)
+        resp.raise_for_status()
+        body = resp.json()
+        return str(body.get("current_role") or "unknown")
+
     def close(self) -> None:
         if self._owns_client:
             self._client.close()

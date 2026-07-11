@@ -17,6 +17,9 @@ class WorkerState:
     active_kv_blocks: int = 0
     available_capacity: int = 0
     estimated_remaining_time: float = 0.0
+    healthy: bool = True
+    health_reason: str = "ok"
+    switch_capable: bool = True
 
 
 @dataclass
@@ -205,39 +208,54 @@ class PrometheusMetricsCollector:
             if not pod_ip:
                 continue
             addr = f"http://{pod_ip}:{self.worker_sidecar_port}"
-            role = await self._sidecar_role(addr, expected_role)
+            role = await self._sidecar_role(addr)
             active = await self._sidecar_active_count(addr)
-            capacity = max(0, self.max_concurrent_per_decode - active)
-            remaining = 60.0 if active > 0 else 0.0
+            switch_capable = role in {"prefill", "decode"} and active is not None
+            if not switch_capable and expected_role == "prefill":
+                role = "prefill"
+                healthy = True
+                health_reason = "static_prefill_no_sidecar"
+            else:
+                healthy = switch_capable
+                health_reason = "ok" if healthy else "sidecar_unreachable_or_invalid"
+            active_count = int(active or 0)
+            capacity = max(0, self.max_concurrent_per_decode - active_count) if healthy else 0
+            remaining = 60.0 if active_count > 0 else 0.0
             states.append(
                 WorkerState(
                     worker_id=pod_name,
                     addr=addr,
-                    role=role,
-                    in_flight_requests=active,
+                    role=role or "unknown",
+                    in_flight_requests=active_count,
                     active_kv_blocks=0,
                     available_capacity=capacity,
                     estimated_remaining_time=remaining,
+                    healthy=healthy,
+                    health_reason=health_reason,
+                    switch_capable=switch_capable,
                 )
             )
         return states
 
-    async def _sidecar_role(self, addr: str, default: str) -> str:
+    async def _sidecar_role(self, addr: str) -> Optional[str]:
         try:
             resp = await self._http.get(addr.rstrip("/") + "/v1/role")
             resp.raise_for_status()
-            return str(resp.json().get("current_role") or default)
-        except Exception:
-            return default
+            role = str(resp.json().get("current_role") or "unknown")
+            return role if role in {"prefill", "decode"} else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("worker sidecar role probe failed for %s: %s", addr, exc)
+            return None
 
-    async def _sidecar_active_count(self, addr: str) -> int:
+    async def _sidecar_active_count(self, addr: str) -> Optional[int]:
         try:
             resp = await self._http.get(addr.rstrip("/") + "/v1/active_requests")
             resp.raise_for_status()
             body = resp.json()
             return len(body) if isinstance(body, list) else 0
-        except Exception:
-            return 0
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("worker sidecar active-request probe failed for %s: %s", addr, exc)
+            return None
 
     async def get_worker_request_count(self, worker_id: str) -> int:
         v = await self._query(

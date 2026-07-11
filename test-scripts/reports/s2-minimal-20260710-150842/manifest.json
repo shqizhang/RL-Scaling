@@ -1,0 +1,56 @@
+[
+  {
+    "manifest_id": 1,
+    "phase": "decode_probe",
+    "words": 96,
+    "max_tokens": 48,
+    "concurrency": 2,
+    "timeout_s": 180,
+    "shape": "s2_minimal_long_decode"
+  },
+  {
+    "manifest_id": 2,
+    "phase": "decode_probe",
+    "words": 96,
+    "max_tokens": 48,
+    "concurrency": 2,
+    "timeout_s": 180,
+    "shape": "s2_minimal_long_decode"
+  },
+  {
+    "manifest_id": 3,
+    "phase": "decode_probe",
+    "words": 96,
+    "max_tokens": 48,
+    "concurrency": 2,
+    "timeout_s": 180,
+    "shape": "s2_minimal_long_decode"
+  },
+  {
+    "manifest_id": 4,
+    "phase": "decode_probe",
+    "words": 96,
+    "max_tokens": 48,
+    "concurrency": 2,
+    "timeout_s": 180,
+    "shape": "s2_minimal_long_decode"
+  },
+  {
+    "manifest_id": 5,
+    "phase": "decode_probe",
+    "words": 96,
+    "max_tokens": 48,
+    "concurrency": 2,
+    "timeout_s": 180,
+    "shape": "s2_minimal_long_decode"
+  },
+  {
+    "manifest_id": 6,
+    "phase": "decode_probe",
+    "words": 96,
+    "max_tokens": 48,
+    "concurrency": 2,
+    "timeout_s": 180,
+    "shape": "s2_minimal_long_decode"
+  }
+]

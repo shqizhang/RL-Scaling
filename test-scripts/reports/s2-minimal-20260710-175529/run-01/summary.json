@@ -1,0 +1,362 @@
+{
+  "generated_at": "2026-07-10T18:00:09",
+  "phase_summaries": {
+    "decode_probe": {
+      "requests": 6,
+      "success": 6,
+      "success_pct": 100.0,
+      "valid_decode": 6,
+      "valid_decode_pct": 100.0,
+      "timeout_count": 0,
+      "http_5xx_count": 0,
+      "wall_s": 5.841586351394653,
+      "req_s": 1.0271182584791418,
+      "p50_latency_s": 1.9445784091949463,
+      "p95_latency_s": 2.0438506603240967,
+      "p99_latency_s": 2.0438506603240967,
+      "prompt_tokens": 2202,
+      "completion_tokens": 288,
+      "total_tokens": 2490,
+      "prompt_tps": 376.95240086184504,
+      "completion_tps": 49.3016764069988,
+      "total_tps": 426.25407726884384
+    }
+  },
+  "overall_summary": {
+    "requests": 6,
+    "success": 6,
+    "success_pct": 100.0,
+    "valid_decode": 6,
+    "valid_decode_pct": 100.0,
+    "timeout_count": 0,
+    "http_5xx_count": 0,
+    "wall_s": 5.841586351394653,
+    "req_s": 1.0271182584791418,
+    "p50_latency_s": 1.9445784091949463,
+    "p95_latency_s": 2.0438506603240967,
+    "p99_latency_s": 2.0438506603240967,
+    "prompt_tokens": 2202,
+    "completion_tokens": 288,
+    "total_tokens": 2490,
+    "prompt_tps": 376.95240086184504,
+    "completion_tps": 49.3016764069988,
+    "total_tps": 426.25407726884384
+  },
+  "pod_allocation": {
+    "sample_count": 48,
+    "gpu_allocated_seconds": 959.0209531784058,
+    "prefill_allocated_seconds": 479.5104765892029,
+    "decode_allocated_seconds": 479.5104765892029,
+    "avg_ready_workers": 4.0,
+    "min_ready_workers": 4,
+    "max_ready_workers": 4
+  },
+  "request_window_pod_allocation": {
+    "sample_count": 1,
+    "gpu_allocated_seconds": 0.0,
+    "prefill_allocated_seconds": 0.0,
+    "decode_allocated_seconds": 0.0,
+    "avg_ready_workers": 0.0,
+    "min_ready_workers": 0,
+    "max_ready_workers": 0
+  },
+  "preparation": {
+    "Warmup Trigger Lag": null,
+    "Signal-to-Ready": null,
+    "Burst Safety Margin": null
+  },
+  "s2_history_count": 2,
+  "s2_executed_count": 2,
+  "s2_switch_latencies_ms": [
+    403.34795136004686,
+    450.87898429483175
+  ],
+  "s2_evaluation_summary": {
+    "count": 44,
+    "max_prefill_queue_depth": 1,
+    "max_decode_queue_depth": 2,
+    "max_prefill_worker_active": 0,
+    "max_decode_worker_active": 2,
+    "selected_actions": [
+      "decode_to_prefill",
+      "prefill_to_decode"
+    ],
+    "top_skip_reasons": [
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1;p_to_d_blocked:decode_queue_depth=0>=1,prefill_worker_count=2>2",
+        20
+      ],
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1;p_to_d_blocked:prefill_worker_count=2>2",
+        13
+      ],
+      [
+        "d_to_p_blocked:decode_worker_count=1>1;p_to_d_blocked:decode_queue_depth=0>=1",
+        9
+      ]
+    ]
+  },
+  "s3_history_count": 0,
+  "s3_executed_pairs": 0,
+  "s3_migration_attempts": 0,
+  "s3_migrated_requests": 0,
+  "s3_declined_requests": 0,
+  "s3_scaled_down_to": [],
+  "s3_drained_sources": [],
+  "suite_dir": "C:\\projects\\IP\\RL-Scaling\\test-scripts\\reports\\s2-minimal-20260710-175529",
+  "passed": true,
+  "decode_probe": {
+    "requests": 6,
+    "success": 6,
+    "success_pct": 100.0,
+    "valid_decode": 6,
+    "valid_decode_pct": 100.0,
+    "timeout_count": 0,
+    "http_5xx_count": 0,
+    "wall_s": 5.841586351394653,
+    "req_s": 1.0271182584791418,
+    "p50_latency_s": 1.9445784091949463,
+    "p95_latency_s": 2.0438506603240967,
+    "p99_latency_s": 2.0438506603240967,
+    "prompt_tokens": 2202,
+    "completion_tokens": 288,
+    "total_tokens": 2490,
+    "prompt_tps": 376.95240086184504,
+    "completion_tps": 49.3016764069988,
+    "total_tps": 426.25407726884384
+  },
+  "s2_history": [
+    {
+      "worker_url": "http://10.244.0.178:9091",
+      "from_role": "decode",
+      "to_role": "prefill",
+      "reason": "prefill_queue=1>=1 and decode_util=0.00<=0.30",
+      "executed": true,
+      "result": {
+        "status": "ok",
+        "switch_time_ms": 403.34795136004686,
+        "new_role": "prefill"
+      }
+    },
+    {
+      "worker_url": "http://10.244.0.178:9091",
+      "from_role": "prefill",
+      "to_role": "decode",
+      "reason": "decode_queue=1>=1 and prefill_util=0.00<=0.30",
+      "executed": true,
+      "result": {
+        "status": "ok",
+        "switch_time_ms": 450.87898429483175,
+        "new_role": "decode"
+      }
+    }
+  ],
+  "role_snapshots": "C:\\projects\\IP\\RL-Scaling\\test-scripts\\reports\\s2-minimal-20260710-175529\\run-01\\worker_role_snapshots.jsonl",
+  "events": [
+    {
+      "ts": 1783677329.5380707,
+      "iso": "2026-07-10T17:55:29",
+      "event": "setup_start"
+    },
+    {
+      "ts": 1783677458.4649925,
+      "iso": "2026-07-10T17:57:38",
+      "event": "reset_decode_component_roles",
+      "actions": [
+        {
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-574b777c-589cf4799675w48",
+          "from_role": "prefill",
+          "to_role": "decode",
+          "response": {
+            "status": "ok",
+            "new_role": "decode",
+            "switch_time_ms": 455.5152952671051,
+            "timings_ms": {
+              "sleep": 85.255,
+              "unregister_mdc": 48.283,
+              "reconfig_nixl": 0.082,
+              "reset_prefix_cache": 3.166,
+              "register_mdc": 296.725,
+              "wake": 21.962
+            }
+          }
+        }
+      ]
+    },
+    {
+      "ts": 1783677494.100202,
+      "iso": "2026-07-10T17:58:14",
+      "event": "initial_runtime_role_gate",
+      "prefill": 2,
+      "decode": 2
+    },
+    {
+      "ts": 1783677510.500987,
+      "iso": "2026-07-10T17:58:30",
+      "event": "controller_configured",
+      "env": {
+        "CONTROL_LOOP_INTERVAL": "1",
+        "K8S_SCALE_FALLBACK_ENABLED": "false",
+        "MAX_GPUS": "4",
+        "MIN_PREFILL_REPLICAS": "2",
+        "MIN_DECODE_REPLICAS": "1",
+        "MAX_CONCURRENT_PER_DECODE": "64",
+        "PRE_WARM_THRESHOLD": "2.0",
+        "ROLE_SWITCH_ENABLED": "true",
+        "CONSOLIDATION_ENABLED": "false",
+        "CONSOLIDATION_SCALE_DOWN_ENABLED": "false",
+        "PREFILL_QUEUE_THRESHOLD": "1",
+        "DECODE_QUEUE_THRESHOLD": "1",
+        "DECODE_IDLE_THRESHOLD": "0.30",
+        "PREFILL_IDLE_THRESHOLD": "0.30",
+        "MIN_SWITCH_INTERVAL": "30",
+        "ROLE_SWITCH_VERIFY_TIMEOUT": "60",
+        "ROLE_SWITCH_VERIFY_POLL_INTERVAL": "1",
+        "RLS_TEST_RUN_ID": "s2-minimal-1783677494"
+      }
+    },
+    {
+      "ts": 1783677519.9037206,
+      "iso": "2026-07-10T17:58:39",
+      "event": "prefill_pressure_signal",
+      "response": {
+        "status": "ok",
+        "state": "idle"
+      }
+    },
+    {
+      "ts": 1783677555.7496417,
+      "iso": "2026-07-10T17:59:15",
+      "event": "runtime_role_gate_after_d_to_p",
+      "snapshot": {
+        "ts": 1783677519.903785,
+        "iso": "2026-07-10T17:58:39",
+        "workers": [
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-574b777c-589cf4799675w48",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.178",
+            "current_role_label": "prefill",
+            "sidecar_role": "prefill",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-574b777c-589cf47996f5shj",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.183",
+            "current_role_label": "",
+            "sidecar_role": "decode",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-574b777c-7b5566df8jqwbm",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.184",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-574b777c-7b5566df8qzs9t",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.179",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          }
+        ],
+        "role_counts": {
+          "prefill": 3,
+          "decode": 1,
+          "unknown": 0
+        }
+      }
+    },
+    {
+      "ts": 1783677559.7214618,
+      "iso": "2026-07-10T17:59:19",
+      "event": "decode_pressure_signal",
+      "response": {
+        "status": "ok",
+        "state": "warm_up"
+      }
+    },
+    {
+      "ts": 1783677594.483925,
+      "iso": "2026-07-10T17:59:54",
+      "event": "runtime_role_gate_after_p_to_d",
+      "snapshot": {
+        "ts": 1783677559.7215312,
+        "iso": "2026-07-10T17:59:19",
+        "workers": [
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-574b777c-589cf4799675w48",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.178",
+            "current_role_label": "decode",
+            "sidecar_role": "decode",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-574b777c-589cf47996f5shj",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.183",
+            "current_role_label": "",
+            "sidecar_role": "decode",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-574b777c-7b5566df8jqwbm",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.184",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-574b777c-7b5566df8qzs9t",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.179",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          }
+        ],
+        "role_counts": {
+          "prefill": 2,
+          "decode": 2,
+          "unknown": 0
+        }
+      }
+    },
+    {
+      "ts": 1783677598.2595737,
+      "iso": "2026-07-10T17:59:58",
+      "event": "long_decode_readiness_probe",
+      "max_tokens": 48
+    },
+    {
+      "ts": 1783677605.7204587,
+      "iso": "2026-07-10T18:00:05",
+      "event": "decode_probe_done",
+      "requests": 6,
+      "success": 6,
+      "success_pct": 100.0,
+      "valid_decode": 6,
+      "valid_decode_pct": 100.0,
+      "timeout_count": 0,
+      "http_5xx_count": 0,
+      "wall_s": 5.841586351394653,
+      "req_s": 1.0271182584791418,
+      "p50_latency_s": 1.9445784091949463,
+      "p95_latency_s": 2.0438506603240967,
+      "p99_latency_s": 2.0438506603240967,
+      "prompt_tokens": 2202,
+      "completion_tokens": 288,
+      "total_tokens": 2490,
+      "prompt_tps": 376.95240086184504,
+      "completion_tps": 49.3016764069988,
+      "total_tps": 426.25407726884384
+    }
+  ]
+}
