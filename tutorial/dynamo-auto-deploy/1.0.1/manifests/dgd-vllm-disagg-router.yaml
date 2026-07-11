@@ -72,6 +72,12 @@ spec:
         # src_block_ids) instead of the recompute-prefill fallback.
         - name: DYNAMO_RL_CONNECTOR_ENABLED
           value: "1"
+        # Allow AsyncLLM.collective_rpc to serialize the callable that
+        # dual_mode uses to expire the NIXL connector's pending KV sends
+        # before a role switch (releases blocks the switched-back decode
+        # engine would otherwise keep pinned).
+        - name: VLLM_ALLOW_INSECURE_SERIALIZATION
+          value: "1"
       resources:
         limits:
           gpu: "1"
