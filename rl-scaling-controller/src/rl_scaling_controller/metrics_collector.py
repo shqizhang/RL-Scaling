@@ -216,7 +216,8 @@ class PrometheusMetricsCollector:
                 continue
             addr = f"http://{pod_ip}:{self.worker_sidecar_port}"
             role = await self._sidecar_role(addr)
-            active = await self._sidecar_active_count(addr)
+            progress = await self._sidecar_active_progress(addr)
+            active = None if progress is None else len(progress)
             # A worker can only be an S2 switch target if it originates from the
             # dual-mode component (decode worker). A native prefill worker answers
             # /v1/role and /v1/active_requests but cannot flip role (/switch_role
@@ -233,7 +234,11 @@ class PrometheusMetricsCollector:
                 health_reason = "ok" if healthy else "sidecar_unreachable_or_invalid"
             active_count = int(active or 0)
             capacity = max(0, self.max_concurrent_per_decode - active_count) if healthy else 0
-            remaining = 60.0 if active_count > 0 else 0.0
+            # Estimate remaining runtime from real token progress (max remaining
+            # tokens across in-flight requests) so the S3 cost/benefit gate uses
+            # a genuine value instead of a flat constant. Floored positive so a
+            # freshly-seen straggler is never judged "about to finish".
+            remaining = self._estimate_remaining_seconds(progress) if active_count > 0 else 0.0
             states.append(
                 WorkerState(
                     worker_id=pod_name,
@@ -260,12 +265,38 @@ class PrometheusMetricsCollector:
             logger.warning("worker sidecar role probe failed for %s: %s", addr, exc)
             return None
 
+    # Rough decode rate (tokens/sec/request) used only to turn remaining tokens
+    # into a remaining-seconds estimate for the S3 cost/benefit gate.
+    _DECODE_TOKENS_PER_SEC = 20.0
+
+    def _estimate_remaining_seconds(self, progress: Optional[list]) -> float:
+        max_remaining = 0
+        for item in progress or []:
+            if isinstance(item, dict):
+                rt = item.get("remaining_tokens")
+                if isinstance(rt, (int, float)) and rt > max_remaining:
+                    max_remaining = int(rt)
+        if max_remaining <= 0:
+            # Unknown progress (legacy id-only shape) — assume there is work left.
+            return 60.0
+        return max(2.0, max_remaining / self._DECODE_TOKENS_PER_SEC)
+
     async def _sidecar_active_count(self, addr: str) -> Optional[int]:
+        progress = await self._sidecar_active_progress(addr)
+        return None if progress is None else len(progress)
+
+    async def _sidecar_active_progress(self, addr: str) -> Optional[list]:
+        """Enriched in-flight list: [{request_id, generated_tokens, max_tokens,
+        remaining_tokens, ...}]. Returns None on probe failure (distinct from an
+        empty list which means the worker is genuinely idle)."""
         try:
             resp = await self._http.get(addr.rstrip("/") + "/v1/active_requests")
             resp.raise_for_status()
             body = resp.json()
-            return len(body) if isinstance(body, list) else 0
+            if not isinstance(body, list):
+                return []
+            # Tolerate the legacy id-only shape (list[str]).
+            return [b if isinstance(b, dict) else {"request_id": b} for b in body]
         except Exception as exc:  # noqa: BLE001
             logger.warning("worker sidecar active-request probe failed for %s: %s", addr, exc)
             return None
