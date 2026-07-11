@@ -23,9 +23,13 @@ PHASES = ["prefill_burst", "balanced_decode", "decode_tail"]
 SCENARIOS = ["baseline_minimal", "s2_only", "s3_only", "mixed_strategy"]
 MIN_VALID_DECODE_PCT = 99.0
 MAX_S2_SWITCHES_PER_RUN = 2
-S3_TAIL_TRIGGER_MIN_DELAY_S = 6.0
-S3_TAIL_TRIGGER_MAX_WAIT_S = 45.0
-S3_TAIL_TRIGGER_POLL_S = 2.0
+S3_TAIL_TRIGGER_MIN_DELAY_S = 4.0
+S3_TAIL_TRIGGER_POLL_S = 1.0
+# A migratable straggler must have generated enough to be worth moving and have
+# enough left to run that the migration overhead pays off (token-progress window
+# from test-strategy.md §11.3). Sized for the long tail requests (max_tokens=160).
+S3_TRIGGER_MIN_GENERATED_TOKENS = 8
+S3_TRIGGER_MIN_REMAINING_TOKENS = 24
 
 
 def write_progress(suite_dir: Path, **data: Any) -> None:
@@ -72,6 +76,12 @@ def build_manifest() -> list[dict[str, Any]]:
     # because this Dynamo/vLLM deployment can otherwise hit request timeouts;
     # the long-tail signal comes from uneven budgets and concurrency, not from
     # pathological 600s responses.
+    # Moderate tail sizes the disaggregated 2P2D topology can actually serve.
+    # NOTE: longer tail requests (>=128 max_tokens) reliably HANG on the
+    # warmed-up dynamic decode workers (KV pressure accumulates across the batch
+    # and the tail-end long requests cannot allocate blocks), independent of
+    # S2/S3 — see ANALYSIS §5.1. These moderate budgets keep the tail mostly
+    # serveable so the S2 prefill result is not masked by that topology issue.
     tail_shapes = [
         (8, 64, 16, "tail_short"),
         (6, 64, 32, "tail_medium"),
@@ -194,6 +204,29 @@ def append_jsonl(path: Path, row: dict[str, Any]) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _has_migratable_straggler(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the best token-progress-qualified in-flight request, if any.
+
+    A request qualifies when it has generated enough tokens to be worth moving
+    and has enough tokens left to run that the migration overhead pays off.
+    """
+    best: dict[str, Any] | None = None
+    for worker in snapshot.get("workers", []) or []:
+        for req in worker.get("active_requests", []) or []:
+            if not isinstance(req, dict):
+                continue
+            gen = int(req.get("generated_tokens", 0) or 0)
+            rem = req.get("remaining_tokens")
+            rem = int(rem) if isinstance(rem, (int, float)) else None
+            if gen >= S3_TRIGGER_MIN_GENERATED_TOKENS and (
+                rem is None or rem >= S3_TRIGGER_MIN_REMAINING_TOKENS
+            ):
+                cand = {"worker": worker.get("pod"), "generated_tokens": gen, "remaining_tokens": rem}
+                if best is None or (rem or 0) > (best.get("remaining_tokens") or 0):
+                    best = cand
+    return best
+
+
 def tail_signal_on_active_window(
     controller_port: int,
     out_dir: Path,
@@ -207,42 +240,54 @@ def tail_signal_on_active_window(
         events,
         "tail_active_window_poll_start",
         min_delay_s=S3_TAIL_TRIGGER_MIN_DELAY_S,
-        max_wait_s=S3_TAIL_TRIGGER_MAX_WAIT_S,
-        note="/v1/active_requests exposes ids only; token progress window is not available in this build",
+        min_generated_tokens=S3_TRIGGER_MIN_GENERATED_TOKENS,
+        min_remaining_tokens=S3_TRIGGER_MIN_REMAINING_TOKENS,
+        note="continuously poll /v1/active_requests for the whole tail phase; "
+        "signal consolidation when a token-progress-qualified straggler exists",
     )
+    signalled = False
+    last_signal_ts = 0.0
     last_snapshot: dict[str, Any] | None = None
-    while not stop.is_set() and e2e.now_ts() - started <= S3_TAIL_TRIGGER_MAX_WAIT_S:
+    # Poll for the entire decode_tail phase (driven by ``stop``), not a fixed
+    # window — the qualifying straggler often appears only as the tail drains.
+    while not stop.is_set():
         try:
             snapshot = e2e.collect_decode_active_requests()
             snapshot["elapsed_s"] = e2e.now_ts() - started
             append_jsonl(snapshot_path, snapshot)
             last_snapshot = snapshot
             elapsed = float(snapshot["elapsed_s"])
-            total_active = int(snapshot.get("total_active", 0) or 0)
-            active_workers = int(snapshot.get("active_worker_count", 0) or 0)
-            if elapsed >= S3_TAIL_TRIGGER_MIN_DELAY_S and total_active > 0 and active_workers > 0:
+            straggler = _has_migratable_straggler(snapshot)
+            now = e2e.now_ts()
+            # Re-send the 0.92 completion signal while a qualifying straggler
+            # exists so the controller's batch_completion stays above the gate
+            # across the ticks where the source decoder drains to <=threshold.
+            if elapsed >= S3_TAIL_TRIGGER_MIN_DELAY_S and straggler and (now - last_signal_ts) >= 3.0:
                 response = e2e.send_progress(controller_port, 0.92, batch_size=phase_count, avg_isl=128, avg_osl=320)
+                last_signal_ts = now
                 e2e.event(
                     events,
                     "tail_consolidation_signal",
                     response=response,
-                    trigger="decode_active_request_snapshot",
-                    total_active=total_active,
-                    active_worker_count=active_workers,
+                    trigger="token_progress_straggler",
+                    straggler=straggler,
+                    total_active=int(snapshot.get("total_active", 0) or 0),
+                    active_worker_count=int(snapshot.get("active_worker_count", 0) or 0),
                     snapshot_file=str(snapshot_path),
                 )
-                return
+                signalled = True
         except Exception as exc:  # noqa: BLE001
             append_jsonl(snapshot_path, {"ts": e2e.now_ts(), "iso": e2e.ts_iso(), "error": str(exc)})
             e2e.event(events, "tail_active_window_poll_error", error=str(exc))
         time.sleep(S3_TAIL_TRIGGER_POLL_S)
-    e2e.event(
-        events,
-        "tail_consolidation_signal_skipped",
-        reason="no_active_request_window",
-        last_snapshot=last_snapshot,
-        snapshot_file=str(snapshot_path),
-    )
+    if not signalled:
+        e2e.event(
+            events,
+            "tail_consolidation_signal_skipped",
+            reason="no_token_progress_straggler",
+            last_snapshot=last_snapshot,
+            snapshot_file=str(snapshot_path),
+        )
 
 
 def run_phase(
