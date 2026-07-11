@@ -64,6 +64,29 @@
 - 报告中 `tail_decode_gpu_s_saved`（s3_only 7.0 / mixed 9.9）与 `savings_pct`（2.6% / 2.0%）只是 `counterfactual - observed` 的公式输出，**不能作为 S3 效能证据**（`migrated=0` 前提下无迁移可言）。s2_only 的该值为 -237.5（负），只反映 tail timeout 把 observed tail GPU-s 放大，与 S3 无关。
 - 这与上一轮结论一致：S3 触发是 telemetry-driven 的时机问题（`test-strategy.md §11.10`）。当前 `/v1/active_requests` 只暴露 request id，不暴露 `generated_tokens`/`remaining_tokens` 进度，脚本无法在「已生成一部分、剩余仍足够」的窗口精确触发；固定延迟触发要么请求已近完成、要么 source 上已无 active request。**本轮属于诊断范围之外的已知 gap，未在本轮实现该 sidecar 进度接口。**
 
+### 4.1 S3 为什么无法完成「长尾 decode 请求 consolidation」——代码级根因
+
+这一轮 `s3_only`/`mixed` 的 `s3_history=0、attempts=0`，意味着 S3 连一次 consolidation plan 都没产生。沿代码路径逐层定位（S3 确实已接入主 control loop：`main.py:_control_loop` 每 tick `await strategy.s3.control_loop_tick()`），根因链如下：
+
+**触发链在第一道门就断了：active-request 遥测为空 → 完成度信号没发 → 决策引擎的完成度门挡掉全部 plan。**
+
+1. **`/v1/active_requests` 在整个 tail 触发窗口都返回空。**
+   - 证据：`s3_only/run-01/active_requests_snapshots.jsonl` 中两个 decode worker 全程 `active_count=0、total_active=0`；`events.csv` 记录 `tail_consolidation_signal_skipped, reason=no_active_request_window`。测试脚本因此**没有发送 `progress=0.92` 的 consolidation 触发信号**。
+   - 后果：controller 232 个 status 采样里 `s3_history` 长度始终为 0。
+
+2. **决策引擎的完成度门直接短路。** `consolidation/decision_engine.py:evaluate()` 第 52-53 行：`if batch_completion_pct < min_batch_completion_pct(0.92): return []`。既然 0.92 信号没发，`batch_completion_pct` 到不了阈值，`evaluate` 每 tick 返回空 plan；`controller.py:control_loop_tick` 第 63-66 行 `if not plans: return None`，永远走不到第 188 行 `history.append`。这就是 `history/attempts` 全 0 的直接原因。
+
+3. **为什么 `/v1/active_requests` 会是空的（更底层）。** 该端点读 `InProcessRequestRegistry.active_ids()`，注册发生在 `handlers.py:generate_tokens`（register/record_tokens/deregister）。空的原因是采样时刻与在飞请求错位，而不是注册代码缺失：
+   - `decode_tail` 只有 18 个请求、并发 2，且 short/medium（`max_tokens=16/32`）请求约 2s 就完成、随即 deregister；
+   - 脚本的 tail 触发轮询窗口只在 decode_tail **开头 45s**（`S3_TAIL_TRIGGER_MAX_WAIT_S=45`），快请求在两次 ~20s 间隔的快照之间来去，长请求（`id=130, max_tokens=48`）的挂起又发生在 45s 窗口之后，于是窗口内每次快照都恰好抓到 0 个在飞请求。
+   - 唯一真正的长尾 straggler（`id=130`）本应是 consolidation 的目标，但它是**挂死**（dynamic-2D tail 不稳定 / 在 s2/mixed 上是 KV 泄漏的退化 worker）——它没有作为一个「干净、可迁移的在飞请求」稳定出现在 registry 里，反而以 120s client timeout 收场。
+
+4. **即便信号发了，决策条件也是刀刃级、极易 miss。** `evaluate()` 要求同一 tick（1s 间隔）内同时满足：`len(decode_workers) > min_decode_replicas`、存在 source 满足 `0 < in_flight <= consolidation_threshold(1)`、target `available_capacity >= in_flight`、且 `migration_time < 0.5 * estimated_remaining_time`。对一个短、低并发的 tail，「某个 worker 恰好只剩 1 个在飞、另一个正好空、且被 1s tick 抓到」的窗口极窄。
+
+5. **cost-benefit 输入过粗。** `estimated_remaining_time` 在 `metrics_collector.py` 里是常量（`60.0 if active_count>0 else 0.0`），`/v1/active_requests` 只暴露 request id、不含 `generated_tokens/max_tokens/remaining_tokens`。`test-strategy.md §11.3` 要求的「已生成足够、剩余仍足够」token-progress 触发根本无法实现——引擎只能盲触发或不触发。
+
+**一句话根因：S3 的触发完全依赖 `/v1/active_requests` 在正确时刻观测到一个「干净可迁移的长尾在飞请求」，但当前遥测既缺 token 进度、又只在 tail 开头 45s 采样、且唯一的长 straggler 是挂死状态，导致触发链在「完成度信号」这一步就断了，决策引擎永远拿不到非空 plan。这不是 migration 协议失败，而是 consolidation 从未被触发。**
+
 ## 5. decode_tail 的 P->D 切回 KV 泄漏（本轮定位到的主障碍）
 
 - s2_only / mixed 的 4 个 tail timeout 全部是 `max_tokens=48` 请求，全部 120s 超时无响应（http=0）。
@@ -86,5 +109,10 @@
 1. **修 P->D 切回 KV 泄漏**：切回前对 in-flight 做确定性 drain，确认 block 全部释放后再 `reset_prefix_cache`；并检查切回后 router 是否应优先把 decode 派发到未切换的健康 worker。修完只需重跑 s2_only 验证 tail timeout=0。
 2. **加 `baseline_2p2d_disabled` 同拓扑基线**：把 S2 prefill 收益与 1P->2P 拓扑分量彻底分离；S3 tail GPU-second 也必须对同拓扑 disabled baseline 比较。
 3. **定位 prefill 变慢**：对比 `cccb9db`（kv_transfer）与更早镜像的单 prefill 吞吐，确认是否为 `kv_both` NIXL 每请求开销。
-4. **实现 S3 进度接口**：`/v1/active_requests` 暴露 `generated_tokens`/`max_tokens`/`remaining_tokens`，脚本在正确窗口触发 consolidation，并保存 migrate_out/migrate_in/complete/rollback 原始响应。
-5. 上述修完后再跑完整四场景，方可期待 s2_only/mixed 通过质量门并给出端到端结论。
+4. **修 S3 触发链（对应 §4.1，按依赖顺序）**：
+   1. **让 `/v1/active_requests` 反映真实在飞状态，并携带 token 进度。** 当前只读 `InProcessRequestRegistry` 且只回 id。改为：(a) 每个 active id 附带 `generated_tokens/max_tokens/remaining_tokens/prompt_tokens`（registry 已有 `generated_tokens`，`max_tokens` 从 `sampling_params` 取，`remaining = max_tokens - generated`）；(b) 与引擎真实未完成请求交叉校验（如 vLLM scheduler 的 running/waiting 或 `get_num_unfinished_requests()`），避免注册漏挂（尤其是卡在路由/KV-transfer、还没进 `generate_tokens` 的请求）导致长 straggler 不可见。这是解锁 S3 的第一优先级。
+   2. **触发改为「持续轮询 + token-progress 窗口」。** `run_four_scenario_strategy_e2e.py:tail_signal_on_active_window` 现在只在 tail 开头 45s 采样，且用 `total_active>0` 这种粗条件。改为在整个 decode_tail 阶段持续轮询 `/v1/active_requests`，只在存在 request 满足 `generated_tokens >= min_generated_tokens` 且 `remaining_tokens >= min_remaining_tokens` 时才发 consolidation 信号（`test-strategy.md §11.3/§11.5.2`）。
+   3. **决策引擎去刀刃化。** `decision_engine.evaluate` 用真实 `remaining_time`（由 token 进度换算）替代常量 60s 的 cost-benefit；`estimated_remaining_time` 同步在 `metrics_collector` 用 token 进度计算；并要求 source 的 straggler 跨 N 个 tick 稳定在飞（已有 `consolidation_stable_samples`，但因为前面没数据从未生效）后再迁移，减少对单次瞬时快照的依赖。
+   4. **补 request 关联与迁移协议原始数据。** 记录 manifest_id ↔ worker request_id ↔ source/target pod 映射，保存每次 `migrate_out/migrate_in/migration_complete/migration_rollback` 原始响应（含 `src_block_ids`、`kv_transfer_params`、decline reason），才能区分 §11.10 里「太年轻/快结束/registry 丢失/target 拒绝/迁移成功但 client 续流失败」。
+   5. **依赖关系**：S3 的长尾目标目前就是那条挂死的 `max_tokens=48` 请求。必须先修 §5 的 P->D 切回 KV 泄漏与 dynamic-2D tail 不稳定，让长尾请求变成「健康、可迁移的在飞请求」，S3 才有正常的迁移对象；否则 S3 面对的永远是一个已经挂死、无法干净迁移的请求。
+5. 上述修完后再跑完整四场景，方可期待 s2_only/mixed 通过质量门、并给出 S3 端到端（migrated/drained/client-valid）结论。
