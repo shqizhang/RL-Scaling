@@ -194,12 +194,49 @@ def disable_controller_strategies() -> None:
     )
 
 
+# Registry of live port-forwards keyed by local port so HTTP helpers can
+# transparently restart a dropped `kubectl port-forward` (these run over a
+# single SSH tunnel and can die mid-run) without changing call sites.
+_PF_REGISTRY: dict[int, "PortForward"] = {}
+
+
 @dataclass
 class PortForward:
     proc: subprocess.Popen
     local_port: int
+    service: str = ""
+    remote_port: int = 0
+    namespace: str = ""
+
+    def _spawn(self) -> subprocess.Popen:
+        return subprocess.Popen(
+            ["kubectl", "port-forward", "-n", self.namespace, self.service, f"{self.local_port}:{self.remote_port}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def alive(self) -> bool:
+        return self.proc.poll() is None
+
+    def restart(self) -> None:
+        """Re-establish the forward on the SAME local port after a drop."""
+        try:
+            if self.proc.poll() is None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        # brief pause so the OS releases the local port before rebinding
+        time.sleep(1.0)
+        self.proc = self._spawn()
+        time.sleep(2.0)
 
     def stop(self) -> None:
+        _PF_REGISTRY.pop(self.local_port, None)
         if self.proc.poll() is None:
             self.proc.terminate()
             try:
@@ -210,13 +247,41 @@ class PortForward:
 
 def start_port_forward(service: str, remote_port: int, namespace: str) -> PortForward:
     port = free_port()
-    proc = subprocess.Popen(
-        ["kubectl", "port-forward", "-n", namespace, service, f"{port}:{remote_port}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    pf = PortForward(proc=None, local_port=port, service=service, remote_port=remote_port, namespace=namespace)  # type: ignore[arg-type]
+    pf.proc = pf._spawn()
+    _PF_REGISTRY[port] = pf
+    return pf
+
+
+def _restart_port_forward(local_port: int) -> bool:
+    pf = _PF_REGISTRY.get(local_port)
+    if pf is None:
+        return False
+    pf.restart()
+    return True
+
+
+def _is_infra_conn_error(exc: Exception) -> bool:
+    """True for a dropped-port-forward style connection error (not a read timeout)."""
+    if isinstance(exc, TimeoutError):
+        return False
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, TimeoutError):
+        return False
+    text = f"{type(reason).__name__}: {reason}".lower()
+    return any(
+        k in text
+        for k in (
+            "refused",
+            "reset",
+            "actively refused",
+            "cannot connect",
+            "connection aborted",
+            "no connection",
+            "broken pipe",
+            "not connected",
+        )
     )
-    return PortForward(proc=proc, local_port=port)
 
 
 def wait_http(url: str, timeout_s: int = 60) -> None:
@@ -251,7 +316,10 @@ def controller_json(port: int, path: str, method: str = "GET", body: dict[str, A
         except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
             last_error = exc
             if i < attempts - 1:
-                time.sleep(1.5 * (i + 1))
+                # A dead kubectl port-forward cannot be recovered by retrying the
+                # HTTP call alone; re-establish it on the same local port first.
+                _restart_port_forward(port)
+                time.sleep(1.0)
     raise TimeoutError(f"controller_json failed after {attempts} attempts: {method} {path}: {last_error}")
 
 
@@ -583,15 +651,28 @@ def submit_manifest_request(frontend_port: int, item: dict[str, Any], out_dir: P
     code = 0
     raw = b""
     error = ""
-    try:
-        raw = submit_chat(frontend_port, payload, timeout=int(item.get("timeout_s", 420)))
-        code = 200
-    except urllib.error.HTTPError as exc:
-        code = exc.code
-        raw = exc.read()
-        error = f"HTTP Error {exc.code}: {exc.reason}"
-    except Exception as exc:
-        error = str(exc)
+    req_timeout = int(item.get("timeout_s", 420))
+    for attempt in range(2):
+        try:
+            raw = submit_chat(frontend_port, payload, timeout=req_timeout)
+            code = 200
+            error = ""
+            break
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+            raw = exc.read()
+            error = f"HTTP Error {exc.code}: {exc.reason}"
+            break
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+            # Only a *connection-level* failure (dropped kubectl port-forward)
+            # is retried after re-establishing the forward. A genuine model
+            # read-timeout is left as-is so it is recorded as real data.
+            if attempt == 0 and _is_infra_conn_error(exc):
+                _restart_port_forward(frontend_port)
+                time.sleep(1.0)
+                continue
+            break
     end = now_ts()
     response_file = out_dir / "responses" / f"{phase}-{idx}.json"
     response_file.parent.mkdir(parents=True, exist_ok=True)
