@@ -1,0 +1,29 @@
+{
+  "wall_by_scenario": {
+    "baseline_minimal": 403.4230215549469,
+    "s2_only": 483.1490557193756,
+    "s3_only": 343.81613516807556,
+    "mixed_strategy": 488.03645634651184
+  },
+  "tokens_per_gpu_s_by_scenario": {
+    "baseline_minimal": 20.671953892237468,
+    "s2_only": 8.636636147694146,
+    "s3_only": 12.179680608977135,
+    "mixed_strategy": 8.524774471409286
+  },
+  "best_wall_scenario": "s3_only",
+  "best_tokens_per_gpu_s_scenario": "baseline_minimal",
+  "s2_prefill_wall_improvement_pct": 48.118625705231416,
+  "s2_wall_improvement_pct": -19.76239081674963,
+  "s3_wall_improvement_pct": 14.775281330530806,
+  "mixed_wall_improvement_pct": -20.97387364395625,
+  "s2_tokens_per_gpu_s_improvement_pct": -58.22051368382118,
+  "s3_tokens_per_gpu_s_improvement_pct": -41.08113498864406,
+  "mixed_tokens_per_gpu_s_improvement_pct": -58.76164142079271,
+  "s3_tail_decode_gpu_s_savings_pct": 2.6040557942576776,
+  "mixed_tail_decode_gpu_s_savings_pct": 1.963742645758822,
+  "s2_only_s2_executed_count": 2,
+  "s3_only_migrated_requests": 0,
+  "mixed_s2_executed_count": 2,
+  "mixed_migrated_requests": 0
+}

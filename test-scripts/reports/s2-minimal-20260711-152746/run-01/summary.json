@@ -1,0 +1,343 @@
+{
+  "generated_at": "2026-07-11T15:33:24",
+  "phase_summaries": {
+    "decode_probe": {
+      "requests": 6,
+      "success": 6,
+      "success_pct": 100.0,
+      "valid_decode": 6,
+      "valid_decode_pct": 100.0,
+      "timeout_count": 0,
+      "http_5xx_count": 0,
+      "wall_s": 6.047171592712402,
+      "req_s": 0.9921993957027365,
+      "p50_latency_s": 1.8992464542388916,
+      "p95_latency_s": 2.5345816612243652,
+      "p99_latency_s": 2.5345816612243652,
+      "prompt_tokens": 2202,
+      "completion_tokens": 288,
+      "total_tokens": 2490,
+      "prompt_tps": 364.1371782229043,
+      "completion_tps": 47.62557099373135,
+      "total_tps": 411.76274921663565
+    }
+  },
+  "overall_summary": {
+    "requests": 6,
+    "success": 6,
+    "success_pct": 100.0,
+    "valid_decode": 6,
+    "valid_decode_pct": 100.0,
+    "timeout_count": 0,
+    "http_5xx_count": 0,
+    "wall_s": 6.047171592712402,
+    "req_s": 0.9921993957027365,
+    "p50_latency_s": 1.8992464542388916,
+    "p95_latency_s": 2.5345816612243652,
+    "p99_latency_s": 2.5345816612243652,
+    "prompt_tokens": 2202,
+    "completion_tokens": 288,
+    "total_tokens": 2490,
+    "prompt_tps": 364.1371782229043,
+    "completion_tps": 47.62557099373135,
+    "total_tps": 411.76274921663565
+  },
+  "pod_allocation": {
+    "sample_count": 40,
+    "gpu_allocated_seconds": 716.8957805633545,
+    "prefill_allocated_seconds": 358.44789028167725,
+    "decode_allocated_seconds": 358.44789028167725,
+    "avg_ready_workers": 4.0,
+    "min_ready_workers": 4,
+    "max_ready_workers": 4
+  },
+  "request_window_pod_allocation": {
+    "sample_count": 1,
+    "gpu_allocated_seconds": 0.0,
+    "prefill_allocated_seconds": 0.0,
+    "decode_allocated_seconds": 0.0,
+    "avg_ready_workers": 0.0,
+    "min_ready_workers": 0,
+    "max_ready_workers": 0
+  },
+  "preparation": {
+    "Warmup Trigger Lag": null,
+    "Signal-to-Ready": null,
+    "Burst Safety Margin": null
+  },
+  "s2_history_count": 2,
+  "s2_executed_count": 2,
+  "s2_switch_latencies_ms": [
+    183.73967707157135,
+    393.4940751641989
+  ],
+  "s2_evaluation_summary": {
+    "count": 39,
+    "max_prefill_queue_depth": 1,
+    "max_decode_queue_depth": 2,
+    "max_prefill_worker_active": 0,
+    "max_decode_worker_active": 2,
+    "selected_actions": [
+      "decode_to_prefill",
+      "prefill_to_decode"
+    ],
+    "top_skip_reasons": [
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1;p_to_d_blocked:decode_queue_depth=0>=1,prefill_worker_count=2>2",
+        18
+      ],
+      [
+        "d_to_p_blocked:prefill_queue_depth=0>=1;p_to_d_blocked:prefill_worker_count=2>2",
+        14
+      ],
+      [
+        "d_to_p_blocked:decode_worker_count=1>1;p_to_d_blocked:decode_queue_depth=0>=1",
+        5
+      ]
+    ]
+  },
+  "s3_history_count": 0,
+  "s3_executed_pairs": 0,
+  "s3_migration_attempts": 0,
+  "s3_migrated_requests": 0,
+  "s3_declined_requests": 0,
+  "s3_scaled_down_to": [],
+  "s3_drained_sources": [],
+  "suite_dir": "C:\\projects\\IP\\RL-Scaling\\test-scripts\\reports\\s2-minimal-20260711-152746",
+  "passed": true,
+  "decode_probe": {
+    "requests": 6,
+    "success": 6,
+    "success_pct": 100.0,
+    "valid_decode": 6,
+    "valid_decode_pct": 100.0,
+    "timeout_count": 0,
+    "http_5xx_count": 0,
+    "wall_s": 6.047171592712402,
+    "req_s": 0.9921993957027365,
+    "p50_latency_s": 1.8992464542388916,
+    "p95_latency_s": 2.5345816612243652,
+    "p99_latency_s": 2.5345816612243652,
+    "prompt_tokens": 2202,
+    "completion_tokens": 288,
+    "total_tokens": 2490,
+    "prompt_tps": 364.1371782229043,
+    "completion_tps": 47.62557099373135,
+    "total_tps": 411.76274921663565
+  },
+  "s2_history": [
+    {
+      "worker_url": "http://10.244.0.210:9091",
+      "from_role": "decode",
+      "to_role": "prefill",
+      "reason": "prefill_queue=1>=1 and decode_util=0.00<=0.30",
+      "executed": true,
+      "result": {
+        "status": "ok",
+        "switch_time_ms": 183.73967707157135,
+        "new_role": "prefill"
+      }
+    },
+    {
+      "worker_url": "http://10.244.0.210:9091",
+      "from_role": "prefill",
+      "to_role": "decode",
+      "reason": "decode_queue=1>=1 and prefill_util=0.00<=0.30",
+      "executed": true,
+      "result": {
+        "status": "ok",
+        "switch_time_ms": 393.4940751641989,
+        "new_role": "decode"
+      }
+    }
+  ],
+  "role_snapshots": "C:\\projects\\IP\\RL-Scaling\\test-scripts\\reports\\s2-minimal-20260711-152746\\run-01\\worker_role_snapshots.jsonl",
+  "events": [
+    {
+      "ts": 1783754866.9646914,
+      "iso": "2026-07-11T15:27:46",
+      "event": "setup_start"
+    },
+    {
+      "ts": 1783755062.7816646,
+      "iso": "2026-07-11T15:31:02",
+      "event": "reset_decode_component_roles",
+      "actions": []
+    },
+    {
+      "ts": 1783755095.7969582,
+      "iso": "2026-07-11T15:31:35",
+      "event": "initial_runtime_role_gate",
+      "prefill": 2,
+      "decode": 2
+    },
+    {
+      "ts": 1783755111.4222684,
+      "iso": "2026-07-11T15:31:51",
+      "event": "controller_configured",
+      "env": {
+        "CONTROL_LOOP_INTERVAL": "1",
+        "K8S_SCALE_FALLBACK_ENABLED": "false",
+        "MAX_GPUS": "4",
+        "MIN_PREFILL_REPLICAS": "2",
+        "MIN_DECODE_REPLICAS": "1",
+        "MAX_CONCURRENT_PER_DECODE": "64",
+        "PRE_WARM_THRESHOLD": "2.0",
+        "ROLE_SWITCH_ENABLED": "true",
+        "CONSOLIDATION_ENABLED": "false",
+        "CONSOLIDATION_SCALE_DOWN_ENABLED": "false",
+        "PREFILL_QUEUE_THRESHOLD": "1",
+        "DECODE_QUEUE_THRESHOLD": "1",
+        "DECODE_IDLE_THRESHOLD": "0.30",
+        "PREFILL_IDLE_THRESHOLD": "0.30",
+        "MIN_SWITCH_INTERVAL": "30",
+        "ROLE_SWITCH_VERIFY_TIMEOUT": "60",
+        "ROLE_SWITCH_VERIFY_POLL_INTERVAL": "1",
+        "RLS_TEST_RUN_ID": "s2-minimal-1783755095"
+      }
+    },
+    {
+      "ts": 1783755120.7748225,
+      "iso": "2026-07-11T15:32:00",
+      "event": "prefill_pressure_signal",
+      "response": {
+        "status": "ok",
+        "state": "idle"
+      }
+    },
+    {
+      "ts": 1783755152.7665517,
+      "iso": "2026-07-11T15:32:32",
+      "event": "runtime_role_gate_after_d_to_p",
+      "snapshot": {
+        "ts": 1783755120.7748978,
+        "iso": "2026-07-11T15:32:00",
+        "workers": [
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-802189a8-7468bc47fc9wjpf",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.210",
+            "current_role_label": "prefill",
+            "sidecar_role": "prefill",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-802189a8-7468bc47fcwhb75",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.207",
+            "current_role_label": "",
+            "sidecar_role": "decode",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-802189a8-64c6c794d2tjd7",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.209",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-802189a8-64c6c794d8klkw",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.208",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          }
+        ],
+        "role_counts": {
+          "prefill": 3,
+          "decode": 1,
+          "unknown": 0
+        }
+      }
+    },
+    {
+      "ts": 1783755156.2586386,
+      "iso": "2026-07-11T15:32:36",
+      "event": "decode_pressure_signal",
+      "response": {
+        "status": "ok",
+        "state": "warm_up"
+      }
+    },
+    {
+      "ts": 1783755189.510447,
+      "iso": "2026-07-11T15:33:09",
+      "event": "runtime_role_gate_after_p_to_d",
+      "snapshot": {
+        "ts": 1783755156.2587085,
+        "iso": "2026-07-11T15:32:36",
+        "workers": [
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-802189a8-7468bc47fc9wjpf",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.210",
+            "current_role_label": "decode",
+            "sidecar_role": "decode",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmdecodeworker-802189a8-7468bc47fcwhb75",
+            "component": "VllmDecodeWorker",
+            "pod_ip": "10.244.0.207",
+            "current_role_label": "",
+            "sidecar_role": "decode",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-802189a8-64c6c794d2tjd7",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.209",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          },
+          {
+            "pod": "vllm-v1-disagg-router-vllmprefillworker-802189a8-64c6c794d8klkw",
+            "component": "VllmPrefillWorker",
+            "pod_ip": "10.244.0.208",
+            "current_role_label": "",
+            "sidecar_role": "prefill",
+            "healthy": true
+          }
+        ],
+        "role_counts": {
+          "prefill": 2,
+          "decode": 2,
+          "unknown": 0
+        }
+      }
+    },
+    {
+      "ts": 1783755193.3249319,
+      "iso": "2026-07-11T15:33:13",
+      "event": "long_decode_readiness_probe",
+      "max_tokens": 48
+    },
+    {
+      "ts": 1783755201.3353443,
+      "iso": "2026-07-11T15:33:21",
+      "event": "decode_probe_done",
+      "requests": 6,
+      "success": 6,
+      "success_pct": 100.0,
+      "valid_decode": 6,
+      "valid_decode_pct": 100.0,
+      "timeout_count": 0,
+      "http_5xx_count": 0,
+      "wall_s": 6.047171592712402,
+      "req_s": 0.9921993957027365,
+      "p50_latency_s": 1.8992464542388916,
+      "p95_latency_s": 2.5345816612243652,
+      "p99_latency_s": 2.5345816612243652,
+      "prompt_tokens": 2202,
+      "completion_tokens": 288,
+      "total_tokens": 2490,
+      "prompt_tps": 364.1371782229043,
+      "completion_tps": 47.62557099373135,
+      "total_tps": 411.76274921663565
+    }
+  ]
+}
