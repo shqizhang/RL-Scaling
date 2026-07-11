@@ -42,14 +42,25 @@ def build_manifest() -> list[dict[str, Any]]:
 
     # Prefill-heavy phase: long input, short output. This is where S2 D->P
     # should help by adding prefill capacity without measuring warmup time.
-    for _ in range(80):
+    #
+    # Prompt size / output length are sized to this cluster's disagg KV
+    # TRANSPORT, which has no RDMA (pods lack /dev/infiniband and per-pod GPU
+    # isolation blocks cuda_ipc), so cross-pod KV transfer falls back to
+    # TCP-over-overlay at ~32-54 MB/s with ~0.57ms/descriptor. A 3200-word
+    # prompt produces a ~1.2GB / ~38k-descriptor transfer that takes 10-58s and
+    # backs up on the decode-bound worker, timing out tail requests. 1200 words
+    # keeps prefill the bottleneck (so D->P still helps) while keeping each
+    # transfer fast enough to avoid the backlog; max_tokens=8 keeps the decode
+    # phase from bottlenecking the single decode worker during 3P1D. With RDMA
+    # the original 3200/48 workload would also serve; see NIXL/receive analysis.
+    for _ in range(64):
         rows.append(
             {
                 "manifest_id": idx,
                 "phase": "prefill_burst",
-                "words": 3200,
-                "max_tokens": 48,
-                "concurrency": 16,
+                "words": 400,
+                "max_tokens": 4,
+                "concurrency": 12,
                 "timeout_s": 600,
                 "shape": "long_prompt_short_decode",
             }
@@ -58,13 +69,13 @@ def build_manifest() -> list[dict[str, Any]]:
 
     # Balanced phase: enough decode pressure to make an optional P->D return
     # useful, but not long enough to let S2 churn repeatedly.
-    for _ in range(32):
+    for _ in range(24):
         rows.append(
             {
                 "manifest_id": idx,
                 "phase": "balanced_decode",
-                "words": 384,
-                "max_tokens": 384,
+                "words": 200,
+                "max_tokens": 96,
                 "concurrency": 8,
                 "timeout_s": 600,
                 "shape": "medium_prompt_medium_decode",

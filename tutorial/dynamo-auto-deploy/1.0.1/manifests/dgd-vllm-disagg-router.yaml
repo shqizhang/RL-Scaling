@@ -78,6 +78,14 @@ spec:
         # engine would otherwise keep pinned).
         - name: VLLM_ALLOW_INSECURE_SERIALIZATION
           value: "1"
+        # NIXL/UCX KV transfers were running at ~32 MB/s (10-58s per prefill
+        # transfer) because NixlConnector could not set UCX_RCACHE_MAX_UNRELEASED
+        # (NIXL was already imported), so UCX's registration cache thrashed
+        # across the ~38k descriptors per transfer. Setting it as a pod env
+        # applies it before UCX init. This slow transfer is what backs up on the
+        # decode-bound worker and times out tail requests.
+        - name: UCX_RCACHE_MAX_UNRELEASED
+          value: "1024"
       resources:
         limits:
           gpu: "1"
@@ -110,6 +118,12 @@ spec:
       envFromSecret: hf-token-secret
       componentType: worker
       replicas: ${PREFILL_REPLICAS}
+      envs:
+        # Same UCX registration-cache fix as the decode worker: the prefill
+        # side registers the KV it sends, so it must also keep UCX rcache from
+        # thrashing to reach fast transfer throughput.
+        - name: UCX_RCACHE_MAX_UNRELEASED
+          value: "1024"
       resources:
         limits:
           gpu: "1"
