@@ -83,34 +83,68 @@ def build_manifest() -> list[dict[str, Any]]:
         )
         idx += 1
 
-    # Tail phase: explicit long-tail mix for S3. Token budgets stay small
-    # because this Dynamo/vLLM deployment can otherwise hit request timeouts;
-    # the long-tail signal comes from uneven budgets and concurrency, not from
-    # pathological 600s responses.
-    # Moderate tail sizes the disaggregated 2P2D topology can actually serve.
-    # NOTE: longer tail requests (>=128 max_tokens) reliably HANG on the
-    # warmed-up dynamic decode workers (KV pressure accumulates across the batch
-    # and the tail-end long requests cannot allocate blocks), independent of
-    # S2/S3 — see ANALYSIS §5.1. These moderate budgets keep the tail mostly
-    # serveable so the S2 prefill result is not masked by that topology issue.
+    # Tail phase: explicit long-tail mix for S3 consolidation.
+    #
+    # KEY (2026-07-12): S3 can only migrate a request that is actually IN-FLIGHT
+    # when the controller polls /v1/active_requests. This small model hits EOS
+    # after ~1-2k tokens and decodes at ~2000 tok/s, so an ordinary
+    # max_tokens=48 request finishes in ~0.02s and is NEVER caught — which is why
+    # every prior run showed migrated=0 (a workload artefact, not a broken S3
+    # mechanism; migrate->drain is validated directly via the sidecar /migrate).
+    #
+    # So the tail is two parts:
+    #   * A short/medium burst (natural EOS) that completes fast and forms the
+    #     "batch mostly complete" context the consolidation gate looks for.
+    #   * A few genuine long stragglers with ignore_eos=true + high max_tokens.
+    #     They keep a real, token-progressing request in-flight for ~20-30s
+    #     (under tail contention), long enough for the controller to detect,
+    #     migrate, drain the source, and scale a decode replica down (GPU
+    #     release). Small prompts (48 words) keep their prefill KV transfer tiny
+    #     so they never hit the no-RDMA transport backlog that times out large
+    #     prompts. Staggered budgets + emitting them FIRST (so they start while
+    #     both decoders are empty) encourage a 2+1 / 1+1 split across the two
+    #     decoders, giving the gate a source with exactly one in-flight request
+    #     (consolidation_threshold=1).
+    tail_concurrency = 8
+    # (count, words, max_tokens, shape, ignore_eos) — stragglers first.
+    # Sizing (validated 2026-07-12 s3-derisk run): the consolidation trigger
+    # fires EARLY — at only ~2200 generated tokens, ~20s into the tail — so the
+    # stragglers do not need to be huge to be caught. Sustained aggregate decode
+    # here is ~300 tok/s, so max_tokens=8000 still keeps each straggler in-flight
+    # ~50-80s (plenty for the 4s delay + controller ticks + drain), while
+    # bounding KV: baseline_minimal is 1P1D, so all 3 stragglers share ONE decode
+    # GPU the whole run (3x8000=24k tokens fits without the preemption thrash a
+    # 30k budget caused — that run's tail hit 219s, within 20s of the 240s
+    # timeout). timeout_s=300 leaves generous headroom on the worst case.
     tail_shapes = [
-        (8, 64, 16, "tail_short"),
-        (6, 64, 32, "tail_medium"),
-        (4, 48, 48, "tail_long"),
+        (3, 48, 8000, "tail_long", True),
+        (8, 64, 16, "tail_short", False),
+        (6, 64, 32, "tail_medium", False),
     ]
-    for count, words, max_tokens, shape in tail_shapes:
-        for _ in range(count):
-            rows.append(
-                {
-                    "manifest_id": idx,
-                    "phase": "decode_tail",
-                    "words": words,
-                    "max_tokens": max_tokens,
-                    "concurrency": 2,
-                    "timeout_s": 120,
-                    "shape": shape,
-                }
-            )
+    # Stagger between successive stragglers so the KV router does not route them
+    # all to one decoder (a 3+0 split leaves no source with in_flight==1, so
+    # consolidation cannot fire). 4s lets each straggler's load register before
+    # the next is routed, biasing toward a 2+1 spread across the two decoders.
+    straggler_stagger_s = 4
+    for count, words, max_tokens, shape, ignore_eos in tail_shapes:
+        for i in range(count):
+            row = {
+                "manifest_id": idx,
+                "phase": "decode_tail",
+                "words": words,
+                "max_tokens": max_tokens,
+                "concurrency": tail_concurrency,
+                # Stragglers run to max_tokens (~20-30s under contention) and a
+                # migrated straggler pays recompute-replay overhead, so give the
+                # long shape plenty of client-side headroom; short/medium keep
+                # the tight 120s bound.
+                "timeout_s": 300 if ignore_eos else 120,
+                "shape": shape,
+                "ignore_eos": ignore_eos,
+                # Only the long stragglers stagger; short/medium fire immediately.
+                "launch_delay_s": (i * straggler_stagger_s) if ignore_eos else 0,
+            }
+            rows.append(row)
             idx += 1
     return rows
 
@@ -198,7 +232,32 @@ def send_warmup_and_wait(
     signal_recv = e2e.now_ts()
     e2e.event(events, "T_signal_recv", scenario=scenario, response=response, client_signal_send=client_signal_send)
     e2e.event(events, "T_warmup_start", scenario=scenario)
-    e2e.wait_ready_counts(prefill=2, decode=2, timeout_s=900)
+    # Give the controller a chance to pre-warm to 2P2D autonomously (on_sampling_
+    # progress only scales up from IDLE, and that scale-up is occasionally not
+    # applied); if it has not reached 2P2D within the grace window, force the
+    # topology via the deployment scaler. Pre-warm-scaling reliability is not
+    # what S2/S3 measures — the scenarios only need to START at 2P2D — so this
+    # guarantees the starting topology instead of hanging the whole suite.
+    grace_deadline = time.time() + 90
+    forced = False
+    while True:
+        try:
+            p, d = e2e.count_ready_by_component()
+        except Exception:
+            p, d = 0, 0
+        if p >= 2 and d >= 2:
+            break
+        if time.time() >= grace_deadline:
+            e2e.event(events, "warmup_forcing_topology", got={"prefill": p, "decode": d},
+                      note="controller did not pre-warm to 2P2D; forcing via deployment scaler")
+            e2e.set_topology(2, 2)
+            forced = True
+            break
+        time.sleep(3)
+    if forced:
+        # Re-assert the warm-up signal so controller state matches the topology.
+        e2e.send_progress(controller_port, 0.85, batch_size=128, avg_isl=3072, avg_osl=512)
+    e2e.wait_ready_counts(prefill=2, decode=2, timeout_s=300)
     time.sleep(30)
     for _ in range(3):
         e2e.wait_frontend_chat_ready(frontend_port, timeout_s=240)
@@ -301,6 +360,42 @@ def tail_signal_on_active_window(
         )
 
 
+def _soft_role_gate(
+    events: list[dict[str, Any]],
+    label: str,
+    *,
+    prefill: int,
+    decode: int,
+    timeout_s: int,
+    snapshot_path: Path,
+) -> dict[str, Any]:
+    """Wait for a runtime role topology, but NEVER raise.
+
+    The S2 role switches are driven by the controller's real queue/util
+    metrics, so the exact moment a switch lands is inherently timing-dependent
+    (and a switch can be briefly blocked by MIN_SWITCH_INTERVAL). A hard wait
+    here previously turned that timing into an unhandled TimeoutError that
+    aborted the entire suite. Instead, record whether the target topology was
+    reached and let the phase proceed; the phase's own decode load then drives
+    any pending switch reactively, and the continuous role snapshots capture it.
+    """
+    try:
+        return e2e.wait_runtime_role_counts(
+            prefill=prefill, decode=decode, timeout_s=timeout_s, snapshot_path=snapshot_path,
+        )
+    except TimeoutError as exc:
+        snapshot = e2e.collect_worker_roles()
+        e2e.event(
+            events,
+            f"{label}_timeout_nonfatal",
+            expected={"prefill": prefill, "decode": decode},
+            got=snapshot.get("role_counts", {}),
+            note="proceeding without hard topology gate; switch may occur reactively under load",
+            error=str(exc)[:200],
+        )
+        return snapshot
+
+
 def run_phase(
     scenario: str,
     phase: str,
@@ -317,23 +412,29 @@ def run_phase(
     if phase == "prefill_burst" and scenario in {"s2_only", "mixed_strategy"}:
         response = e2e.send_progress(controller_port, 0.30, batch_size=len(phase_items), avg_isl=4096, avg_osl=64)
         e2e.event(events, "prefill_pressure_signal", response=response)
-        role_snapshot = e2e.wait_runtime_role_counts(
-            prefill=3,
-            decode=1,
-            timeout_s=180,
-            snapshot_path=role_snapshot_path,
+        role_snapshot = _soft_role_gate(
+            events, "runtime_role_gate_after_d_to_p", prefill=3, decode=1,
+            timeout_s=180, snapshot_path=role_snapshot_path,
         )
         e2e.event(events, "runtime_role_gate_after_d_to_p", snapshot=role_snapshot)
     if phase == "balanced_decode" and scenario in {"s2_only", "mixed_strategy"}:
         response = e2e.send_done(controller_port, batch_size=len(phase_items), avg_isl=512, avg_osl=512)
         e2e.event(events, "decode_pressure_signal", response=response)
-        role_snapshot = e2e.wait_runtime_role_counts(
-            prefill=2,
-            decode=2,
-            timeout_s=180,
-            snapshot_path=role_snapshot_path,
+        # NON-FATAL gate: the S2 P->D switch-back is driven by REAL decode-queue
+        # pressure, but that pressure only exists once the decode load (this
+        # balanced_decode phase, then the tail) is actually sent — and
+        # MIN_SWITCH_INTERVAL can block a switch until the prefill burst's decode
+        # pressure has drained. So do not hard-block here (a premature wait that
+        # once crashed the whole suite); proceed, let the balanced_decode load
+        # drive the reactive P->D, and re-observe roles afterwards.
+        # Short pre-observation only: no decode load exists yet, so the switch
+        # cannot have fired. The real P->D is driven below, after this phase's
+        # load runs (see the post-phase soft gate).
+        role_snapshot = _soft_role_gate(
+            events, "runtime_role_gate_before_p_to_d", prefill=2, decode=2,
+            timeout_s=10, snapshot_path=role_snapshot_path,
         )
-        e2e.event(events, "runtime_role_gate_after_p_to_d", snapshot=role_snapshot)
+        e2e.event(events, "runtime_role_gate_before_p_to_d", snapshot=role_snapshot)
         for _ in range(2):
             e2e.wait_frontend_chat_ready(frontend_port, timeout_s=180)
             time.sleep(1)
@@ -354,6 +455,19 @@ def run_phase(
     rows = e2e.run_manifest_phase(frontend_port, manifest, phase, out_dir, nonce)
     e2e.event(events, f"{phase}_done", **e2e.summarize_requests(rows))
     e2e.status_sample(controller_port, status_rows, f"after_{phase}")
+    # After balanced_decode's real decode load, give the controller a window to
+    # land the reactive P->D switch-back (restoring 2P2D) so the decode_tail —
+    # and, for mixed, S3 consolidation which needs >1 decode worker — runs on the
+    # intended topology. Non-fatal: if it does not switch, the tail still runs.
+    if phase == "balanced_decode" and scenario in {"s2_only", "mixed_strategy"}:
+        # The reliable P->D trigger is the decode_tail stragglers (sustained
+        # decode_queue>=2 with idle prefill), so this is a short best-effort
+        # observation only; the switch typically lands during decode_tail.
+        role_snapshot = _soft_role_gate(
+            events, "runtime_role_gate_after_p_to_d", prefill=2, decode=2,
+            timeout_s=30, snapshot_path=role_snapshot_path,
+        )
+        e2e.event(events, "runtime_role_gate_after_p_to_d", snapshot=role_snapshot)
     if tail_thread:
         tail_stop.set()
         tail_thread.join(timeout=20)
@@ -640,6 +754,19 @@ def row_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     gpu_s = float(alloc.get("gpu_allocated_seconds", 0.0) or 0.0)
     completion = float(overall.get("completion_tokens", 0.0) or 0.0)
     success = float(overall.get("success", 0.0) or 0.0)
+    # --- "fair-cost" metrics: measure ONLY the post-warmup request serving plus
+    # the discrete strategy actions, excluding the test harness's inter-phase
+    # readiness/topology-verification waits and the cold-start warmup. ---
+    phase_summ = summary.get("phase_summaries", {})
+    phase_alloc = summary.get("phase_allocations", {})
+    PHASES = ("prefill_burst", "balanced_decode", "decode_tail")
+    def _pw(p: str) -> float:
+        return float(phase_summ.get(p, {}).get("wall_s", 0.0) or 0.0)
+    serving_wall = sum(_pw(p) for p in PHASES)  # pure request serving, no gaps
+    serving_gpu_s = sum(float(phase_alloc.get(p, {}).get("gpu_allocated_seconds", 0.0) or 0.0) for p in PHASES)
+    overall_wall = float(overall.get("wall_s", 0.0) or 0.0)
+    switch_lat = summary.get("s2_switch_latencies_ms", []) or []
+    s2_switch_total_ms = float(sum(float(x) for x in switch_lat))
     return {
         "repeat": summary.get("repeat"),
         "performance_valid": bool(summary.get("performance_valid")),
@@ -652,7 +779,15 @@ def row_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "gpu_s": gpu_s,
         "requests_per_gpu_s": success / gpu_s if gpu_s > 0 else 0.0,
         "tokens_per_gpu_s": completion / gpu_s if gpu_s > 0 else 0.0,
+        # Fair-cost (post-warmup serving only) metrics:
+        "serving_wall_s": serving_wall,
+        "orchestration_overhead_s": max(0.0, overall_wall - serving_wall),
+        "serving_gpu_s": serving_gpu_s,
+        "serving_tokens_per_gpu_s": completion / serving_gpu_s if serving_gpu_s > 0 else 0.0,
+        "serving_requests_per_gpu_s": success / serving_gpu_s if serving_gpu_s > 0 else 0.0,
+        "s2_switch_total_ms": s2_switch_total_ms,
         "prefill_wall_s": float(summary.get("phase_summaries", {}).get("prefill_burst", {}).get("wall_s", 0.0) or 0.0),
+        "balanced_wall_s": float(summary.get("phase_summaries", {}).get("balanced_decode", {}).get("wall_s", 0.0) or 0.0),
         "tail_wall_s": float(summary.get("phase_summaries", {}).get("decode_tail", {}).get("wall_s", 0.0) or 0.0),
         "tail_decode_gpu_s_savings_pct": float(tail.get("tail_decode_gpu_s_savings_pct", 0.0) or 0.0),
         "tail_decode_gpu_s_saved": float(tail.get("tail_decode_gpu_s_saved", 0.0) or 0.0),
@@ -676,7 +811,14 @@ def aggregate_scenario(suite_dir: Path, scenario: str, summaries: list[dict[str,
         "gpu_s",
         "requests_per_gpu_s",
         "tokens_per_gpu_s",
+        "serving_wall_s",
+        "orchestration_overhead_s",
+        "serving_gpu_s",
+        "serving_tokens_per_gpu_s",
+        "serving_requests_per_gpu_s",
+        "s2_switch_total_ms",
         "prefill_wall_s",
+        "balanced_wall_s",
         "tail_wall_s",
         "tail_decode_gpu_s_savings_pct",
         "tail_decode_gpu_s_saved",

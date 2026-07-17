@@ -1,0 +1,169 @@
+{
+  "scenario": "s3_only",
+  "run_count": 1,
+  "runs": [
+    {
+      "repeat": 1,
+      "performance_valid": true,
+      "wall_s": 70.42676091194153,
+      "valid_decode_pct": 100.0,
+      "timeout_count": 0,
+      "req_s": 1.4909105379883552,
+      "p95_latency_s": 5.788476467132568,
+      "completion_tps": 317.91892329104064,
+      "gpu_s": 263.8924226760864,
+      "requests_per_gpu_s": 0.39788940862800665,
+      "tokens_per_gpu_s": 84.84517961124827,
+      "serving_wall_s": 64.44295501708984,
+      "orchestration_overhead_s": 5.983805894851685,
+      "serving_gpu_s": 206.845458984375,
+      "serving_tokens_per_gpu_s": 108.24506426167822,
+      "serving_requests_per_gpu_s": 0.5076253571896477,
+      "s2_switch_total_ms": 0.0,
+      "prefill_wall_s": 20.45364236831665,
+      "balanced_wall_s": 6.865062952041626,
+      "tail_wall_s": 37.12424969673157,
+      "tail_decode_gpu_s_savings_pct": 15.190830330531124,
+      "tail_decode_gpu_s_saved": 11.278963565826416,
+      "s2_executed_count": 0,
+      "s3_migrated_requests": 1,
+      "s3_drained_source_count": 1,
+      "signal_to_ready_s": 190.2006859779358,
+      "burst_safety_margin_s": 1.540097951889038
+    }
+  ],
+  "metrics": {
+    "wall_s": {
+      "mean": 70.42676091194153,
+      "stdev": 0.0,
+      "best": 70.42676091194153,
+      "worst": 70.42676091194153
+    },
+    "valid_decode_pct": {
+      "mean": 100.0,
+      "stdev": 0.0,
+      "best": 100.0,
+      "worst": 100.0
+    },
+    "timeout_count": {
+      "mean": 0.0,
+      "stdev": 0.0,
+      "best": 0.0,
+      "worst": 0.0
+    },
+    "req_s": {
+      "mean": 1.4909105379883552,
+      "stdev": 0.0,
+      "best": 1.4909105379883552,
+      "worst": 1.4909105379883552
+    },
+    "p95_latency_s": {
+      "mean": 5.788476467132568,
+      "stdev": 0.0,
+      "best": 5.788476467132568,
+      "worst": 5.788476467132568
+    },
+    "completion_tps": {
+      "mean": 317.91892329104064,
+      "stdev": 0.0,
+      "best": 317.91892329104064,
+      "worst": 317.91892329104064
+    },
+    "gpu_s": {
+      "mean": 263.8924226760864,
+      "stdev": 0.0,
+      "best": 263.8924226760864,
+      "worst": 263.8924226760864
+    },
+    "requests_per_gpu_s": {
+      "mean": 0.39788940862800665,
+      "stdev": 0.0,
+      "best": 0.39788940862800665,
+      "worst": 0.39788940862800665
+    },
+    "tokens_per_gpu_s": {
+      "mean": 84.84517961124827,
+      "stdev": 0.0,
+      "best": 84.84517961124827,
+      "worst": 84.84517961124827
+    },
+    "serving_wall_s": {
+      "mean": 64.44295501708984,
+      "stdev": 0.0,
+      "best": 64.44295501708984,
+      "worst": 64.44295501708984
+    },
+    "orchestration_overhead_s": {
+      "mean": 5.983805894851685,
+      "stdev": 0.0,
+      "best": 5.983805894851685,
+      "worst": 5.983805894851685
+    },
+    "serving_gpu_s": {
+      "mean": 206.845458984375,
+      "stdev": 0.0,
+      "best": 206.845458984375,
+      "worst": 206.845458984375
+    },
+    "serving_tokens_per_gpu_s": {
+      "mean": 108.24506426167822,
+      "stdev": 0.0,
+      "best": 108.24506426167822,
+      "worst": 108.24506426167822
+    },
+    "serving_requests_per_gpu_s": {
+      "mean": 0.5076253571896477,
+      "stdev": 0.0,
+      "best": 0.5076253571896477,
+      "worst": 0.5076253571896477
+    },
+    "s2_switch_total_ms": {
+      "mean": 0.0,
+      "stdev": 0.0,
+      "best": 0.0,
+      "worst": 0.0
+    },
+    "prefill_wall_s": {
+      "mean": 20.45364236831665,
+      "stdev": 0.0,
+      "best": 20.45364236831665,
+      "worst": 20.45364236831665
+    },
+    "balanced_wall_s": {
+      "mean": 6.865062952041626,
+      "stdev": 0.0,
+      "best": 6.865062952041626,
+      "worst": 6.865062952041626
+    },
+    "tail_wall_s": {
+      "mean": 37.12424969673157,
+      "stdev": 0.0,
+      "best": 37.12424969673157,
+      "worst": 37.12424969673157
+    },
+    "tail_decode_gpu_s_savings_pct": {
+      "mean": 15.190830330531124,
+      "stdev": 0.0,
+      "best": 15.190830330531124,
+      "worst": 15.190830330531124
+    },
+    "tail_decode_gpu_s_saved": {
+      "mean": 11.278963565826416,
+      "stdev": 0.0,
+      "best": 11.278963565826416,
+      "worst": 11.278963565826416
+    },
+    "signal_to_ready_s": {
+      "mean": 190.2006859779358,
+      "stdev": 0.0,
+      "best": 190.2006859779358,
+      "worst": 190.2006859779358
+    },
+    "burst_safety_margin_s": {
+      "mean": 1.540097951889038,
+      "stdev": 0.0,
+      "best": 1.540097951889038,
+      "worst": 1.540097951889038
+    }
+  }
+}

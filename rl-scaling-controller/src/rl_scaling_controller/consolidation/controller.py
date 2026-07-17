@@ -177,6 +177,14 @@ class ConsolidationController:
                 current = self.dgdsa.get_replicas("decode")
                 new_count = max(self.config.min_decode_replicas, current - drained_count)
                 if new_count != current:
+                    # Ensure the Deployment scale-down evicts the DRAINED pods,
+                    # not an arbitrary (possibly busy) decoder. Without this, K8s
+                    # may terminate a decoder that still has in-flight long-tail
+                    # requests, killing them with EngineShutdown (observed in
+                    # mixed S2+S3).
+                    prefer_delete = getattr(self.dgdsa, "prefer_delete", None)
+                    if prefer_delete is not None:
+                        prefer_delete(list(decision.drained_sources))
                     self.dgdsa.patch("decode", new_count)
                     decision.scaled_down_to = new_count
                     logger.info("S3 consolidation scaled decode replicas: %s -> %s", current, new_count)

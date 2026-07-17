@@ -1,9 +1,0 @@
-{
-  "ts": 1783657123.4021163,
-  "iso": "2026-07-10T12:18:43",
-  "stage": "suite_aborted_on_timeout",
-  "scenario": "s3_only",
-  "repeat": 1,
-  "reason": "decode_tail timeout_count=1",
-  "report": "C:\\projects\\IP\\RL-Scaling\\test-scripts\\reports\\strategy-four-scenario-20260710-s3-threshold-fix\\REPORT-zh.md"
-}

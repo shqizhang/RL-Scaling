@@ -18,6 +18,8 @@ class DGDSAClientProtocol(Protocol):
 
     def get_replicas(self, service: str) -> int: ...
 
+    def prefer_delete(self, pod_names: list[str]) -> None: ...
+
 
 class InMemoryDGDSAClient:
     """Records the replica state for tests / dry-run."""
@@ -35,6 +37,10 @@ class InMemoryDGDSAClient:
 
     def get_replicas(self, service: str) -> int:
         return self._replicas.get(service, 0)
+
+    def prefer_delete(self, pod_names: list[str]) -> None:
+        # No pods in the in-memory model; record for test assertions.
+        self.history.append(("prefer_delete", len(pod_names)))
 
 
 class K8sDGDSAClient:
@@ -54,6 +60,7 @@ class K8sDGDSAClient:
         dgd_name: str,
         custom_api=None,
         apps_api=None,
+        core_api=None,
         *,
         deployment_fallback_enabled: bool = False,
     ) -> None:
@@ -70,8 +77,41 @@ class K8sDGDSAClient:
             custom_api = client.CustomObjectsApi()
             if apps_api is None:
                 apps_api = client.AppsV1Api()
+            if core_api is None:
+                core_api = client.CoreV1Api()
         self._api = custom_api
         self._apps = apps_api
+        self._core = core_api
+
+    # Very negative deletion cost => the ReplicaSet controller removes THIS pod
+    # first when the Deployment scales down. See prefer_delete().
+    _PREFER_DELETE_COST = "-1000000"
+
+    def prefer_delete(self, pod_names: list[str]) -> None:
+        """Mark drained pods so a subsequent scale-down removes THEM, not a busy
+        pod. Scaling a Deployment down only sets the replica count; Kubernetes
+        picks which pod to terminate, and without a hint it may kill a pod that
+        still has in-flight requests (observed in mixed S2+S3: the scaled-down
+        victim was a busy decoder, not the drained source, so its long-tail
+        requests died with EngineShutdown). Setting
+        ``controller.kubernetes.io/pod-deletion-cost`` to a very negative value
+        makes the ReplicaSet controller evict these (already-drained) pods
+        first."""
+        if self._core is None or not pod_names:
+            return
+        body = {
+            "metadata": {
+                "annotations": {
+                    "controller.kubernetes.io/pod-deletion-cost": self._PREFER_DELETE_COST
+                }
+            }
+        }
+        for name in pod_names:
+            try:
+                self._core.patch_namespaced_pod(name=name, namespace=self.namespace, body=body)
+                logger.info("marked drained pod %s for preferential deletion", name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("failed to set pod-deletion-cost on %s: %s", name, exc)
 
     def _name(self, service: str) -> str:
         return f"{self.dgd_name}-{service}"

@@ -1,0 +1,105 @@
+{"manifest_id": 1, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 2, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 3, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 4, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 5, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 6, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 7, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 8, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 9, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 10, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 11, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 12, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 13, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 14, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 15, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 16, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 17, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 18, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 19, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 20, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 21, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 22, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 23, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 24, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 25, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 26, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 27, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 28, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 29, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 30, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 31, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 32, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 33, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 34, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 35, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 36, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 37, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 38, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 39, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 40, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 41, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 42, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 43, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 44, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 45, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 46, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 47, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 48, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 49, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 50, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 51, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 52, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 53, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 54, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 55, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 56, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 57, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 58, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 59, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 60, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 61, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 62, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 63, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 64, "phase": "prefill_burst", "words": 400, "max_tokens": 4, "concurrency": 12, "timeout_s": 600, "shape": "long_prompt_short_decode"}
+{"manifest_id": 65, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 66, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 67, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 68, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 69, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 70, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 71, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 72, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 73, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 74, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 75, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 76, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 77, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 78, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 79, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 80, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 81, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 82, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 83, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 84, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 85, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 86, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 87, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 88, "phase": "balanced_decode", "words": 200, "max_tokens": 96, "concurrency": 8, "timeout_s": 600, "shape": "medium_prompt_medium_decode"}
+{"manifest_id": 89, "phase": "decode_tail", "words": 48, "max_tokens": 8000, "concurrency": 8, "timeout_s": 300, "shape": "tail_long", "ignore_eos": true, "launch_delay_s": 0}
+{"manifest_id": 90, "phase": "decode_tail", "words": 48, "max_tokens": 8000, "concurrency": 8, "timeout_s": 300, "shape": "tail_long", "ignore_eos": true, "launch_delay_s": 4}
+{"manifest_id": 91, "phase": "decode_tail", "words": 48, "max_tokens": 8000, "concurrency": 8, "timeout_s": 300, "shape": "tail_long", "ignore_eos": true, "launch_delay_s": 8}
+{"manifest_id": 92, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 93, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 94, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 95, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 96, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 97, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 98, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 99, "phase": "decode_tail", "words": 64, "max_tokens": 16, "concurrency": 8, "timeout_s": 120, "shape": "tail_short", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 100, "phase": "decode_tail", "words": 64, "max_tokens": 32, "concurrency": 8, "timeout_s": 120, "shape": "tail_medium", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 101, "phase": "decode_tail", "words": 64, "max_tokens": 32, "concurrency": 8, "timeout_s": 120, "shape": "tail_medium", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 102, "phase": "decode_tail", "words": 64, "max_tokens": 32, "concurrency": 8, "timeout_s": 120, "shape": "tail_medium", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 103, "phase": "decode_tail", "words": 64, "max_tokens": 32, "concurrency": 8, "timeout_s": 120, "shape": "tail_medium", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 104, "phase": "decode_tail", "words": 64, "max_tokens": 32, "concurrency": 8, "timeout_s": 120, "shape": "tail_medium", "ignore_eos": false, "launch_delay_s": 0}
+{"manifest_id": 105, "phase": "decode_tail", "words": 64, "max_tokens": 32, "concurrency": 8, "timeout_s": 120, "shape": "tail_medium", "ignore_eos": false, "launch_delay_s": 0}

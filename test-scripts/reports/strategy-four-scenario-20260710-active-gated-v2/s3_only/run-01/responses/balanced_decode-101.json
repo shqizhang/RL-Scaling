@@ -1,1 +1,0 @@
-{"message":"Failed to generate completions: CannotConnect: TCP request to 10.244.0.187:37941 failed: Unknown: Connection closed by peer","type":"Internal Server Error","code":500}

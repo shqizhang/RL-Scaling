@@ -25,7 +25,9 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods", "endpoints"]
-    verbs: ["get", "list", "watch"]
+    # patch: set controller.kubernetes.io/pod-deletion-cost on drained decode
+    # pods so a consolidation scale-down evicts the drained pod, not a busy one.
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments", "deployments/scale"]
     verbs: ["get", "list", "watch", "patch", "update"]

@@ -60,8 +60,39 @@ def run(cmd: list[str], timeout: int = 60, check: bool = True) -> subprocess.Com
     return proc
 
 
+_KUBECTL_CONN_ERR_SIGNS = (
+    "Unable to connect to the server",
+    "dial tcp",
+    "connection refused",
+    "actively refused",
+    "TLS handshake timeout",
+    "i/o timeout",
+    "EOF",
+)
+
+
 def kubectl(args: list[str], timeout: int = 60, check: bool = True) -> subprocess.CompletedProcess:
-    return run(["kubectl", *args], timeout=timeout, check=check)
+    # The cluster is reached over an SSH tunnel that can briefly drop and
+    # auto-reconnect. A kubectl call landing in that window fails with a
+    # connection error; retry a few times so a transient blip does not abort a
+    # long run. Only connection-level errors are retried — real kubectl errors
+    # (bad object, etc.) surface immediately.
+    attempts = 5
+    for i in range(attempts):
+        proc = run(["kubectl", *args], timeout=timeout, check=False)
+        if proc.returncode == 0:
+            return proc
+        blob = f"{proc.stdout}\n{proc.stderr}"
+        transient = any(sign in blob for sign in _KUBECTL_CONN_ERR_SIGNS)
+        if transient and i < attempts - 1:
+            time.sleep(3.0)
+            continue
+        if check:
+            raise RuntimeError(
+                f"command failed: {' '.join(['kubectl', *args])}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+            )
+        return proc
+    return proc
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str] | None = None) -> None:
@@ -626,6 +657,14 @@ def parse_response(raw: bytes) -> dict[str, Any]:
 
 
 def submit_manifest_request(frontend_port: int, item: dict[str, Any], out_dir: Path, nonce: str) -> dict[str, Any]:
+    # Optional per-request launch stagger. Used for the S3 long stragglers so
+    # they do not all hit the KV router in the same instant (which can route
+    # them all to one decoder -> no source with in_flight==1 -> consolidation
+    # cannot fire). Delaying each successive straggler lets the router see the
+    # prior straggler's load and spread them across decoders (e.g. 2+1).
+    delay = float(item.get("launch_delay_s", 0) or 0)
+    if delay > 0:
+        time.sleep(delay)
     start = now_ts()
     idx = int(item["manifest_id"])
     phase = str(item["phase"])
@@ -648,6 +687,14 @@ def submit_manifest_request(frontend_port: int, item: dict[str, Any], out_dir: P
         "temperature": 0,
         "stream": False,
     }
+    # Genuine long-tail stragglers for S3: this small model hits EOS after
+    # ~1-2k tokens and decodes at ~2000 tok/s, so an ordinary max_tokens=48
+    # request finishes in ~0.02s and is never in-flight when the controller
+    # polls /v1/active_requests. ignore_eos forces the request to run to
+    # max_tokens, keeping it in-flight for seconds so it is an actual
+    # consolidation target.
+    if item.get("ignore_eos"):
+        payload["ignore_eos"] = True
     code = 0
     raw = b""
     error = ""
