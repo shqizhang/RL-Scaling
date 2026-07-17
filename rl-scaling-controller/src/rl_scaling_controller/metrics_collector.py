@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol
 
@@ -265,9 +266,18 @@ class PrometheusMetricsCollector:
             logger.warning("worker sidecar role probe failed for %s: %s", addr, exc)
             return None
 
-    # Rough decode rate (tokens/sec/request) used only to turn remaining tokens
-    # into a remaining-seconds estimate for the S3 cost/benefit gate.
-    _DECODE_TOKENS_PER_SEC = 20.0
+    # Per-request decode rate used only to turn remaining tokens into a
+    # remaining-seconds estimate for the S3 cost/benefit gate.
+    #
+    # CALIBRATION (2026-07): this was 20.0, which is 15-100x below reality on
+    # this deployment (measured: ~300 tok/s aggregate across concurrent
+    # streams, ~2000 tok/s for a single uncontended stream on Qwen3-0.6B).
+    # At 20 tok/s an 8000-token straggler "needs" 400s, so
+    # `_is_worth_migrating` (migration_time < 0.5 * remaining) always passed
+    # and the gate never once declined a migration -- i.e. it was decorative.
+    # Default to a measured-conservative per-stream rate and make it tunable so
+    # the estimate is honest rather than accidentally permissive.
+    _DECODE_TOKENS_PER_SEC = float(os.environ.get("DECODE_TOKENS_PER_SEC", "150"))
 
     def _estimate_remaining_seconds(self, progress: Optional[list]) -> float:
         max_remaining = 0

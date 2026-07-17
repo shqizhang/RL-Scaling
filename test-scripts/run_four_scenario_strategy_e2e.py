@@ -20,7 +20,14 @@ import rls_strategy_common as e2e
 
 
 PHASES = ["prefill_burst", "balanced_decode", "decode_tail"]
-SCENARIOS = ["baseline_minimal", "s2_only", "s3_only", "mixed_strategy"]
+# 2p2d_static is the EQUAL-TOPOLOGY CONTROL and the most important scenario for
+# attribution. Without it, every "strategy vs baseline_minimal" comparison
+# confounds two variables at once: topology (1P1D=2 GPU -> 2P2D=4 GPU) AND the
+# strategy. 2p2d_static holds the topology fixed with both strategies OFF, so:
+#   2p2d_static vs s2_only   -> isolates S2
+#   2p2d_static vs s3_only   -> isolates S3 (and is S3's MEASURED counterfactual)
+#   baseline_minimal vs 2p2d_static -> the topology effect alone
+SCENARIOS = ["baseline_minimal", "2p2d_static", "s2_only", "s3_only", "mixed_strategy"]
 MIN_VALID_DECODE_PCT = 99.0
 MAX_S2_SWITCHES_PER_RUN = 2
 S3_TAIL_TRIGGER_MIN_DELAY_S = 4.0
@@ -205,6 +212,13 @@ def scenario_env(name: str) -> dict[str, str]:
     }
     if name == "baseline_minimal":
         return {**base, **disabled}
+    if name == "2p2d_static":
+        # Equal-topology control: same 2P2D as the strategy scenarios, but with
+        # ROLE_SWITCH and CONSOLIDATION off. Isolates "what does the strategy
+        # add" from "what does doubling the GPUs add".
+        # PRE_WARM_THRESHOLD must be reachable (the `disabled` preset uses 2.0 to
+        # pin baseline at 1P1D); this scenario has to actually warm to 2P2D.
+        return {**base, **disabled, "PRE_WARM_THRESHOLD": "0.80"}
     if name == "s2_only":
         return {**base, **s2}
     if name == "s3_only":
@@ -509,7 +523,15 @@ def add_quality_and_effect(summary: dict[str, Any]) -> None:
     tail_alloc = phase_alloc.get("decode_tail", {})
     tail_wall = float(tail_phase.get("wall_s", 0.0) or 0.0)
     observed_tail_decode_gpu_s = float(tail_alloc.get("decode_allocated_seconds", 0.0) or 0.0)
-    counterfactual_tail_decode_gpu_s = tail_wall * 2.0 if scenario in {"s3_only", "mixed_strategy"} else tail_wall
+    # Counterfactual = "what would holding the scenario's FULL decode pool for
+    # the whole tail have cost". That is 2 decoders for every 2P2D scenario and
+    # 1 for the 1P1D baseline -- it is a property of the topology, not of which
+    # strategy is enabled. (Previously only s3/mixed got x2, so s2_only was
+    # scored against a 1-decoder counterfactual and reported a nonsensical
+    # "-88% saving".) With this, a non-consolidating 2P2D scenario correctly
+    # scores ~0 saved, and only S3 shows a real reclaim.
+    decode_pool = 1.0 if scenario == "baseline_minimal" else 2.0
+    counterfactual_tail_decode_gpu_s = tail_wall * decode_pool
     tail_saving = counterfactual_tail_decode_gpu_s - observed_tail_decode_gpu_s
     summary["tail_gpu_efficiency"] = {
         "tail_wall_s": tail_wall,
@@ -532,10 +554,15 @@ def add_quality_and_effect(summary: dict[str, Any]) -> None:
         "passed": True,
         "reasons": [],
     }
-    if scenario == "baseline_minimal":
+    if scenario in {"baseline_minimal", "2p2d_static"}:
+        # Both controls must stay strategy-free; 2p2d_static differs from
+        # baseline only in topology, so any S2/S3 action there would silently
+        # destroy its value as the equal-topology control.
         if s2_count != 0 or s3_migrated != 0:
             summary["scenario_gate"]["passed"] = False
-            summary["scenario_gate"]["reasons"].append("baseline must not execute S2 or S3")
+            summary["scenario_gate"]["reasons"].append(
+                f"{scenario} is a control and must not execute S2 or S3"
+            )
     if scenario in {"s2_only", "mixed_strategy"}:
         if s2_count <= 0:
             summary["scenario_gate"]["passed"] = False
@@ -764,6 +791,20 @@ def row_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
         return float(phase_summ.get(p, {}).get("wall_s", 0.0) or 0.0)
     serving_wall = sum(_pw(p) for p in PHASES)  # pure request serving, no gaps
     serving_gpu_s = sum(float(phase_alloc.get(p, {}).get("gpu_allocated_seconds", 0.0) or 0.0) for p in PHASES)
+    # Spec-based GPU-seconds: the honest "GPU_hours" figure, because it drops the
+    # instant a replica is scaled down instead of waiting out the pod's
+    # termination grace period. This is the metric that aligns with the thesis
+    # objective (Minimize GPU_hours) and is the fair way to compare a strategy
+    # against the equal-topology 2p2d_static control.
+    serving_spec_gpu_s = sum(
+        float(phase_alloc.get(p, {}).get("spec_gpu_allocated_seconds", 0.0) or 0.0) for p in PHASES
+    )
+    serving_spec_decode_gpu_s = sum(
+        float(phase_alloc.get(p, {}).get("spec_decode_allocated_seconds", 0.0) or 0.0) for p in PHASES
+    )
+    min_spec_decode = min(
+        [int(phase_alloc.get(p, {}).get("min_spec_decode_replicas", 0) or 0) for p in PHASES] or [0]
+    )
     overall_wall = float(overall.get("wall_s", 0.0) or 0.0)
     switch_lat = summary.get("s2_switch_latencies_ms", []) or []
     s2_switch_total_ms = float(sum(float(x) for x in switch_lat))
@@ -785,6 +826,11 @@ def row_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "serving_gpu_s": serving_gpu_s,
         "serving_tokens_per_gpu_s": completion / serving_gpu_s if serving_gpu_s > 0 else 0.0,
         "serving_requests_per_gpu_s": success / serving_gpu_s if serving_gpu_s > 0 else 0.0,
+        # Spec-based GPU-seconds == the "GPU_hours" objective, immune to the
+        # termination-grace-period lag that inflates the ready-based figure.
+        "serving_spec_gpu_s": serving_spec_gpu_s,
+        "serving_spec_decode_gpu_s": serving_spec_decode_gpu_s,
+        "min_spec_decode_replicas": min_spec_decode,
         "s2_switch_total_ms": s2_switch_total_ms,
         "prefill_wall_s": float(summary.get("phase_summaries", {}).get("prefill_burst", {}).get("wall_s", 0.0) or 0.0),
         "balanced_wall_s": float(summary.get("phase_summaries", {}).get("balanced_decode", {}).get("wall_s", 0.0) or 0.0),
@@ -816,6 +862,9 @@ def aggregate_scenario(suite_dir: Path, scenario: str, summaries: list[dict[str,
         "serving_gpu_s",
         "serving_tokens_per_gpu_s",
         "serving_requests_per_gpu_s",
+        "serving_spec_gpu_s",
+        "serving_spec_decode_gpu_s",
+        "min_spec_decode_replicas",
         "s2_switch_total_ms",
         "prefill_wall_s",
         "balanced_wall_s",
@@ -856,7 +905,41 @@ def build_goal_analysis(aggregates: dict[str, dict[str, Any]]) -> dict[str, Any]
     def up(value: float, base: float) -> float:
         return (value - base) / base * 100.0 if base > 0 and value > 0 else 0.0
 
+    # ---- Equal-topology attribution (the defensible comparison) -------------
+    # Everything above is anchored on baseline_minimal (1P1D), so it conflates
+    # "doubling the GPUs" with "the strategy". These fields anchor on
+    # 2p2d_static (same 4-GPU topology, strategies OFF) so each delta is
+    # attributable to the strategy alone, and report serving_spec_gpu_s --
+    # the direct proxy for the thesis objective, Minimize GPU_hours.
+    ctl = "2p2d_static"
+    ctl_serving_wall = metric(aggregates, ctl, "serving_wall_s")
+    ctl_prefill = metric(aggregates, ctl, "prefill_wall_s")
+    ctl_spec_gpu_s = metric(aggregates, ctl, "serving_spec_gpu_s")
+    ctl_spec_decode_gpu_s = metric(aggregates, ctl, "serving_spec_decode_gpu_s")
+    vs_ctl = {}
+    if ctl in aggregates:
+        for s in ("s2_only", "s3_only", "mixed_strategy"):
+            if s not in aggregates:
+                continue
+            vs_ctl[s] = {
+                "serving_wall_improvement_pct": improve(metric(aggregates, s, "serving_wall_s"), ctl_serving_wall),
+                "prefill_wall_improvement_pct": improve(metric(aggregates, s, "prefill_wall_s"), ctl_prefill),
+                "spec_gpu_s_saved": (ctl_spec_gpu_s - metric(aggregates, s, "serving_spec_gpu_s")),
+                "spec_gpu_s_saved_pct": improve(metric(aggregates, s, "serving_spec_gpu_s"), ctl_spec_gpu_s),
+                "spec_decode_gpu_s_saved": (ctl_spec_decode_gpu_s - metric(aggregates, s, "serving_spec_decode_gpu_s")),
+                "spec_decode_gpu_s_saved_pct": improve(
+                    metric(aggregates, s, "serving_spec_decode_gpu_s"), ctl_spec_decode_gpu_s
+                ),
+            }
+
     return {
+        "equal_topology_control": ctl,
+        "vs_2p2d_static": vs_ctl,
+        "serving_wall_by_scenario": {s: metric(aggregates, s, "serving_wall_s") for s in aggregates},
+        "serving_spec_gpu_s_by_scenario": {s: metric(aggregates, s, "serving_spec_gpu_s") for s in aggregates},
+        "min_spec_decode_replicas_by_scenario": {
+            s: metric(aggregates, s, "min_spec_decode_replicas") for s in aggregates
+        },
         "wall_by_scenario": wall_by_scenario,
         "tokens_per_gpu_s_by_scenario": tokens_gpu_by_scenario,
         "best_wall_scenario": best_wall,

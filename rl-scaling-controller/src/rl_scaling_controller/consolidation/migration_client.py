@@ -49,6 +49,26 @@ class MigrationClient:
         """End-to-end migration of a single request."""
         return self.migrate(source_url, target_url, request_id)
 
+    def cordon(self, worker_url: str) -> dict:
+        """Withdraw a worker's ModelCard so the router stops selecting it.
+
+        Used before a consolidation scale-down: draining a source is not enough,
+        because until the pod actually terminates it is still in the frontend's
+        WorkerSet and KvRouter can route a NEW request onto it (which then dies
+        with EngineShutdown). Cordon first, then drain, then delete.
+        """
+        url = worker_url.rstrip("/") + "/cordon"
+        resp = self._client.post(url, json={})
+        resp.raise_for_status()
+        return resp.json()
+
+    def uncordon(self, worker_url: str) -> dict:
+        """Republish a cordoned worker's ModelCard (abandoned scale-down)."""
+        url = worker_url.rstrip("/") + "/uncordon"
+        resp = self._client.post(url, json={})
+        resp.raise_for_status()
+        return resp.json()
+
     def close(self) -> None:
         if self._owns:
             self._client.close()

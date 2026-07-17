@@ -35,7 +35,20 @@ class ConsolidationDecisionEngine:
         return request_count * self.config.per_request_migration_overhead
 
     def _is_worth_migrating(self, source: WorkerState, request_count: int) -> bool:
-        # Only migrate if the migration time is < 50% of remaining runtime.
+        """Cost/benefit gate: migrate only if migration is < 50% of remaining runtime.
+
+        NOTE (2026-07): this gate is **not claimed as a validated safety
+        property**. It depends on ``estimated_remaining_time``, which is a
+        heuristic derived from token progress divided by an assumed decode
+        rate. With the previously mis-calibrated rate (20 tok/s vs ~150-2000
+        measured) the predicate was always true, so the gate never declined a
+        single migration in any run -- it was decorative. It is retained as a
+        conservative guard, and can be switched off explicitly via
+        ``worth_migrating_gate_enabled=false`` rather than being left silently
+        always-passing.
+        """
+        if not getattr(self.config, "worth_migrating_gate_enabled", True):
+            return True
         if source.estimated_remaining_time <= 0:
             return False
         return self._migration_time_seconds(request_count) < (source.estimated_remaining_time * 0.5)

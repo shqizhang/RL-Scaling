@@ -29,6 +29,7 @@ class ConsolidationDecision:
     migrated_requests: int = 0
     declined_requests: int = 0
     drained_sources: List[str] = field(default_factory=list)
+    cordoned_sources: List[str] = field(default_factory=list)
     scaled_down_to: Optional[int] = None
     scale_down_blocked_reason: Optional[str] = None
     error: Optional[str] = None
@@ -113,6 +114,11 @@ class ConsolidationController:
         )
         try:
             candidate_drained_sources: set[str] = set()
+            # drained_sources carries worker_ids (pod names); cordon needs the
+            # sidecar URL, so keep the mapping from the plans we just made.
+            source_addr_by_id: dict[str, str] = {
+                pair.source.worker_id: pair.source.addr for pair in ready_plans
+            }
             for pair in ready_plans:
                 # The controller can only see in_flight at decision time; we
                 # honestly don't know the request_ids without another metrics
@@ -177,6 +183,30 @@ class ConsolidationController:
                 current = self.dgdsa.get_replicas("decode")
                 new_count = max(self.config.min_decode_replicas, current - drained_count)
                 if new_count != current:
+                    # CORDON before deleting. Draining alone is not sufficient:
+                    # until the pod actually terminates it is still in the
+                    # frontend's WorkerSet, so KvRouter can route a NEW request
+                    # onto a decoder we are about to remove -- which then dies
+                    # with EngineShutdown. Withdraw the ModelCard first
+                    # (cordon -> drain -> delete, the same ordering switch_role
+                    # already uses), then re-verify the source is still empty.
+                    cordoned = self._cordon_sources(decision.drained_sources, source_addr_by_id)
+                    decision.cordoned_sources = cordoned
+                    still_drained = await self._wait_for_drained_sources(set(decision.drained_sources))
+                    if len(still_drained) < len(decision.drained_sources):
+                        # Work arrived between drain-confirm and cordon: abandon
+                        # this scale-down and put the pods back in rotation
+                        # rather than deleting a busy decoder.
+                        decision.scale_down_blocked_reason = "refilled_after_cordon"
+                        logger.warning(
+                            "S3 scale down abandoned: source refilled after cordon "
+                            "(drained=%s still_drained=%s); uncordoning",
+                            decision.drained_sources, still_drained,
+                        )
+                        self._uncordon_sources(cordoned, source_addr_by_id)
+                        self.history.append(decision)
+                        return decision
+
                     # Ensure the Deployment scale-down evicts the DRAINED pods,
                     # not an arbitrary (possibly busy) decoder. Without this, K8s
                     # may terminate a decoder that still has in-flight long-tail
@@ -195,6 +225,40 @@ class ConsolidationController:
             decision.error = str(exc)
         self.history.append(decision)
         return decision
+
+    def _cordon_sources(self, source_ids: list[str], addr_by_id: dict[str, str]) -> list[str]:
+        """Withdraw each drained source's ModelCard. Best-effort, returns those cordoned."""
+        cordoned: list[str] = []
+        cordon = getattr(self.client, "cordon", None)
+        if cordon is None:
+            return cordoned
+        for wid in source_ids:
+            addr = addr_by_id.get(wid)
+            if not addr:
+                logger.warning("S3 cordon: no sidecar addr for %s; skipping", wid)
+                continue
+            try:
+                cordon(addr)
+                cordoned.append(wid)
+                logger.info("S3 cordon: withdrew ModelCard for drained source %s", wid)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("S3 cordon failed for %s: %s", wid, exc)
+        return cordoned
+
+    def _uncordon_sources(self, source_ids: list[str], addr_by_id: dict[str, str]) -> None:
+        """Republish ModelCards for sources whose scale-down was abandoned."""
+        uncordon = getattr(self.client, "uncordon", None)
+        if uncordon is None:
+            return
+        for wid in source_ids:
+            addr = addr_by_id.get(wid)
+            if not addr:
+                continue
+            try:
+                uncordon(addr)
+                logger.info("S3 uncordon: republished ModelCard for %s", wid)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("S3 uncordon failed for %s: %s", wid, exc)
 
     async def _wait_for_drained_sources(self, source_ids: set[str]) -> list[str]:
         if not source_ids:

@@ -137,6 +137,35 @@ def deployment_names_by_component() -> dict[str, list[str]]:
     return {role: [name for _, _, name in sorted(items, reverse=True)] for role, items in out.items()}
 
 
+def deployment_spec_replicas() -> tuple[int, int]:
+    """(prefill, decode) DESIRED replicas, summed from the Deployment specs.
+
+    Why this exists: ready-worker counts lag a scale-down, because a pod stays
+    Ready throughout its termination grace period. That made
+    ``avg_ready_workers`` read 4.00 for s3_only even though consolidation had
+    genuinely scaled decode 2->1 -- i.e. the metric hid the very GPU release it
+    was supposed to prove. ``spec.replicas`` flips the instant the controller
+    patches it, so it is the honest signal for "a GPU was released".
+    """
+    out = {"prefill": 0, "decode": 0}
+    try:
+        proc = kubectl(["get", "deployments", "-n", NS, "-o", "json"], timeout=60)
+        obj = json.loads(proc.stdout)
+    except Exception:  # noqa: BLE001
+        return (0, 0)
+    for item in obj.get("items", []):
+        labels = item.get("metadata", {}).get("labels", {})
+        if labels.get("nvidia.com/dynamo-graph-deployment-name", "") != GRAPH_NAME:
+            continue
+        component = labels.get("nvidia.com/dynamo-component", "")
+        replicas = int(item.get("spec", {}).get("replicas", 0) or 0)
+        if component == "VllmPrefillWorker":
+            out["prefill"] += replicas
+        elif component == "VllmDecodeWorker":
+            out["decode"] += replicas
+    return (out["prefill"], out["decode"])
+
+
 def scale_deployment(name: str, replicas: int) -> None:
     kubectl(["scale", "deployment", "-n", NS, name, f"--replicas={replicas}"], timeout=90)
 
@@ -614,7 +643,14 @@ def send_batch_complete(controller_port: int) -> dict[str, Any]:
 
 
 def prompt_text(phase: str, idx: int, words: int, nonce: str, max_tokens: int, shape: str) -> str:
-    marker = f"RL_SCALING_STRATEGY_TEST phase={phase} request={idx} nonce={nonce}"
+    # CACHE FAIRNESS: the nonce (scenario + repeat + wall-clock) must be the
+    # VERY FIRST token, not buried after a constant banner. vLLM's prefix cache
+    # is block-granular (~16 tokens), so a shared leading literal lets block 0
+    # hit across scenarios -- which would systematically favour whichever
+    # scenario ran later (baseline runs cold, strategies run warm). Leading with
+    # the nonce guarantees every scenario/repeat diverges at token 0, so no run
+    # can inherit a cache warmed by a previous one.
+    marker = f"{nonce} RL_SCALING_STRATEGY_TEST phase={phase} request={idx}"
     if phase == "decode_tail":
         instruction = (
             "Return a compact numbered list about GPU autoscaling. "
@@ -814,11 +850,13 @@ def summarize_pod_allocation(rows: list[dict[str, Any]], start_ts: float | None 
             continue
         p = int(float(row.get("ready_prefill_count") or 0))
         d = int(float(row.get("ready_decode_count") or 0))
+        sp = int(float(row.get("spec_prefill_replicas") or 0))
+        sd = int(float(row.get("spec_decode_replicas") or 0))
         key = (str(row.get("iso")), p, d)
         if key in seen:
             continue
         seen.add(key)
-        points.append((ts, p, d))
+        points.append((ts, p, d, sp, sd))
     points.sort()
     if len(points) < 2:
         return {
@@ -829,23 +867,40 @@ def summarize_pod_allocation(rows: list[dict[str, Any]], start_ts: float | None 
             "avg_ready_workers": 0.0,
             "min_ready_workers": 0,
             "max_ready_workers": 0,
+            "spec_gpu_allocated_seconds": 0.0,
+            "spec_decode_allocated_seconds": 0.0,
+            "avg_spec_workers": 0.0,
+            "min_spec_decode_replicas": 0,
         }
     gpu_s = prefill_s = decode_s = 0.0
+    spec_gpu_s = spec_decode_s = 0.0
     totals: list[int] = []
-    for (ts, p, d), (next_ts, _, _) in zip(points, points[1:]):
+    spec_totals: list[int] = []
+    spec_decodes: list[int] = []
+    for (ts, p, d, sp, sd), (next_ts, *_rest) in zip(points, points[1:]):
         dt = max(0.0, next_ts - ts)
         gpu_s += (p + d) * dt
         prefill_s += p * dt
         decode_s += d * dt
+        spec_gpu_s += (sp + sd) * dt
+        spec_decode_s += sd * dt
         totals.append(p + d)
+        spec_totals.append(sp + sd)
+        spec_decodes.append(sd)
     return {
         "sample_count": len(points),
+        # ready-based (lags scale-down by the termination grace period)
         "gpu_allocated_seconds": gpu_s,
         "prefill_allocated_seconds": prefill_s,
         "decode_allocated_seconds": decode_s,
         "avg_ready_workers": (sum(totals) / len(totals)) if totals else 0.0,
         "min_ready_workers": min(totals) if totals else 0,
         "max_ready_workers": max(totals) if totals else 0,
+        # spec-based (flips immediately on scale-down => honest GPU-release proof)
+        "spec_gpu_allocated_seconds": spec_gpu_s,
+        "spec_decode_allocated_seconds": spec_decode_s,
+        "avg_spec_workers": (sum(spec_totals) / len(spec_totals)) if spec_totals else 0.0,
+        "min_spec_decode_replicas": min(spec_decodes) if spec_decodes else 0,
     }
 
 
@@ -859,10 +914,17 @@ class PodSampler:
         while not self.stop.is_set():
             try:
                 p, d = count_ready_by_component()
+                # Desired replicas track a scale-down immediately, whereas ready
+                # counts lag by the termination grace period. Record both so the
+                # GPU-release evidence does not depend on the laggy one.
+                sp, sd = deployment_spec_replicas()
                 for row in pod_rows():
                     row["ready_prefill_count"] = p
                     row["ready_decode_count"] = d
                     row["allocated_worker_gpus"] = p + d
+                    row["spec_prefill_replicas"] = sp
+                    row["spec_decode_replicas"] = sd
+                    row["spec_worker_gpus"] = sp + sd
                     self.rows.append(row)
             except Exception as exc:
                 self.rows.append(

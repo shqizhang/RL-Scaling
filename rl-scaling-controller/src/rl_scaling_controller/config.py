@@ -56,7 +56,12 @@ class ControllerConfig:
     control_loop_interval: float = field(default_factory=lambda: _env_float("CONTROL_LOOP_INTERVAL", 5.0))
 
     # Capacity planner
-    single_prefill_tps: int = field(default_factory=lambda: _env_int("SINGLE_PREFILL_TPS", 50000))
+    # CALIBRATION (2026-07): was 50000, ~18x above the measured single-prefill
+    # throughput on this deployment (2738 prompt tok/s for Qwen3-0.6B; 4200
+    # aggregate across 3 prefill workers). At 50000 the planner under-provisions
+    # prefill by an order of magnitude. This is a MODEL/HARDWARE-DEPENDENT
+    # constant -- it must be re-measured per deployment, not inherited.
+    single_prefill_tps: int = field(default_factory=lambda: _env_int("SINGLE_PREFILL_TPS", 2700))
     max_concurrent_per_decode: int = field(default_factory=lambda: _env_int("MAX_CONCURRENT_PER_DECODE", 64))
     target_prefill_seconds: float = field(default_factory=lambda: _env_float("TARGET_PREFILL_SECONDS", 5.0))
     max_gpus: int = field(default_factory=lambda: _env_int("MAX_GPUS", 8))
@@ -79,6 +84,11 @@ class ControllerConfig:
     min_batch_completion_pct: float = field(default_factory=lambda: _env_float("MIN_BATCH_COMPLETION", 0.6))
     per_request_migration_overhead: float = field(default_factory=lambda: _env_float("PER_REQUEST_MIGRATION_OVERHEAD", 0.5))
     consolidation_scale_down_enabled: bool = field(default_factory=lambda: _env_bool("CONSOLIDATION_SCALE_DOWN_ENABLED", True))
+    # S3 cost/benefit gate. Depends on the heuristic estimated_remaining_time,
+    # so it is NOT claimed as a validated safety property (it never declined a
+    # migration in any run). Set false to disable it explicitly instead of
+    # relying on a permissive heuristic. See decision_engine._is_worth_migrating.
+    worth_migrating_gate_enabled: bool = field(default_factory=lambda: _env_bool("WORTH_MIGRATING_GATE_ENABLED", True))
     consolidation_stable_samples: int = field(default_factory=lambda: _env_int("CONSOLIDATION_STABLE_SAMPLES", 2))
     consolidation_min_interval_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_MIN_INTERVAL", 10.0))
     consolidation_drain_timeout_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_DRAIN_TIMEOUT", 20.0))
