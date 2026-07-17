@@ -1175,10 +1175,29 @@ def main() -> int:
             return 2
 
     aggregates: dict[str, dict[str, Any]] = {}
-    for scenario in parse_scenarios(args.scenarios):
-        summaries: list[dict[str, Any]] = []
-        write_progress(suite_dir, stage="scenario_start", scenario=scenario)
-        for repeat in range(1, args.repeats + 1):
+    scenarios = parse_scenarios(args.scenarios)
+    summaries_by_scenario: dict[str, list[dict[str, Any]]] = {s: [] for s in scenarios}
+
+    # INTERLEAVED (repeat-major) EXECUTION -- do NOT run all repeats of one
+    # scenario back-to-back.
+    #
+    # Why: the cluster drifts over a multi-hour suite (GPU/clock/cache state,
+    # accumulated pod churn). With scenario-major order that drift loads
+    # entirely onto whichever scenario ran last, and is indistinguishable from
+    # a strategy effect. The 2026-07-17 run proved this: `2p2d_static` and
+    # `s3_only` are FUNCTIONALLY IDENTICAL during prefill_burst (both 2P2D,
+    # ROLE_SWITCH off, consolidation inert until batch_completion>=0.92), yet
+    # measured 22.0+-0.9s vs 16.2+-2.1s -- a 26% gap, t~4.4, p~0.01. That is a
+    # systematic order/session error ~6x larger than the ~1s effect we are
+    # trying to attribute to S2, so every cross-scenario comparison in that
+    # dataset was uninterpretable.
+    #
+    # Round-robin makes drift a COMMON-MODE term shared by all scenarios within
+    # a round, so between-scenario differences reflect the strategy instead of
+    # the clock. Rounds also give a within-round paired comparison.
+    for repeat in range(1, args.repeats + 1):
+        write_progress(suite_dir, stage="round_start", repeat=repeat, scenarios=scenarios)
+        for scenario in scenarios:
             write_progress(suite_dir, stage="run_start", scenario=scenario, repeat=repeat)
             summary = run_scenario_once(
                 suite_dir,
@@ -1189,10 +1208,12 @@ def main() -> int:
                 args.observe_after_tail,
                 abort_on_timeout=not args.continue_after_timeout,
             )
-            summaries.append(summary)
+            summaries_by_scenario[scenario].append(summary)
             write_progress(suite_dir, stage="run_done", scenario=scenario, repeat=repeat)
             if summary.get("aborted") and not args.continue_after_timeout:
-                aggregates[scenario] = aggregate_scenario(suite_dir, scenario, summaries)
+                for s, subs in summaries_by_scenario.items():
+                    if subs:
+                        aggregates[s] = aggregate_scenario(suite_dir, s, subs)
                 e2e.write_json(suite_dir / "suite-aggregate.json", aggregates)
                 write_suite_report(suite_dir, aggregates, readiness)
                 write_progress(
@@ -1206,7 +1227,10 @@ def main() -> int:
                 print(f"REPORT={suite_dir / 'REPORT-zh.md'}")
                 print(f"suite aborted on timeout: {summary.get('aborted_reason')}", file=sys.stderr)
                 return 3
-        aggregates[scenario] = aggregate_scenario(suite_dir, scenario, summaries)
+        write_progress(suite_dir, stage="round_done", repeat=repeat)
+
+    for scenario in scenarios:
+        aggregates[scenario] = aggregate_scenario(suite_dir, scenario, summaries_by_scenario[scenario])
         write_progress(suite_dir, stage="scenario_done", scenario=scenario)
 
     e2e.write_json(suite_dir / "suite-aggregate.json", aggregates)
