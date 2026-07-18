@@ -852,7 +852,11 @@ def summarize_pod_allocation(rows: list[dict[str, Any]], start_ts: float | None 
         d = int(float(row.get("ready_decode_count") or 0))
         sp = int(float(row.get("spec_prefill_replicas") or 0))
         sd = int(float(row.get("spec_decode_replicas") or 0))
-        key = (str(row.get("iso")), p, d)
+        # Dedup the per-pod duplication within one sample cycle (pod_rows()
+        # emits one row per pod, all carrying the same aggregate counts).
+        # Include spec counts so a scale-down that changes sp/sd but not the
+        # (laggy) ready counts is never collapsed.
+        key = (str(row.get("iso")), p, d, sp, sd)
         if key in seen:
             continue
         seen.add(key)
@@ -887,6 +891,31 @@ def summarize_pod_allocation(rows: list[dict[str, Any]], start_ts: float | None 
         totals.append(p + d)
         spec_totals.append(sp + sd)
         spec_decodes.append(sd)
+    # FULL-WINDOW COVERAGE. The between-samples integration above only spans
+    # [first_sample, last_sample], which sits INSIDE the requested
+    # [start_ts, end_ts] window (samples never land exactly on the boundaries).
+    # For a ~41s tail sampled every few seconds that dropped ~9s (head+tail),
+    # undercounting a static-2-decoder tail as ~65 GPU-s instead of ~82 and
+    # burying the S3 scale-down reclaim (~15 GPU-s) beneath the measurement
+    # error. Extend the first/last sample's counts out to the window edges so
+    # the integral covers the whole window. Held-value extrapolation over a
+    # few seconds is exact for a step-function replica count that does not
+    # change at the very edges.
+    if points:
+        ts0, p0, d0, sp0, sd0 = points[0]
+        head = max(0.0, ts0 - start_ts) if start_ts is not None else 0.0
+        gpu_s += (p0 + d0) * head
+        prefill_s += p0 * head
+        decode_s += d0 * head
+        spec_gpu_s += (sp0 + sd0) * head
+        spec_decode_s += sd0 * head
+        tsN, pN, dN, spN, sdN = points[-1]
+        tail = max(0.0, end_ts - tsN) if end_ts is not None else 0.0
+        gpu_s += (pN + dN) * tail
+        prefill_s += pN * tail
+        decode_s += dN * tail
+        spec_gpu_s += (spN + sdN) * tail
+        spec_decode_s += sdN * tail
     return {
         "sample_count": len(points),
         # ready-based (lags scale-down by the termination grace period)

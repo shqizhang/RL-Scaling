@@ -123,8 +123,15 @@ def build_manifest() -> list[dict[str, Any]]:
     # GPU the whole run (3x8000=24k tokens fits without the preemption thrash a
     # 30k budget caused — that run's tail hit 219s, within 20s of the 240s
     # timeout). timeout_s=300 leaves generous headroom on the worst case.
+    # 2026-07-18: stragglers 8000 -> 9000 to lengthen the post-consolidation
+    # reclaim window (S3 frees 1 decoder for the remainder of the tail, so a
+    # longer tail = a larger, cleaner decode-GPU saving that also dwarfs the
+    # ~6s pod-sampling jitter). Peak KV on the 1P1D baseline is 3x9000=27k,
+    # kept below the 30k budget that previously caused preemption thrash / a
+    # 219s tail. Short/medium unchanged (they form the "batch mostly complete"
+    # context the consolidation gate looks for).
     tail_shapes = [
-        (3, 48, 8000, "tail_long", True),
+        (3, 48, 9000, "tail_long", True),
         (8, 64, 16, "tail_short", False),
         (6, 64, 32, "tail_medium", False),
     ]
@@ -522,6 +529,13 @@ def add_quality_and_effect(summary: dict[str, Any]) -> None:
     tail_phase = summary.get("phase_summaries", {}).get("decode_tail", {})
     tail_alloc = phase_alloc.get("decode_tail", {})
     tail_wall = float(tail_phase.get("wall_s", 0.0) or 0.0)
+    # SPEC-based (desired-replica) integral is the honest GPU-release primitive:
+    # it flips the instant the controller scales the Deployment down, whereas
+    # the ready-based count lags by the pod termination grace period (so for a
+    # consolidating S3 run it stays at 2 and hides the reclaim). This is the
+    # value the cross-scenario reclaim (2p2d.spec - s3.spec, paired) is built
+    # from; see analyze_interleaved_suite.py.
+    observed_tail_spec_decode_gpu_s = float(tail_alloc.get("spec_decode_allocated_seconds", 0.0) or 0.0)
     observed_tail_decode_gpu_s = float(tail_alloc.get("decode_allocated_seconds", 0.0) or 0.0)
     # Counterfactual = "what would holding the scenario's FULL decode pool for
     # the whole tail have cost". That is 2 decoders for every 2P2D scenario and
@@ -535,6 +549,12 @@ def add_quality_and_effect(summary: dict[str, Any]) -> None:
     tail_saving = counterfactual_tail_decode_gpu_s - observed_tail_decode_gpu_s
     summary["tail_gpu_efficiency"] = {
         "tail_wall_s": tail_wall,
+        # Honest primitive: measured desired-decode-replica GPU-s over the tail
+        # window. The cross-scenario reclaim is 2p2d.spec - s3.spec (paired),
+        # NOT the analytical counterfactual below (which compares a measured
+        # value against tail_wall*pool within one run and so fabricates a
+        # "saving" from any sampling dip — kept only for backward compat).
+        "observed_tail_spec_decode_gpu_s": observed_tail_spec_decode_gpu_s,
         "observed_tail_decode_gpu_s": observed_tail_decode_gpu_s,
         "counterfactual_2d_decode_gpu_s": counterfactual_tail_decode_gpu_s,
         "tail_decode_gpu_s_saved": tail_saving,
@@ -837,6 +857,8 @@ def row_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "tail_wall_s": float(summary.get("phase_summaries", {}).get("decode_tail", {}).get("wall_s", 0.0) or 0.0),
         "tail_decode_gpu_s_savings_pct": float(tail.get("tail_decode_gpu_s_savings_pct", 0.0) or 0.0),
         "tail_decode_gpu_s_saved": float(tail.get("tail_decode_gpu_s_saved", 0.0) or 0.0),
+        # Honest measured primitive for the paired cross-scenario reclaim.
+        "observed_tail_spec_decode_gpu_s": float(tail.get("observed_tail_spec_decode_gpu_s", 0.0) or 0.0),
         "s2_executed_count": int(summary.get("s2_executed_count", 0) or 0),
         "s3_migrated_requests": int(summary.get("s3_migrated_requests", 0) or 0),
         "s3_drained_source_count": len(summary.get("s3_drained_sources", []) or []),
@@ -871,6 +893,7 @@ def aggregate_scenario(suite_dir: Path, scenario: str, summaries: list[dict[str,
         "tail_wall_s",
         "tail_decode_gpu_s_savings_pct",
         "tail_decode_gpu_s_saved",
+        "observed_tail_spec_decode_gpu_s",
         "signal_to_ready_s",
         "burst_safety_margin_s",
     ]
