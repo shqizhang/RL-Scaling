@@ -47,6 +47,13 @@ def main():
     suite = Path(sys.argv[1])
     data = json.load(open(suite / "consolidated-data.json"))
     runs = data["all_runs"]
+    # Backfill avg-GPU metrics for suites recorded before they were added.
+    for r in runs:
+        tb = r.get("T_batch_s") or 0
+        if tb > 0:
+            r.setdefault("avg_decode_gpus", r.get("decode_gpu_s", 0) / tb)
+            r.setdefault("avg_total_gpus", r.get("total_gpu_s", 0) / tb)
+            r.setdefault("avg_prefill_gpus", r.get("prefill_gpu_s", 0) / tb)
     print("=" * 80)
     print(f"SUITE: {data['suite']}   config: {data['config']}   aborted: {data.get('aborted')}")
     print("=" * 80)
@@ -74,9 +81,9 @@ def main():
 
     # ---- 3. PRIMARY OUTCOMES (Tier 1) ----
     print("\n[3] PRIMARY OUTCOMES (mean +- sd)")
-    cols = [("T_batch_s", "T_batch"), ("prefill_gpu_s", "prefill_gpuS"),
-            ("decode_gpu_s", "decode_gpuS"), ("total_gpu_s", "total_gpuS"),
-            ("decode_kv_occupancy_mean", "U_GPU%")]
+    cols = [("T_batch_s", "T_batch"), ("decode_gpu_s", "decode_gpuS"),
+            ("total_gpu_s", "total_gpuS"), ("avg_decode_gpus", "avgDecGPU"),
+            ("avg_total_gpus", "avgTotGPU"), ("decode_kv_occupancy_mean", "U_GPU%")]
     hdr = f"{'scenario':<15}" + "".join(f"{lbl:>16}" for _, lbl in cols)
     print(hdr)
     for s in SCENARIOS:
@@ -95,7 +102,7 @@ def main():
              ("s2_only", CONTROL, "S2 effect"),
              ("s3_only", CONTROL, "S3 effect"),
              ("mixed", CONTROL, "S2+S3 combined")]
-    for metric in ["T_batch_s", "decode_gpu_s", "total_gpu_s", "decode_kv_occupancy_mean"]:
+    for metric in ["T_batch_s", "decode_gpu_s", "total_gpu_s", "avg_decode_gpus", "decode_kv_occupancy_mean"]:
         print(f"\n  -- {metric}")
         for strat, ctrl, label in pairs:
             A, B = runs_by(runs, strat), runs_by(runs, ctrl)

@@ -20,8 +20,16 @@ class MigrationPair:
     source: WorkerState
     target: WorkerState
     request_count: int
+    # True => the source is ALREADY idle (0 in-flight) and is being released
+    # directly (drain-free consolidation): no migration happens, the controller
+    # skips straight to cordon + mark-drained + scale-down. request_count is 0.
+    is_release: bool = False
 
     def __post_init__(self):
+        if self.is_release:
+            if self.request_count != 0:
+                raise ValueError("release pair must have request_count == 0")
+            return
         if self.request_count <= 0:
             raise ValueError("request_count must be positive")
 
@@ -107,4 +115,25 @@ class ConsolidationDecisionEngine:
             chosen_sources.add(src.worker_id)
             chosen_targets.add(tgt.worker_id)
             i += 1
+
+        # --- Idle-decoder release (drain-free consolidation) ---
+        # A decoder already at 0 in-flight, beyond min_decode_replicas, can be
+        # released directly: there is nothing to migrate FROM it, yet keeping it
+        # idle wastes a GPU. This is the KEY case for MIXED (S2+S3): after an S2
+        # P->D switch-back the stragglers are concentrated on one decoder while
+        # the re-created decoder sits empty (a 3+0 split), which the migration
+        # pass above skips (src.in_flight <= 0). Emit such empty decoders as
+        # release-only pairs; the controller skips migration and scales them
+        # down. Bounded by the same max_to_drain (never drop below the floor).
+        busiest = sorted_workers[-1] if sorted_workers else None
+        if busiest is not None:
+            for w in sorted_workers:
+                if len(chosen_sources) >= max_to_drain:
+                    break
+                if w.worker_id in chosen_sources or w.worker_id in chosen_targets:
+                    continue
+                if w.in_flight_requests == 0 and w.worker_id != busiest.worker_id:
+                    plans.append(MigrationPair(source=w, target=busiest, request_count=0, is_release=True))
+                    chosen_sources.add(w.worker_id)
+
         return plans

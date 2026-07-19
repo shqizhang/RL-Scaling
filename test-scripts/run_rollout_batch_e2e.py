@@ -233,23 +233,28 @@ def prewarm(scenario: str, controller_port: int, frontend_port: int, events: lis
     """Bring the scenario's start topology up and model-ready BEFORE the clock.
     Never counted in T_batch."""
     target = (1, 1) if scenario == "baseline_1p1d" else (2, 2)
-    if scenario != "baseline_1p1d":
-        e2e.send_progress(controller_port, 0.85, batch_size=128, avg_isl=3072, avg_osl=512)
-    deadline = time.time() + 90
-    while True:
+    # Keep-alive batch context so the controller does NOT cooldown-scale the
+    # workers to 0 during model load (that collapse forces a full cold restart).
+    # PRE_WARM_THRESHOLD gates scale-UP: baseline (2.0) stays at 1P1D MIN, others
+    # (0.80) permit 2P2D. This signal only prevents the collapse.
+    e2e.send_progress(controller_port, 0.85, batch_size=128, avg_isl=3072, avg_osl=512)
+    # Force the EXACT desired replicas (deterministic topology).
+    e2e.set_topology(*target)
+    # Wait for the EXACT topology: both up-scaled pods ready AND any down-scaled
+    # pods terminated, so e.g. baseline is truly 1P1D (not a lingering 2nd pod).
+    deadline = time.time() + 480
+    while time.time() < deadline:
         try:
             p, d = e2e.count_ready_by_component()
         except Exception:
-            p, d = 0, 0
-        if p >= target[0] and d >= target[1]:
+            p, d = -1, -1
+        if p == target[0] and d == target[1]:
             break
-        if time.time() >= deadline:
-            e2e.set_topology(*target)
-            break
-        time.sleep(3)
-    e2e.wait_ready_counts(prefill=target[0], decode=target[1], timeout_s=300)
+        time.sleep(5)
+    # Re-assert keep-alive after any scale settling, then confirm model-ready.
+    e2e.send_progress(controller_port, 0.85, batch_size=128, avg_isl=3072, avg_osl=512)
     for _ in range(3):
-        e2e.wait_frontend_chat_ready(frontend_port, timeout_s=240)
+        e2e.wait_frontend_chat_ready(frontend_port, timeout_s=300)
         time.sleep(1)
     e2e.event(events, "prewarm_ready", scenario=scenario, topology={"prefill": target[0], "decode": target[1]})
 
@@ -270,7 +275,7 @@ def run_scenario_once(suite_dir: Path, scenario: str, repeat: int, position: int
     prom_sampler = None
     status_thread = None
     try:
-        e2e.configure_controller(scenario_env(_ENV_ALIAS[scenario]))
+        e2e.configure_controller(scenario_env(scenario))
         frontend_pf = e2e.start_port_forward(e2e.FRONTEND_SVC, 8000, e2e.NS)
         controller_pf = e2e.start_port_forward(f"svc/{e2e.CONTROLLER_DEPLOY}", 8080, e2e.CONTROLLER_NS)
         prom_pf = e2e.start_port_forward(PROM_SVC, PROM_REMOTE_PORT, PROM_NS)
@@ -391,6 +396,12 @@ def build_summary(scenario, repeat, position, rows, t0, t_end, meta, pod_rows, p
         "decode_gpu_s": decode_gpu_s,
         "total_gpu_s": total_gpu_s,
         "gpu_hours": total_gpu_s / 3600.0,
+        # Average GPUs allocated over the batch (GPU-seconds / makespan) -- the
+        # intuitive "how many GPUs did this scenario hold on average". S3 should
+        # show avg_decode_gpus < 2 (drops to 1 for the post-consolidation tail).
+        "avg_prefill_gpus": (prefill_gpu_s / t_batch) if t_batch > 0 else 0.0,
+        "avg_decode_gpus": (decode_gpu_s / t_batch) if t_batch > 0 else 0.0,
+        "avg_total_gpus": (total_gpu_s / t_batch) if t_batch > 0 else 0.0,
         "decode_kv_occupancy_mean": ugpu["decode_kv_occupancy_mean"],
         "decode_kv_occupancy_max": ugpu["decode_kv_occupancy_max"],
         "min_spec_decode_replicas": int(alloc.get("min_spec_decode_replicas", 0) or 0),
@@ -414,6 +425,7 @@ def build_summary(scenario, repeat, position, rows, t0, t_end, meta, pod_rows, p
 
 # --------------------------------------------------------------- aggregate
 _AGG_KEYS = ["valid_decode_pct", "timeout_count", "http_5xx_count", "T_batch_s",
+             "avg_prefill_gpus", "avg_decode_gpus", "avg_total_gpus",
              "prefill_gpu_s", "decode_gpu_s", "total_gpu_s", "gpu_hours",
              "decode_kv_occupancy_mean", "decode_kv_occupancy_max", "min_spec_decode_replicas",
              "tokens_per_gpu_s", "requests_per_gpu_s", "s2_executed_count",

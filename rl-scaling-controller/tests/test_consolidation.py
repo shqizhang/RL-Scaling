@@ -98,7 +98,10 @@ class TestDecisionEngine:
         assert len(plans) == 2
         assert {p.source.worker_id for p in plans} == {"a", "b"}
 
-    def test_zero_in_flight_source_skipped(self):
+    def test_zero_in_flight_source_released(self):
+        # An idle decoder (0 in-flight) beyond min_decode_replicas is now
+        # RELEASED directly (drain-free), not skipped: 'b' migrates to 'c', and
+        # the already-empty 'a' is released.
         e = ConsolidationDecisionEngine(_cfg(consolidation_threshold=3))
         ws = [
             _w("a", in_flight=0, capacity=10, remaining=60),
@@ -106,8 +109,35 @@ class TestDecisionEngine:
             _w("c", in_flight=8, capacity=50, remaining=60),
         ]
         plans = e.evaluate(ws, batch_completion_pct=0.9)
+        releases = [p for p in plans if p.is_release]
+        migrations = [p for p in plans if not p.is_release]
+        assert {p.source.worker_id for p in releases} == {"a"}
+        assert all(p.request_count == 0 for p in releases)
+        assert {p.source.worker_id for p in migrations} == {"b"}
+
+    def test_idle_decoder_released_mixed_3plus0(self):
+        # Mixed S2+S3: after an S2 P->D switch-back the stragglers are all on one
+        # decoder and the re-created decoder is empty (3+0). Nothing to migrate,
+        # but the empty decoder must be released so decode scales 2->1.
+        e = ConsolidationDecisionEngine(_cfg(consolidation_threshold=1))
+        ws = [
+            _w("empty", in_flight=0, capacity=60, remaining=60),
+            _w("busy", in_flight=3, capacity=60, remaining=60),
+        ]
+        plans = e.evaluate(ws, batch_completion_pct=0.95)
         assert len(plans) == 1
-        assert plans[0].source.worker_id == "b"
+        assert plans[0].is_release and plans[0].request_count == 0
+        assert plans[0].source.worker_id == "empty"
+
+    def test_idle_release_respects_min_decode_floor(self):
+        # Two idle decoders at min_decode_replicas=1 must not both be released.
+        e = ConsolidationDecisionEngine(_cfg(consolidation_threshold=1, min_decode_replicas=1))
+        ws = [
+            _w("i1", in_flight=0, capacity=60, remaining=60),
+            _w("i2", in_flight=0, capacity=60, remaining=60),
+        ]
+        plans = e.evaluate(ws, batch_completion_pct=0.95)
+        assert len(plans) <= 1  # at most one released, floor of 1 kept
 
     def test_migration_pair_rejects_zero_count(self):
         with pytest.raises(ValueError):
