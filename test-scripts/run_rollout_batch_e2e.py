@@ -228,6 +228,27 @@ def run_rollout_with_progress(
     return rows, t0, t_end
 
 
+def _delete_not_ready_workers() -> None:
+    """Delete decode/prefill worker pods that are not Ready so they reschedule
+    cleanly. Used when a fresh worker crash-loops on cold start (vLLM engine-core
+    init race) and stalls a topology transition."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["kubectl", "-n", e2e.NS, "get", "pods", "-o",
+             "jsonpath={range .items[*]}{.metadata.name}{'|'}{.status.containerStatuses[0].ready}{'\\n'}{end}"],
+            capture_output=True, text=True, timeout=30).stdout
+        for line in out.splitlines():
+            if "|" not in line:
+                continue
+            name, ready = line.split("|", 1)
+            if ("decodeworker" in name or "prefillworker" in name) and ready.strip() != "true":
+                subprocess.run(["kubectl", "-n", e2e.NS, "delete", "pod", name, "--grace-period=10"],
+                               capture_output=True, text=True, timeout=60)
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------- warmup (pre-T0)
 def prewarm(scenario: str, controller_port: int, frontend_port: int, events: list[dict[str, Any]]) -> None:
     """Bring the scenario's start topology up and model-ready BEFORE the clock.
@@ -238,8 +259,21 @@ def prewarm(scenario: str, controller_port: int, frontend_port: int, events: lis
     # PRE_WARM_THRESHOLD gates scale-UP: baseline (2.0) stays at 1P1D MIN, others
     # (0.80) permit 2P2D. This signal only prevents the collapse.
     e2e.send_progress(controller_port, 0.85, batch_size=128, avg_isl=3072, avg_osl=512)
-    # Force the EXACT desired replicas (deterministic topology).
-    e2e.set_topology(*target)
+    # Force the EXACT desired replicas (deterministic topology). RESILIENT: a
+    # fresh worker's vLLM engine-core can crash-loop on cold start under topology
+    # churn (GPU/CUDA/NIXL init race), which makes set_topology's rollout wait
+    # time out. Don't let that kill the suite: delete not-ready worker pods so
+    # they reschedule cleanly, and retry.
+    for attempt in range(3):
+        try:
+            e2e.set_topology(*target)
+            break
+        except Exception as exc:  # noqa: BLE001
+            e2e.event(events, "prewarm_set_topology_retry", scenario=scenario, attempt=attempt, error=str(exc)[:200])
+            _delete_not_ready_workers()
+            time.sleep(20)
+    else:
+        e2e.set_topology(*target)  # final attempt; if it raises, the run aborts honestly
     # Wait for the EXACT topology: both up-scaled pods ready AND any down-scaled
     # pods terminated, so e.g. baseline is truly 1P1D (not a lingering 2nd pod).
     deadline = time.time() + 480
@@ -484,6 +518,17 @@ def main() -> int:
         order = [s for s in counterbalanced(rp - 1) if s in active]
         progress(stage="round_start", repeat=rp, order=order)
         for pos, scn in enumerate(order, 1):
+            # Resume: if this run already completed (e.g. a prior launch died on
+            # an infra timeout), reuse it instead of re-running.
+            existing = suite_dir / scn / f"run-{rp:02d}" / "summary.json"
+            if existing.exists():
+                try:
+                    summary = json.loads(existing.read_text(encoding="utf-8"))
+                    runs_by_scn[scn].append(summary)
+                    progress(stage="run_resumed", repeat=rp, scenario=scn, position=pos)
+                    continue
+                except Exception:
+                    pass
             progress(stage="run_start", repeat=rp, scenario=scn, position=pos)
             summary = run_scenario_once(suite_dir, scn, rp, pos, manifest, args.sample_interval)
             runs_by_scn[scn].append(summary)
