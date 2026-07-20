@@ -34,6 +34,7 @@ from typing import Any
 import rls_strategy_common as e2e
 
 SCENARIOS = ["baseline_1p1d", "static_2p2d", "s2_only", "s3_only", "mixed"]
+WORKLOAD_MODE = "flat"  # set by main(): "flat" (one batch) or "phased" (shaped arrival)
 # Map our scenario names to the tuned controller env from the phase-based suite.
 _ENV_ALIAS = {
     "baseline_1p1d": "baseline_minimal",
@@ -142,6 +143,94 @@ def build_rollout_batch(seed: int, size: int, straggler_frac: float, concurrency
     for order, r in enumerate(rows, 1):
         r["manifest_id"] = order
     return rows
+
+
+def build_phased_batch(seed: int, pa: dict[str, Any]) -> list[dict[str, Any]]:
+    """Shaped-arrival, 3-phase workload so each mechanism has a CLEAN regime
+    (learning from the phased-optimization plan + our own analysis):
+      * Phase A (prefill burst): long prompts, short output, dispatched at t0
+        -> prefill queue high, decode idle -> the D->P trigger window.
+      * Phase B (decode dense): medium prompts, long output, arriving after an
+        offset (no new long prompts) -> decode queue high, prefill idle -> P->D.
+      * Phase C (tail): a few ignore_eos stragglers -> S3 consolidation.
+    Phases are separated by per-request launch offsets (NOT gates); measurement
+    is per-phase serving time (see build_summary). All scenarios reuse the same
+    manifest/seed."""
+    rng = random.Random(seed)
+    rows: list[dict[str, Any]] = []
+    idx = 1
+    # Phase A — prefill-heavy burst (long prompt, short decode).
+    for _ in range(pa["a_n"]):
+        rows.append({"manifest_id": idx, "phase": "A_prefill", "shape": "A_prefill",
+                     "words": rng.randint(pa["a_words"] - 150, pa["a_words"] + 150),
+                     "max_tokens": rng.choice([64, 96, 128]), "concurrency": pa["a_n"],
+                     "timeout_s": 600, "ignore_eos": False, "launch_delay_s": 0.0}); idx += 1
+    # Phase B — decode-heavy (medium prompt, long decode), arrives after A.
+    for _ in range(pa["b_n"]):
+        rows.append({"manifest_id": idx, "phase": "B_decode", "shape": "B_decode",
+                     "words": rng.randint(pa["b_words"] - 100, pa["b_words"] + 100),
+                     "max_tokens": pa["b_out"], "concurrency": pa["b_n"],
+                     "timeout_s": 600, "ignore_eos": False, "launch_delay_s": float(pa["b_offset"])}); idx += 1
+    # Phase C — long-tail stragglers, staggered, arrive last.
+    for i in range(pa["c_n"]):
+        rows.append({"manifest_id": idx, "phase": "C_tail", "shape": "C_tail",
+                     "words": rng.randint(40, 64), "max_tokens": pa["c_out"], "concurrency": pa["c_n"],
+                     "timeout_s": 600, "ignore_eos": True, "launch_delay_s": float(pa["c_offset"]) + i * 3.0}); idx += 1
+    return rows
+
+
+def run_phased_with_progress(frontend_port, controller_port, manifest, out_dir, nonce, meta, events):
+    """Dispatch each request at t0 + its launch_delay via a dedicated thread
+    (so a delayed request never blocks a bounded pool slot). Sends
+    sampling_progress from the real completion fraction. Returns (rows, t0, t_end,
+    phase_dispatch)."""
+    done = {"n": 0}
+    lock = threading.Lock()
+    stop_prog = threading.Event()
+    rows: list[dict[str, Any]] = []
+    phase_dispatch: dict[str, float] = {}
+
+    def progress_thread():
+        e2e.send_progress(controller_port, 0.0, meta["batch_size"], meta["avg_isl"], meta["avg_osl"])
+        while not stop_prog.is_set():
+            with lock:
+                frac = done["n"] / max(1, meta["batch_size"])
+            try:
+                e2e.send_progress(controller_port, round(frac, 3), meta["batch_size"], meta["avg_isl"], meta["avg_osl"])
+            except Exception:
+                pass
+            stop_prog.wait(2.0)
+
+    t0 = e2e.now_ts()
+    e2e.event(events, "T0_batch_dispatch", batch=meta)
+    prog = threading.Thread(target=progress_thread, daemon=True); prog.start()
+
+    def submit_at(item):
+        delay = float(item.get("launch_delay_s", 0) or 0)
+        wait = (t0 + delay) - e2e.now_ts()
+        if wait > 0:
+            time.sleep(wait)
+        ph = str(item.get("phase", ""))
+        with lock:
+            if ph not in phase_dispatch:
+                phase_dispatch[ph] = e2e.now_ts()
+                e2e.event(events, "phase_dispatch", phase=ph)
+        r = e2e.submit_manifest_request(frontend_port, {**item, "launch_delay_s": 0}, out_dir, nonce)
+        with lock:
+            done["n"] += 1
+            rows.append(r)
+
+    threads = [threading.Thread(target=submit_at, args=(item,), daemon=True) for item in manifest]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    t_end = e2e.now_ts()
+    stop_prog.set(); prog.join(timeout=5)
+    e2e.send_batch_complete(controller_port)
+    e2e.event(events, "T_end_batch_complete", completed=len(rows))
+    rows.sort(key=lambda r: int(r["manifest_id"]))
+    return rows, t0, t_end, phase_dispatch
 
 
 def batch_meta(manifest: list[dict[str, Any]]) -> dict[str, int]:
@@ -326,9 +415,13 @@ def run_scenario_once(suite_dir: Path, scenario: str, repeat: int, position: int
         prewarm(scenario, controller_pf.local_port, frontend_pf.local_port, events)
         e2e.status_sample(controller_pf.local_port, status_rows, "after_prewarm")
 
-        # --- MEASURED WINDOW: one continuous batch, no gates ---
-        rows, t0, t_end = run_rollout_with_progress(
-            frontend_pf.local_port, controller_pf.local_port, manifest, out_dir, nonce, meta, events)
+        # --- MEASURED WINDOW: no gates. flat batch OR shaped-arrival phased ---
+        if WORKLOAD_MODE == "phased":
+            rows, t0, t_end, _phd = run_phased_with_progress(
+                frontend_pf.local_port, controller_pf.local_port, manifest, out_dir, nonce, meta, events)
+        else:
+            rows, t0, t_end = run_rollout_with_progress(
+                frontend_pf.local_port, controller_pf.local_port, manifest, out_dir, nonce, meta, events)
 
         # brief post-window so the GPU timeline captures the S3 scale-down settle
         # (NOT part of T_batch; T_batch = [t0, t_end]).
@@ -401,10 +494,38 @@ def ugpu_over_window(prom_rows: list[dict[str, Any]], t0: float, t_end: float) -
     }
 
 
+def per_phase_metrics(rows, pod_rows) -> dict[str, Any]:
+    """Per-phase serving time + GPU integration, windowed to each phase's own
+    request timestamps (no gates involved). D->P is judged on the A_prefill
+    phase, P->D on B_decode, S3 on C_tail."""
+    out: dict[str, Any] = {}
+    phases = sorted({str(r.get("phase", "")) for r in rows if r.get("phase")})
+    for ph in phases:
+        prs = [r for r in rows if str(r.get("phase", "")) == ph]
+        starts = [float(r["start_ts"]) for r in prs if r.get("start_ts")]
+        ends = [float(r["end_ts"]) for r in prs if r.get("end_ts")]
+        if not starts or not ends:
+            continue
+        st, en = min(starts), max(ends)
+        alloc = e2e.summarize_pod_allocation(pod_rows, st, en)
+        valid = sum(1 for r in prs if r.get("valid_decode"))
+        out[ph] = {
+            "n": len(prs), "valid_pct": 100.0 * valid / max(1, len(prs)),
+            "serving_wall_s": en - st,
+            "prefill_gpu_s": float(alloc.get("prefill_allocated_seconds", 0) or 0),
+            "decode_gpu_s": float(alloc.get("spec_decode_allocated_seconds", 0) or 0),
+            "avg_decode_gpus": (float(alloc.get("spec_decode_allocated_seconds", 0) or 0) / (en - st)) if en > st else 0.0,
+            "completion_tokens": sum(int(r.get("completion_tokens", 0) or 0) for r in prs),
+            "p95_latency_s": e2e.percentile([float(r["latency_s"]) for r in prs if r.get("latency_s")], 0.95),
+        }
+    return out
+
+
 def build_summary(scenario, repeat, position, rows, t0, t_end, meta, pod_rows, prom_rows, status_rows, events, out_dir) -> dict[str, Any]:
     q = e2e.summarize_requests(rows)
     t_batch = t_end - t0
     alloc = e2e.summarize_pod_allocation(pod_rows, t0, t_end)
+    phase_metrics = per_phase_metrics(rows, pod_rows)
     ugpu = ugpu_over_window(prom_rows, t0, t_end)
     s2h = e2e.s2_history(status_rows)
     s3h = e2e.s3_history(status_rows)
@@ -444,9 +565,17 @@ def build_summary(scenario, repeat, position, rows, t0, t_end, meta, pod_rows, p
         "requests_per_gpu_s": int(q.get("success", 0) or 0) / total_gpu_s if total_gpu_s > 0 else 0.0,
         # Tier 3: mechanism evidence
         "s2_executed_count": s2_exec,
-        "s2_switch_total_ms": sum(float(it.get("switch_time_ms", 0) or 0) for it in s2h if it.get("executed")),
+        "s2_switch_total_ms": sum(
+            float(it.get("switch_time_ms", it.get("switch_ms", it.get("duration_ms", 0))) or 0)
+            for it in s2h if it.get("executed")),
         "s3_migrated_requests": s3_mig,
         "s3_drained_source_count": len(s3_drained),
+        # Per-phase attribution (D->P => A_prefill, P->D => B_decode, S3 => C_tail)
+        "phase_metrics": phase_metrics,
+        # business_wall == T_batch by construction (no gates in the measured
+        # window); recorded so the report can prove no harness contamination.
+        "business_wall_s": t_batch,
+        "overhead_vs_tbatch_s": 0.0,
         # diagnostics
         "completion_tokens": completion,
         "p50_latency_s": float(q.get("p50_latency_s", 0) or 0),
@@ -499,14 +628,29 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=20260718)
     ap.add_argument("--sample-interval", type=float, default=1.0)
     ap.add_argument("--scenarios", default="all", help="comma-separated subset, or 'all'")
+    ap.add_argument("--workload", default="flat", choices=["flat", "phased"])
+    # phased-workload phase parameters (calibratable)
+    ap.add_argument("--a-n", type=int, default=32); ap.add_argument("--a-words", type=int, default=1200)
+    ap.add_argument("--b-n", type=int, default=24); ap.add_argument("--b-words", type=int, default=450)
+    ap.add_argument("--b-out", type=int, default=1200); ap.add_argument("--b-offset", type=float, default=22.0)
+    ap.add_argument("--c-n", type=int, default=3); ap.add_argument("--c-out", type=int, default=6000)
+    ap.add_argument("--c-offset", type=float, default=40.0)
     ap.add_argument("--continue-after-timeout", action="store_true")
     args = ap.parse_args()
+    global WORKLOAD_MODE
+    WORKLOAD_MODE = args.workload
     active = SCENARIOS if args.scenarios.strip().lower() in {"all", ""} else [s.strip() for s in args.scenarios.split(",") if s.strip()]
 
     suite_dir = Path(args.suite_dir) if args.suite_dir else Path(f"reports/rollout-5scenario-{time.strftime('%Y%m%d-%H%M%S')}")
     suite_dir.mkdir(parents=True, exist_ok=True)
     # ONE shared batch, reused byte-for-byte by every scenario/round.
-    manifest = build_rollout_batch(args.seed, args.batch_size, args.straggler_frac)
+    if args.workload == "phased":
+        pa = {"a_n": args.a_n, "a_words": args.a_words, "b_n": args.b_n, "b_words": args.b_words,
+              "b_out": args.b_out, "b_offset": args.b_offset, "c_n": args.c_n, "c_out": args.c_out,
+              "c_offset": args.c_offset}
+        manifest = build_phased_batch(args.seed, pa)
+    else:
+        manifest = build_rollout_batch(args.seed, args.batch_size, args.straggler_frac)
     (suite_dir / "workload-manifest.jsonl").write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in manifest) + "\n", encoding="utf-8")
 
@@ -551,7 +695,9 @@ def main() -> int:
     e2e.write_json(suite_dir / "consolidated-data.json", {
         "suite": suite_dir.name,
         "config": {"repeats": args.repeats, "batch_size": args.batch_size,
-                   "straggler_frac": args.straggler_frac, "seed": args.seed},
+                   "straggler_frac": args.straggler_frac, "seed": args.seed,
+                   "workload": args.workload, "manifest_size": len(manifest),
+                   "phase_params": (pa if args.workload == "phased" else None)},
         "scenarios": SCENARIOS,
         "aborted": aborted,
         "aggregates": aggregates,
