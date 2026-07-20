@@ -192,6 +192,17 @@ class ConsolidationController:
                     # already uses), then re-verify the source is still empty.
                     cordoned = self._cordon_sources(decision.drained_sources, source_addr_by_id)
                     decision.cordoned_sources = cordoned
+                    # SETTLE after cordon: withdrawing the ModelCard is not
+                    # instantaneous from the router's point of view. Give the
+                    # frontend time to observe it and stop routing here BEFORE we
+                    # re-verify and delete, otherwise a request dispatched in the
+                    # propagation window hits a decoder we are about to remove and
+                    # 500s (observed 24x in mixed's B_decode, where this release
+                    # fires right after an S2 P->D switch). The re-verify below
+                    # then catches anything that still slipped in.
+                    settle = float(getattr(self.config, "consolidation_cordon_settle_seconds", 0.0) or 0.0)
+                    if settle > 0:
+                        await asyncio.sleep(settle)
                     still_drained = await self._wait_for_drained_sources(set(decision.drained_sources))
                     if len(still_drained) < len(decision.drained_sources):
                         # Work arrived between drain-confirm and cordon: abandon

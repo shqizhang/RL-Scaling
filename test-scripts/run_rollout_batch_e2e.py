@@ -93,7 +93,14 @@ def scenario_env(name: str) -> dict[str, str]:
     if name == "s3_only":
         return {**base, **s3}
     if name == "mixed":
-        return {**base, **s2, **s3, "ROLE_SWITCH_ENABLED": "true", "MIN_SWITCH_INTERVAL": "60"}
+        # S2/S3 DESYNC: in mixed, S3's idle-release used to fire on the decoder
+        # an S2 P->D had just re-created, racing the router (24x 5xx in
+        # B_decode). Require more consecutive stable observations and a longer
+        # min-interval so S3 waits for the post-switch topology to settle before
+        # releasing; pair with the controller-side cordon settle.
+        return {**base, **s2, **s3, "ROLE_SWITCH_ENABLED": "true", "MIN_SWITCH_INTERVAL": "60",
+                "CONSOLIDATION_STABLE_SAMPLES": "3", "CONSOLIDATION_MIN_INTERVAL": "10",
+                "CONSOLIDATION_CORDON_SETTLE": "1.5"}
     raise ValueError(name)
 
 

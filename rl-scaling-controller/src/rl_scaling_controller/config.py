@@ -91,6 +91,13 @@ class ControllerConfig:
     worth_migrating_gate_enabled: bool = field(default_factory=lambda: _env_bool("WORTH_MIGRATING_GATE_ENABLED", True))
     consolidation_stable_samples: int = field(default_factory=lambda: _env_int("CONSOLIDATION_STABLE_SAMPLES", 2))
     consolidation_min_interval_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_MIN_INTERVAL", 10.0))
+    # After withdrawing a drained source's ModelCard (cordon) we must let the
+    # frontend OBSERVE the withdrawal before deleting the pod. Without this
+    # settle, a request routed in the withdrawal-propagation window lands on a
+    # decoder about to be removed and dies (observed: 24x HTTP 500 in the mixed
+    # B_decode phase, where S3's idle-release fires right after an S2 P->D).
+    # Mirrors the worker-side switch_role quiesce window.
+    consolidation_cordon_settle_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_CORDON_SETTLE", 1.5))
     consolidation_drain_timeout_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_DRAIN_TIMEOUT", 20.0))
     consolidation_drain_poll_seconds: float = field(default_factory=lambda: _env_float("CONSOLIDATION_DRAIN_POLL_INTERVAL", 2.0))
 
