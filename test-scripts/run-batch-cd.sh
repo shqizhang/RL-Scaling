@@ -116,6 +116,6 @@ SUITE_DIR="reports/phased-v2-$(date +%Y%m%d-%H%M%S)"
 
 # ── 6. gates ─────────────────────────────────────────────────────────────────
 log "6/6 gates"
-( cd "$RLS/test-scripts" && python check_suite_gates.py "$SUITE_DIR" ) \
+( cd "$RLS/test-scripts" && python check_suite_gates.py "$SUITE_DIR" --switch-budget-ms 5000 ) \
   && log "ALL GATES PASS — suite: RL-Scaling/test-scripts/$SUITE_DIR" \
   || die "gate failures — inspect $SUITE_DIR (do NOT write the report from this data)"
