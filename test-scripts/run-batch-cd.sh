@@ -83,6 +83,15 @@ fi
 
 # ── 4. deploy ────────────────────────────────────────────────────────────────
 log "4/6 deploy (patch Deployments directly; operator held at 0)"
+# FD hygiene: a long-lived frontend accumulates leaked fds across suites and
+# eventually dies mid-run with "Too many open files (os error 24)" — observed
+# 2026-07-23 00:31, killing all 44 in-flight A streams with 500s. Start every
+# suite on a fresh frontend.
+FRONTEND_DEPLOY=$(kubectl -n "$NS_WORKERS" get deploy -o name | grep -i frontend | head -1)
+if [ -n "$FRONTEND_DEPLOY" ]; then
+  kubectl -n "$NS_WORKERS" rollout restart "$FRONTEND_DEPLOY"
+  kubectl -n "$NS_WORKERS" rollout status "$FRONTEND_DEPLOY" --timeout=300s
+fi
 for D in "$DECODE_DEPLOY" "$PREFILL_DEPLOY"; do
   kubectl -n "$NS_WORKERS" set image "$D" "*=$NEW_IMAGE"
   kubectl -n "$NS_WORKERS" set env "$D" DYNAMO_RL_CORDON_SETTLE="$SETTLE"
