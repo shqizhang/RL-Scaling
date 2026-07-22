@@ -154,6 +154,13 @@ class ElasticRoleSwitchController:
                 cluster.prefill_utilization <= self.config.prefill_idle_threshold,
             ),
             (
+                "prefill_queue_clear",
+                cluster.prefill_queue_depth,
+                "<",
+                self.config.prefill_queue_threshold,
+                cluster.prefill_queue_depth < self.config.prefill_queue_threshold,
+            ),
+            (
                 "prefill_worker_count",
                 cluster.prefill_worker_count,
                 ">",
@@ -192,6 +199,13 @@ class ElasticRoleSwitchController:
         if (
             cluster.decode_queue_depth >= self.config.decode_queue_threshold
             and cluster.prefill_utilization <= self.config.prefill_idle_threshold
+            # Do not revert while the prefill side still has a backlog (which
+            # includes the RL phase signal's prefill-pressure hint applied by
+            # the cluster_metrics_adjuster): taking capacity away from a phase
+            # the RL loop declares in-progress oscillates against the D->P
+            # trigger. Once the prompts are sampled the hint dies and this
+            # clause opens on its own.
+            and cluster.prefill_queue_depth < self.config.prefill_queue_threshold
             and cluster.prefill_worker_count > self.config.min_prefill_replicas
         ):
             target = find_most_idle_worker(prefill_workers, role="prefill")
@@ -205,7 +219,8 @@ class ElasticRoleSwitchController:
                 to_role="decode",
                 reason=(
                     f"decode_queue={cluster.decode_queue_depth}>={self.config.decode_queue_threshold} "
-                    f"and prefill_util={cluster.prefill_utilization:.2f}<={self.config.prefill_idle_threshold:.2f}"
+                    f"and prefill_util={cluster.prefill_utilization:.2f}<={self.config.prefill_idle_threshold:.2f} "
+                    f"and prefill_queue={cluster.prefill_queue_depth}<{self.config.prefill_queue_threshold}"
                 ),
             )
         self._record_evaluation(
