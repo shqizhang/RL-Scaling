@@ -46,6 +46,14 @@ def target_scenario_env(name: str) -> dict[str, str]:
         # to genuine decode pressure inside phase B.
         env["PREFILL_QUEUE_THRESHOLD"] = "2"
         env["MIN_SWITCH_INTERVAL"] = "20"
+        # Suite 231344 run-01 post-mortem: with A carrying 8-16 output tokens,
+        # phase A itself floods the decode queue (sustained 35-44 for ~25s),
+        # indistinguishable in magnitude from phase B's genuine decode
+        # pressure (46-48) — so the legacy DECODE_QUEUE_THRESHOLD=2 fired the
+        # P->D revert at +22s, inside the A window. 8 clears the post-fix A
+        # residue (~0-3 once A is a pure prefill probe) while B's sustained
+        # 40+ still crosses it immediately.
+        env["DECODE_QUEUE_THRESHOLD"] = "8"
         # Same post-mortem: decode_util is >= 0.03 within one controller tick
         # of T0 (A-phase requests carry 8-16 output tokens), so a 0.00/0.02
         # idle threshold closes the D->P window before the T0 phase signal can
@@ -97,9 +105,13 @@ def build_phased_manifest(seed: int, size: int, concurrency: int,
     # Data audit 2026-07-22: with max_tokens 64-128 the A cohort carries real
     # decode demand, so borrowing a decoder (D->P, 3P1D) starves the remaining
     # decoder and the A cohort completes SLOWER despite a -40% prefill TTFT.
-    # Default 8/12/16 makes phase A genuinely prefill-bound so the D->P
-    # completion-time benefit is measurable; pass --phase-a-max-tokens to
-    # reproduce the legacy shape.
+    # Suite 231344 post-mortem: even 8/12/16 still floods the decode queue
+    # (44 requests x ~12 tokens sustained dq 35-44 for ~25s), so phase A never
+    # becomes prefill-bound on this fast-prefill model and the P->D revert
+    # fires inside the A window. Default 1 makes A a pure prefill probe
+    # (prefill + a single decode step; still a valid completion with
+    # finish_reason=length, and nvext TTFT is unaffected); pass
+    # --phase-a-max-tokens 64,96,128 to reproduce the legacy shape.
     add("prefill_burst", n_prefill, (1200, 1800),
         list(a_token_choices) if a_token_choices else [8, 12, 16],
         "long_prompt_short_output", 0.0)
@@ -299,24 +311,45 @@ def run_phased_with_progress(frontend_port: int, controller_port: int,
                              nonce: str, meta: dict[str, Any],
                              events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float, float]:
     """Run predetermined arrivals with no in-line mechanism checks."""
-    done = {"n": 0}
+    done = {"n": 0, "ids": set()}
     lock = threading.Lock()
     stop_prog = threading.Event()
+
+    def _remaining_shape(done_ids: set) -> tuple[int, int]:
+        """avg_isl/avg_osl over the NOT-yet-completed manifest rows.
+
+        Suite 231344 post-mortem: signalling the static whole-batch avg_isl
+        (1195 >= 1024) kept the controller's prefill-pressure hint alive for
+        the entire batch — every momentary decode idle re-fired D->P, giving
+        a 5-switch oscillation at the MIN_SWITCH_INTERVAL cadence. The RL
+        loop's honest signal is the *remaining* work: once the A prompts are
+        sampled the remainder is decode-shaped (avg_isl ~573 < 1024) and the
+        prefill hint dies on its own, phase-scoping the trigger without any
+        controller change.
+        """
+        remaining = [r for r in manifest if r["manifest_id"] not in done_ids]
+        if not remaining:
+            return int(meta["avg_isl"]), int(meta["avg_osl"])
+        r_isl = int(sum(int(r["words"]) * 1.3 for r in remaining) / len(remaining))
+        r_osl = int(sum(int(r["max_tokens"]) for r in remaining) / len(remaining))
+        return r_isl, r_osl
 
     def progress_loop() -> None:
         while not stop_prog.is_set():
             with lock:
                 completed = done["n"]
                 frac = completed / max(1, len(manifest))
+                done_ids = set(done["ids"])
             # Progress updates (frac > 0) are sent only after real
             # completions; the phase-boundary signal itself is emitted once,
             # synchronously, at T0 below — see the comment there.
             if completed == 0:
                 stop_prog.wait(0.25)
                 continue
+            r_isl, r_osl = _remaining_shape(done_ids)
             try:
                 e2e.send_progress(controller_port, round(frac, 3), len(manifest),
-                                  int(meta["avg_isl"]), int(meta["avg_osl"]))
+                                  r_isl, r_osl)
             except Exception:
                 pass
             stop_prog.wait(1.0)
@@ -367,6 +400,7 @@ def run_phased_with_progress(frontend_port: int, controller_port: int,
             row = future.result()
             with lock:
                 done["n"] += 1
+                done["ids"].add(int(row["manifest_id"]))
             rows.append(row)
 
     t_end = e2e.now_ts()
@@ -501,9 +535,9 @@ def main() -> int:
     ap.add_argument("--phase-b-offset", type=float, default=45.0)
     ap.add_argument("--phase-c-offset", type=float, default=45.0,
                     help="tail cohort arrives with decode_dense and becomes the long tail")
-    ap.add_argument("--phase-a-max-tokens", default="8,12,16",
+    ap.add_argument("--phase-a-max-tokens", default="1",
                     help="comma-separated max_tokens choices for the prefill "
-                         "burst; default 8,12,16 keeps phase A prefill-bound "
+                         "burst; default 1 makes phase A a pure prefill probe "
                          "(use 64,96,128 to reproduce the legacy shape)")
     ap.add_argument("--sample-interval", type=float, default=1.0)
     ap.add_argument("--scenarios", default="all")
