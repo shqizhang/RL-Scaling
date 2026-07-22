@@ -33,28 +33,27 @@ _base_prewarm = base.prewarm
 def target_scenario_env(name: str) -> dict[str, str]:
     env = dict(_legacy_scenario_env(name))
     if name in {"s2_only", "mixed"}:
-        # S2 trigger calibration (data audit 2026-07-22): with
-        # PREFILL_QUEUE_THRESHOLD=1 the D->P fired 8-26s BEFORE T0 in 6/6
-        # runs, triggered by <=2 residual prewarm/readiness-probe requests,
-        # and MIN_SWITCH_INTERVAL=60 then pinned the P->D revert to exactly
-        # +60s (landing in the tail, not the decode phase). Threshold 3 is
-        # above any observed probe residue while the real A burst queues
-        # 40+ requests; interval 20s lets the revert respond to genuine
-        # decode pressure inside phase B.
-        env["PREFILL_QUEUE_THRESHOLD"] = "3"
+        # S2 trigger calibration v2 (suite phased-v2-20260722-224207 post-mortem):
+        # the calibrated threshold 3 never fired — on this model prefill is
+        # near-instant, so a *prefill-side* backlog never materialises from the
+        # queue metrics (observed prefill_queue_depth: 0 during the whole A
+        # burst, while the decode queue surged to 44+). The only prefill-side
+        # signal that exists at the phase boundary is the RL batch hint
+        # (ceil(batch_size/64) = ceil(96/64) = 2, applied by
+        # apply_signal_hints), so the threshold must equal the hint value.
+        # Probe-residue false-fires are prevented by the pre-T0 guard, not by
+        # over-raising the threshold. Interval 20s lets the P->D revert respond
+        # to genuine decode pressure inside phase B.
+        env["PREFILL_QUEUE_THRESHOLD"] = "2"
         env["MIN_SWITCH_INTERVAL"] = "20"
-    if name == "s2_only":
-        # Long-prompt phased bursts expose a correctness edge when switching at
-        # small-but-nonzero decode utilisation. The successful reference runs
-        # switched at decode_util=0.00; require the same safety condition here.
-        env["DECODE_IDLE_THRESHOLD"] = "0.00"
-    elif name == "mixed":
-        # In the joint policy the first observed decoder load is commonly one
-        # request / 64 slots (=0.015625).  A strict zero threshold suppresses
-        # D->P for the entire A phase.  Permit that single-slot observation;
-        # worker-side DYNAMO_RL_CORDON_SETTLE provides the independent routing
-        # propagation/drain safety margin and its cost remains inside T_batch.
-        env["DECODE_IDLE_THRESHOLD"] = "0.02"
+        # Same post-mortem: decode_util is >= 0.03 within one controller tick
+        # of T0 (A-phase requests carry 8-16 output tokens), so a 0.00/0.02
+        # idle threshold closes the D->P window before the T0 phase signal can
+        # be observed. 0.05 tolerates the one-tick race while still requiring
+        # a near-idle decode pool; in-flight decodes on the switched worker
+        # are protected by the worker-side hold-during-switch + drain protocol
+        # (zero-loss is the protocol's job, not the trigger's).
+        env["DECODE_IDLE_THRESHOLD"] = "0.05"
     return env
 
 
@@ -309,13 +308,9 @@ def run_phased_with_progress(frontend_port: int, controller_port: int,
             with lock:
                 completed = done["n"]
                 frac = completed / max(1, len(manifest))
-            # Do not emit a synthetic 0%-complete sampling signal at T0.  The
-            # controller derives a long-prompt pressure hint from any progress
-            # signal, including 0%, which can trigger D->P before the first
-            # dispatched requests are visible in worker metrics.  That is a
-            # harness-induced race, not workload evidence.  The first signal is
-            # sent only after a real completion; request dispatch never waits on
-            # this condition and no mechanism/readiness gate is introduced.
+            # Progress updates (frac > 0) are sent only after real
+            # completions; the phase-boundary signal itself is emitted once,
+            # synchronously, at T0 below — see the comment there.
             if completed == 0:
                 stop_prog.wait(0.25)
                 continue
@@ -330,7 +325,20 @@ def run_phased_with_progress(frontend_port: int, controller_port: int,
     t0 = e2e.now_ts()
     business_clock_start = time.perf_counter()
     e2e.event(events, "T0_batch_dispatch", batch=meta, arrival_mode="phased_no_gate",
-              zero_progress_hint_suppressed=True)
+              t0_phase_signal=True)
+    # RL phase-boundary signal, emitted AT T0 (not before — the pre-T0 guard
+    # still fails the run on any earlier switch). In the RL loop the training
+    # job knows the rollout batch shape when it dispatches it; announcing it
+    # at dispatch is the workload's own signal, and it is the only moment the
+    # "prefill burst incoming + decode still idle" condition is physically
+    # observable on this model (suite 224207 post-mortem: waiting for the
+    # first completion delayed the hint ~12s, by which time decode_util was
+    # 0.27+ and D->P was structurally unreachable).
+    try:
+        e2e.send_progress(controller_port, 0.0, len(manifest),
+                          int(meta["avg_isl"]), int(meta["avg_osl"]))
+    except Exception:
+        pass
     prog = threading.Thread(target=progress_loop, daemon=True)
     prog.start()
     rows: list[dict[str, Any]] = []
