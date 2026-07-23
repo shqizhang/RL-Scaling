@@ -165,7 +165,7 @@ Three of Dynamo's subsystems determine what an in-place elasticity mechanism can
 
 \noindent\textbf{Routing: the routers are stateful.} \texttt{KvRouter} maintains a radix-tree index over the KV blocks held by each decoder and scores candidates by prefix-overlap, queue load and remaining capacity; \texttt{PrefillRouter} fans prefill traffic to any prefill-role worker discovered through the CRs. \emph{Consequence:} that state must reconverge after every role change, and because convergence is eventually consistent, a worker keeps receiving old-role traffic for a short interval after it is withdrawn. Absorbing that interval safely is the central difficulty of Section~\ref{sec:protocol}.
 
-\noindent\textbf{Transport: KV is addressable across GPUs.} The NIXL connector performs zero-copy KV transfer over NVLink, or RDMA over InfiniBand between hosts, and the KV-Block Manager tracks the per-request block layout. \emph{Consequence:} one decoder can read another's KV blocks directly from VRAM, which is what makes migrating a \emph{running} request feasible at all (Section~\ref{sec:three-phase}).
+\noindent\textbf{Transport: KV is addressable across GPUs.} The NIXL connector performs zero-copy KV transfer, selecting a transport per pair of endpoints from those actually reachable between them, and the KV-Block Manager tracks the per-request block layout. Which transport is selected on the deployment measured here, and why it matters for the results, is established in Section~\ref{sec:transport}. \emph{Consequence:} one decoder can read another's KV blocks directly from VRAM, which is what makes migrating a \emph{running} request feasible at all (Section~\ref{sec:three-phase}).
 
 \subsection{KV Cache, Prefix Caching, and the Coherence Problem}
 \label{sec:kv-cache}
@@ -232,57 +232,7 @@ Consolidation & Live migration & Free target & \texttt{/migrate} \\
 
 Cluster scaling is the foundation the other two primitives stand on. It does not avoid cold start; it moves the cost outside the phase that is being optimised. The rollout's first phase signal takes the controller from \texttt{IDLE} to \texttt{WARM\_UP}, where replicas are raised and the engines load; only when the workers report Ready does the controller enter \texttt{ACTIVE}, and between consecutive batches a cooldown grace period keeps the pods warm rather than releasing them. Role switching and consolidation therefore always act on already-running engines, which is what makes their sub-second and few-second costs meaningful---an equivalent reaction by pod replication would pay tens of seconds of cold start and start with an empty prefix cache. Figure~\ref{fig:rl-controller} shows the resulting control plane.
 
-\begin{figure}[htbp]
-\centering
-\scriptsize
-\begin{tikzpicture}[
-  node distance=3mm,
-  st/.style={draw, rounded corners=2pt, fill=blue!8, align=center,
-             font=\scriptsize, minimum height=5mm, text width=15mm},
-  pol/.style={draw, rounded corners=1pt, fill=green!12, align=center,
-              font=\scriptsize, minimum height=4.4mm, text width=30mm},
-  act/.style={draw, dashed, rounded corners=1pt, align=center,
-              font=\tiny, minimum height=4mm, text width=30mm},
-  lbl/.style={font=\tiny, align=center},
-  ar/.style={-{Latex[length=1.2mm]}}]
 
-\node[pol] (s3) {(1) S3 consolidation};
-\node[pol, below=of s3] (s2) {(2) S2 role switch};
-\node[pol, below=of s2] (s1) {(3) S1 cluster scaling};
-\draw[ar] (s3) -- (s2);
-\draw[ar] (s2) -- (s1);
-\node[lbl, above=1.5mm of s3] (tick) {one periodic loop, every tick};
-\node[lbl, above=1.5mm of tick] (sig)
-  {RL phase signal: \texttt{sampling\_progress}, \texttt{sampling\_done}, \texttt{batch\_complete}};
-\draw[ar] (sig) -- (tick);
-
-\node[act, right=5mm of s3] (mig) {migrate most-progressed request; when a decoder is drained: cordon, settle, scale down};
-\node[act, right=5mm of s2] (sw) {D$\to$P when prefill pressure is high and decode idle; P$\to$D on the reverse};
-\draw[ar, dashed] (s3) -- (mig);
-\draw[ar, dashed] (s2) -- (sw);
-
-\node[st, below=7mm of s1] (idle) {IDLE};
-\node[st, right=6mm of idle] (warm) {WARM\_UP};
-\node[st, right=6mm of warm] (active) {ACTIVE};
-\node[st, right=6mm of active] (cool) {COOL\_DOWN};
-\draw[ar] (idle) -- (warm);
-\draw[ar] (warm) -- (active);
-\draw[ar] (active) -- (cool);
-\draw[ar] (cool.south) to[out=250,in=290] (idle.south);
-\draw[ar] (cool.north) to[out=110,in=70] (warm.north);
-\draw[ar] (s1) -- (idle);
-\node[lbl, below=6mm of warm] {S1 alters the deployment's \emph{size} over a rollout; S2 and S3 alter its \emph{shape} within a phase};
-\end{tikzpicture}
-\caption{The RL-driven control plane as implemented. A single periodic loop
-consumes the training job's phase signal and takes three decisions per tick,
-in this order: consolidation, role switch, cluster scaling. Only cluster
-scaling is a state machine (four states over the rollout lifecycle); S2 and S3
-are policies re-evaluated every tick while the batch is active, so both may act
-in the same tick. This replaces the mid-term figure, which drew rebalancing and
-consolidation as sequential \emph{states} of one machine and gated consolidation
-on a training signal.}
-\label{fig:rl-controller}
-\end{figure}
 
 \subsection{Deployment Topology}
 \label{sec:deploy-topo}
@@ -503,7 +453,7 @@ another, leaving the source drainable, with no KV state lost or corrupted---and,
 migrated request is only useful if the freed GPU is actually reclaimed, a path from
 ``source is drained'' to ``GPU is released''.
 
-\subsection{The Three-Phase Block-Hold NIXL-Pull Protocol}
+\subsection{The Three-Phase Block-Hold Protocol}
 \label{sec:three-phase}
 
 The protocol moves a request $R$ from a source decoder $D_{\text{src}}$ to a destination
@@ -511,132 +461,256 @@ decoder $D_{\text{dst}}$ in three coordinated phases (Figure~\ref{fig:migration}
 defining property is that $D_{\text{src}}$ keeps $R$ alive and its KV blocks pinned across
 the entire handshake, releasing them only after $D_{\text{dst}}$ has confirmed acceptance.
 
+\noindent\textbf{Phase 1 (Block-Hold).} The orchestrator calls \texttt{migrate\_out} on
+$D_{\text{src}}$, which pins the KV blocks of $R$, registers $R$ in its pending-migration
+table, and collects the source block identifiers, the transfer coordinates of the local
+NIXL agent, the sampling parameters and the count of already-emitted tokens---but does
+\emph{not} abort $R$. It returns these to the orchestrator.
+
+\noindent\textbf{Phase 2 (Pull).} The orchestrator passes them to \texttt{migrate\_in} on
+$D_{\text{dst}}$. The destination applies a cost--benefit gate, injects the transfer
+parameters into a new request and submits it locally; the connector then reads the KV
+blocks from $D_{\text{src}}$'s memory and decoding resumes from the token after the last
+one already emitted, so the client observes a single continuous stream across the
+boundary. Reconstructing the \emph{complete} sampling configuration is a correctness
+requirement rather than a detail: if any field is dropped---a stopping policy, in
+particular---the migration silently alters the request's semantics while appearing to
+succeed.
+
+\noindent\textbf{Phase 3 (Release).} The orchestrator calls \texttt{migration\_complete}
+on $D_{\text{src}}$, which aborts $R$, unpins its blocks and clears the pending entry.
+
+\noindent\textbf{The at-least-one-copy invariant.} No transition leaves the request
+without an authoritative KV copy. If the orchestrator fails between Phases~2 and~3 the
+source has not aborted, so the failure degrades to at-most-once duplicate emission rather
+than KV loss; a background sweep force-completes any hold older than a bounded age, so a
+crashed orchestrator cannot pin blocks indefinitely. The two-phase alternative---abort on
+\texttt{migrate\_out}, then submit on \texttt{migrate\_in}---is unsafe under a pull
+transport, because the source's blocks are freed and may be reused before the
+destination's read completes. The three-phase form converts a two-party race into a
+sequential handshake.
+
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{request-consolidation.png}
-\caption{Three-phase block-hold NIXL-pull migration. The source keeps the request alive and its blocks pinned for the whole handshake, so an authoritative KV copy exists at every instant. The connector path shown is the fast path when the KV-block index is exposed; recompute is the safe fallback otherwise. The stage that reclaims the GPU follows in Section~\ref{sec:idle-release-mech}.}
+\caption{Three-phase block-hold migration. The source keeps the request alive and its blocks pinned for the whole handshake, so an authoritative KV copy exists at every instant. The read is issued through NIXL, whose transport is selected per agent pair (Section~\ref{sec:transport}); recompute is the fallback when the block index is unavailable. The stage that reclaims the GPU follows in Section~\ref{sec:idle-release-mech}.}
 \label{fig:migration}
 \end{figure}
 
-\noindent\textbf{Phase 1 (Block-Hold).} The orchestrator calls \texttt{migrate\_out} on
-$D_{\text{src}}$, which pins the KV blocks of $R$, registers $R$ in its pending-migration
-table, and collects the source block IDs, NIXL coordinates, sampling parameters and
-previously emitted token count---but does \emph{not} abort $R$. It returns
-\texttt{kv\_transfer\_params} and \texttt{sampling\_params} to the orchestrator.
+\subsection{What Actually Carries the KV}
+\label{sec:transport}
 
-\noindent\textbf{Phase 2 (NIXL READ pull).} The orchestrator calls \texttt{migrate\_in} on
-$D_{\text{dst}}$ with those parameters. The destination applies a cost--benefit gate,
-injects \texttt{kv\_transfer\_params} into the request and submits it locally; the
-\texttt{NixlConnectorScheduler} issues an RDMA-style READ against $D_{\text{src}}$'s GPU,
-populates local KV blocks, and resumes decoding from
-\texttt{previously\_emitted\_tokens~+~1}, so the client observes one continuous stream
-across the boundary. Fidelity of the replay is a correctness requirement, not a detail:
-the destination must reconstruct the \emph{complete} sampling configuration, including
-stopping policy, or the migration silently changes the request's semantics.
+The protocol is written against \emph{read} semantics---the destination fetches from the
+source's memory---and is deliberately indifferent to how that read is realised. Realising
+it is NIXL's responsibility, and understanding the abstraction matters for interpreting
+the evaluation.
 
-\noindent\textbf{Phase 3 (Release).} The orchestrator calls \texttt{migration\_complete} on
-$D_{\text{src}}$, which aborts $R$, unpins its KV blocks and clears the pending entry.
+NIXL is configured with the UCX backend, and UCX selects a transport per agent pair at
+connection time from those actually reachable between the two endpoints, in descending
+order of capability: intra-node device-to-device paths (CUDA IPC over NVLink), RDMA over
+an InfiniBand or RoCE device, and TCP as the universal fallback. The protocol issues the
+same read regardless; only the achieved bandwidth differs.
 
-\noindent\textbf{The at-least-one-copy invariant.} No transition ever leaves the request
-without an authoritative KV copy. If the orchestrator fails between Phases~2 and~3 the
-source has not aborted, so the failure degrades to at-most-once duplicate emission rather
-than KV loss; a background sweep force-completes any hold older than ten seconds so a
-crashed orchestrator cannot pin blocks indefinitely. The two-phase alternative---abort on
-\texttt{migrate\_out}, then submit on \texttt{migrate\_in}---is unsafe under a pull
-transport: the source's blocks are freed and may be reused before the destination's READ
-completes, a silent corruption. The three-phase form converts a two-party race into a
-sequential handshake.
+On the deployment measured here the selected transport is \textbf{TCP}. Each worker is a
+single-GPU pod in its own network namespace, so the NVLink peer-to-peer path---present on
+the hardware and benchmarked at 48\,GB/s---is not reachable across the pod boundary, and
+the cluster exposes no InfiniBand or RoCE device. Direct measurement confirms the
+fallback: \texttt{ucx\_perftest} moves GPU-resident buffers at 2.9\,GB/s, against
+3.76\,GB/s for host-to-host TCP on the same link. We state this explicitly because it
+bounds what any scheduling mechanism in this system can achieve, and Section~\ref{sec:eval}
+returns to it: on this fabric the time a request spends waiting for its KV dominates the
+time it spends being computed, which is a property of the transport rather than of the
+policies being evaluated.
 
-\noindent\textbf{Which request, and onto which peer.} Each worker maintains an in-process
-registry updated at submission, on every streaming delta and at completion. Source-side
-victim selection picks the most-progressed request, maximising the replay cost avoided per
-migration; destination-side admission declines when the replay cost exceeds a threshold or
-too few tokens remain; and the controller ranks candidate peers by load, choosing the
-least-loaded decoder with spare KV capacity.
+Two consequences follow for the design. First, migration cost scales with the KV volume
+moved, so the destination's admission gate---which declines a migration whose replay cost
+exceeds its benefit---is load-bearing rather than defensive. Second, because the
+mechanism's value comes from releasing a decoder rather than from the speed of the
+transfer, the reclaim reported in Section~\ref{sec:eval} does not depend on which
+transport UCX selected; a faster fabric would shorten the handshake, not change its
+outcome.
+
+\subsection{Selecting the Request and the Destination}
+\label{sec:mig-strategy}
+
+Each worker maintains an in-process registry of its active requests, updated at
+submission, on every streaming delta and at completion. Source-side victim selection picks
+the most-progressed request, which maximises the replay cost avoided per migration.
+Destination-side admission declines when the replay cost exceeds a threshold or too few
+tokens remain to justify the transfer. The controller ranks candidate peers by load and
+chooses the least-loaded decoder with spare KV capacity.
 
 \subsection{From a Drained Decoder to a Reclaimed GPU}
 \label{sec:idle-release-mech}
 
 Migration makes a decoder drainable; it does not by itself return the GPU. The controller
-completes the chain: once a decoder reports zero active requests it is marked for release,
-its ModelCard is withdrawn (cordon), and---after a settle interval that lets the
-withdrawal propagate---its Deployment replica count is decremented. The settle interval is
-load-bearing rather than defensive: without it, requests routed during the propagation
-window arrive at a pod that is already terminating. This stage is what converts a
-successful migration into reclaimed GPU time, and Section~\ref{sec:eval} measures the two
-halves separately for exactly this reason.
+completes the chain: once a decoder reports no active requests it is marked for release,
+its ModelCard is withdrawn, and---after a settle interval that lets the withdrawal
+propagate to the routers---its Deployment replica count is decremented. The settle
+interval is load-bearing for the same reason it is in the switch protocol: without it,
+requests routed during the propagation window arrive at a pod that is already terminating.
+This is the stage that converts a successful migration into reclaimed GPU time, and
+Section~\ref{sec:eval} measures the two halves separately for that reason.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{The RL-Driven Control Plane}
 \label{sec:implementation}
 
-The two primitives are mechanisms; this section describes the policy that drives them.
-The design goal is a single top-down loop in which an RL training job's own phase signal
-reshapes a live PD deployment---adjusting how many GPUs are allocated, what role each
-plays, and where requests live---without any human in the loop and without dropping a
-request.
+The two primitives of Sections~\ref{sec:role-switch} and~\ref{sec:consolidation} are
+mechanisms: each performs one operation when asked. This section defines the policy that
+asks. Its objective is that a training job's own phase signal, and nothing else, should
+reshape a live deployment for the duration of a rollout and return it afterwards.
 
-\subsection{One Loop, Three Decisions}
-\label{sec:control-loop}
+\subsection{Three Levers on Three Timescales}
+\label{sec:levers}
 
-The controller is a cluster-level service running one periodic loop over three inputs:
-the \emph{RL phase signal} posted by the training job
-(\texttt{sampling\_progress}, \texttt{sampling\_done}, \texttt{batch\_complete}); the
-\emph{cluster state} read from the worker CRs; and the \emph{live load} scraped from the
-per-pod sidecars and Prometheus. On each tick it takes three decisions in a fixed order:
-consolidation first, then role switch, then cluster scaling.
+The waste identified in Section~\ref{sec:rl-waste} has two components, and no single lever
+removes both. Allocation decides how many GPUs the deployment holds; it acts on the
+timescale of a rollout, and it is the only lever that can return capacity to the cluster.
+Role assignment decides how those GPUs are split between prefill and decode; it acts on
+the timescale of a phase and is what addresses cross-phase waste. Placement decides which
+decoder holds which running request; it also acts within a phase and is what addresses
+intra-phase tail waste. We refer to them as S1, S2 and S3.
 
-\noindent\textbf{S1 --- how many GPUs (a four-state machine).} Allocation follows the
-rollout lifecycle: \texttt{IDLE} $\rightarrow$ \texttt{WARM\_UP} on the first signal of a
-new batch, \texttt{WARM\_UP} $\rightarrow$ \texttt{ACTIVE} once the workers report Ready,
-\texttt{ACTIVE} $\rightarrow$ \texttt{COOL\_DOWN} on batch completion, and
-\texttt{COOL\_DOWN} $\rightarrow$ \texttt{IDLE} after a grace period---or back to
-\texttt{WARM\_UP} if a new batch arrives during cooldown. Pre-warming during
-\texttt{WARM\_UP} is what lets the other two primitives operate on already-running
-engines rather than cold-starting new ones.
+The \emph{mixed} strategy is the configuration in which all three are enabled, and it is
+the one an RL operator would deploy. Over a single rollout it produces the following
+trajectory: pre-warm the pods as the batch is announced; convert a decoder to prefill
+while prompts are being sampled; convert it back as generation takes over; consolidate the
+surviving stragglers onto fewer decoders as the batch drains; and release the freed GPUs
+once the batch completes. The remainder of this section states what the controller
+observes, the rule each lever applies, and how the three are kept from interfering.
 
-\noindent\textbf{S2 --- what role each GPU plays (a per-tick policy).} While the batch is
-active, the role-switch policy compares prefill and decode pressure against thresholds and
-issues \texttt{/switch\_role} to the most idle eligible worker.
+\begin{figure}[htbp]
+\centering
+\scriptsize
+\begin{tikzpicture}[
+  node distance=3mm,
+  st/.style={draw, rounded corners=2pt, fill=blue!8, align=center,
+             font=\scriptsize, minimum height=5mm, text width=15mm},
+  pol/.style={draw, rounded corners=1pt, fill=green!12, align=center,
+              font=\scriptsize, minimum height=4.4mm, text width=30mm},
+  act/.style={draw, dashed, rounded corners=1pt, align=center,
+              font=\tiny, minimum height=4mm, text width=30mm},
+  lbl/.style={font=\tiny, align=center},
+  ar/.style={-{Latex[length=1.2mm]}}]
 
-\noindent\textbf{S3 --- where the requests live (a per-tick policy).} In parallel, the
-consolidation policy forms migration pairs from the most-progressed requests on the
-least-loaded decoders and, once a decoder is drained, cordons and scales it down.
+\node[pol] (s3) {(1) S3 consolidation};
+\node[pol, below=of s3] (s2) {(2) S2 role switch};
+\node[pol, below=of s2] (s1) {(3) S1 cluster scaling};
+\draw[ar] (s3) -- (s2);
+\draw[ar] (s2) -- (s1);
+\node[lbl, above=1.5mm of s3] (tick) {one periodic loop, every tick};
+\node[lbl, above=1.5mm of tick] (sig)
+  {RL phase signal: \texttt{sampling\_progress}, \texttt{sampling\_done}, \texttt{batch\_complete}};
+\draw[ar] (sig) -- (tick);
 
-The separation matters: S1 changes the \emph{size} of the deployment on the timescale of a
-rollout, whereas S2 and S3 change its \emph{shape} on the timescale of a phase, without
-allocating or releasing pods that would have to cold-start.
+\node[act, right=5mm of s3] (mig) {migrate most-progressed request; when a decoder is drained: cordon, settle, scale down};
+\node[act, right=5mm of s2] (sw) {D$\to$P when prefill pressure is high and decode idle; P$\to$D on the reverse};
+\draw[ar, dashed] (s3) -- (mig);
+\draw[ar, dashed] (s2) -- (sw);
 
-\subsection{Deriving Pressure from the RL Signal}
-\label{sec:trigger}
+\node[st, below=7mm of s1] (idle) {IDLE};
+\node[st, right=6mm of idle] (warm) {WARM\_UP};
+\node[st, right=6mm of warm] (active) {ACTIVE};
+\node[st, right=6mm of active] (cool) {COOL\_DOWN};
+\draw[ar] (idle) -- (warm);
+\draw[ar] (warm) -- (active);
+\draw[ar] (active) -- (cool);
+\draw[ar] (cool.south) to[out=250,in=290] (idle.south);
+\draw[ar] (cool.north) to[out=110,in=70] (warm.north);
+\draw[ar] (s1) -- (idle);
+\node[lbl, below=6mm of warm] {S1 alters the deployment's \emph{size} over a rollout; S2 and S3 alter its \emph{shape} within a phase};
+\end{tikzpicture}
+\caption{The RL-driven control plane as implemented. A single periodic loop
+consumes the training job's phase signal and takes three decisions per tick,
+in this order: consolidation, role switch, cluster scaling. Only cluster
+scaling is a state machine (four states over the rollout lifecycle); S2 and S3
+are policies re-evaluated every tick while the batch is active, so both may act
+in the same tick. This replaces the mid-term figure, which drew rebalancing and
+consolidation as sequential \emph{states} of one machine and gated consolidation
+on a training signal.}
+\label{fig:rl-controller}
+\end{figure}
 
-\emph{Which} signal fires a switch proved to matter as much as how fast the switch is. On
-this stack the prefill queue never builds a backlog---prefill is fast enough that the
-frontend's prefill queue depth stays at zero through a 44-prompt burst while the decode
-queue climbs to 44---so a reactive queue-depth trigger can never fire a D$\to$P switch in
-time. The controller therefore derives prefill pressure from the phase signal itself: the
-training job announces the rollout's shape when it dispatches it, which is exactly the
-``demand ratio is known in advance'' property that distinguishes RL from chat serving.
+\subsection{What the Controller Observes}
+\label{sec:inputs}
 
-Two disciplines make a predictive trigger safe. First, the signal describes the
-\emph{remaining} work: once the prompts have been sampled the residual is decode-shaped,
-the prefill hint expires, and D$\to$P stops re-firing. Second, the reverse switch
-additionally requires the prefill backlog to be clear, so a revert cannot withdraw
-capacity from a phase the training loop has declared to be in progress. Without both, the
-pair oscillates at the minimum-switch-interval cadence rather than converging---a failure
-we observed and corrected during the final measurement round.
+One periodic loop drives everything, over three inputs.
 
-\subsection{Composing the Two Primitives}
-\label{sec:composition}
+\noindent\textbf{The RL phase signal.} The training job posts
+\texttt{sampling\_progress}, carrying the completed fraction of the batch together with
+its shape---batch size, average input length, average output length---and
+\texttt{sampling\_done} and \texttt{batch\_complete} at the boundaries. The shape fields
+are what make the signal predictive rather than merely descriptive: a batch whose average
+input length is large announces prefill demand before any request has queued.
 
-Run together, S2 and S3 interact in one specific way: a P$\to$D switch rebuilds an empty
-decoder, which S3 immediately sees as a release candidate. Two disciplines de-conflict
-them. The \emph{cordon settle} interval already described (Section~\ref{sec:idle-release-mech})
-separates withdrawal from scale-down. A \emph{stability requirement} then demands several
-consecutive idle observations, plus a minimum interval between actions, before a decoder
-may be released---so a decoder that has just been restored is not immediately reclaimed.
-The combined policy is therefore not merely the union of two mechanisms but a small
-protocol between them, and Section~\ref{sec:eval} reports both what it buys and what it
-costs.
+\noindent\textbf{Cluster state.} The worker CRs give the current membership and the
+runtime role of every pod, and the Deployment objects give the replica counts the
+controller may change.
+
+\noindent\textbf{Live load.} Each worker's sidecar reports its active-request count and
+token progress; Prometheus supplies frontend queue depth per role and KV-cache occupancy.
+From these the loop derives, each tick, a prefill and decode queue depth and a utilisation
+per pool, falling back to in-flight counts when a metric is unavailable so that a scrape
+failure degrades the policy rather than disabling it.
+
+\subsection{The Decision Rules}
+\label{sec:rules}
+
+On each tick the loop evaluates placement, then role, then allocation. The order is
+deliberate: consolidation may empty a decoder, which changes the idleness that the role
+rule reads, which in turn changes the replica count the allocation rule sees.
+
+\noindent\textbf{S1 --- allocation.} A four-state machine follows the rollout lifecycle.
+\texttt{IDLE} $\rightarrow$ \texttt{WARM\_UP} on the first signal of a batch, which raises
+replicas so the engines load; \texttt{WARM\_UP} $\rightarrow$ \texttt{ACTIVE} once the
+workers report Ready; \texttt{ACTIVE} $\rightarrow$ \texttt{COOL\_DOWN} on
+\texttt{batch\_complete}; and \texttt{COOL\_DOWN} $\rightarrow$ \texttt{IDLE} after a grace
+period, or back to \texttt{WARM\_UP} if a further batch arrives first. The grace period is
+what keeps consecutive batches warm, so the cold-start cost is paid once per rollout
+rather than once per batch.
+
+\noindent\textbf{S2 --- role.} A decoder is converted to prefill when three conditions
+hold together: the prefill queue depth reaches a threshold, the decode pool's utilisation
+is at or below an idleness bound, and more than the minimum number of decoders remain. The
+reverse conversion requires the symmetric three---decode queue depth above threshold,
+prefill pool idle, more than the minimum number of prefill workers---and one additional
+condition discussed in Section~\ref{sec:interlocks}. The target is the most idle eligible
+worker, and a minimum interval between switches bounds how often the topology may change.
+
+Because the prefill queue is the trigger for the forward direction, how it is measured
+decides whether the mechanism can fire at all. Measured reactively it never rises on this
+stack: prefill completes fast enough that the frontend's prefill queue stays at zero
+through a burst of dozens of prompts while the decode queue climbs to match the burst
+size. The controller therefore also derives a prefill-pressure term from the phase
+signal---proportional to the announced batch size when the announced input length is
+large---and takes the larger of the two. This is the concrete form of the ``demand is
+known in advance'' property that distinguishes an RL rollout from chat traffic: the
+switch is issued because the batch was announced, not because a queue has already built.
+
+\noindent\textbf{S3 --- placement.} While a batch is active, the controller pairs the
+most-progressed request on a lightly-loaded decoder with the least-loaded eligible peer
+and issues the three-phase migration. A decoder that reports no active requests for
+several consecutive samples is then cordoned and, after the settle interval, scaled down.
+
+\subsection{Keeping the Levers from Interfering}
+\label{sec:interlocks}
+
+Run together, S2 and S3 interact in two specific ways, each closed by one rule.
+
+\noindent\textbf{A restored decoder must not be immediately reclaimed.} A
+prefill-to-decode conversion produces a decoder with no active requests, which is exactly
+S3's release condition. Requiring several consecutive idle observations, plus a minimum
+interval between release actions, ensures a decoder that has just been restored is given
+the chance to receive work before it is considered drained.
+
+\noindent\textbf{A conversion must not withdraw capacity from a phase still in progress.}
+The reverse switch additionally requires the prefill backlog to be clear. While the phase
+signal indicates that prompts are still being sampled, the derived prefill-pressure term
+keeps that backlog non-zero and the reverse switch is suppressed; once sampling completes
+the term expires on its own and the condition opens. Without this rule the two directions
+alternate at the minimum-interval cadence instead of converging, since each conversion
+creates the idleness that justifies the other.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Evaluation}
@@ -700,7 +774,7 @@ time), S3 on tail-phase GPU occupancy.
 \subsection{Quality Gate}
 \label{sec:quality}
 
-All scenarios are 100\% valid (0 HTTP 5xx, 0 timeout). Notably, \texttt{mixed} improved from 86.4\% (24$\times$5xx) to \textbf{100\% (0$\times$5xx), 3/3 stable} after the cordon-settle + desync fixes of Section~\ref{sec:composition}. All efficacy numbers below are computed on valid, complete runs only.
+All scenarios are 100\% valid (0 HTTP 5xx, 0 timeout). Notably, \texttt{mixed} improved from 86.4\% (24$\times$5xx) to \textbf{100\% (0$\times$5xx), 3/3 stable} after the cordon-settle + desync fixes of Section~\ref{sec:interlocks}. All efficacy numbers below are computed on valid, complete runs only.
 
 \subsection{A Measurement Confound Stated Up Front}
 \label{sec:confound}
