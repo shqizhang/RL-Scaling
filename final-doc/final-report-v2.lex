@@ -308,44 +308,49 @@ Because the operation has internal sequencing constraints, the implementation is
 
 \texttt{DualModeWorker.switch\_role(target)} runs under a per-worker async lock and proceeds through eight deterministic states; each transition is timed and surfaced in the JSON response's \texttt{timings\_ms} field. Figure~\ref{fig:role-switch} illustrates the state machine. Excluding the \texttt{register\_mdc} control-plane round-trip (${\sim}309$\,ms, a Kubernetes \texttt{apply}, a physical floor rather than engine work), the engine steps total only ${\sim}115$\,ms: sleep 58, wake 27, cordon 16, flush 7, reconfig-NIXL 5, reset-prefix-cache 2 (Table~\ref{tab:switchcost}).
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \scriptsize
 \begin{tikzpicture}[
-  node distance=2.6mm,
-  box/.style={draw, rounded corners=1pt, align=center, inner sep=1.6pt,
-              font=\scriptsize, minimum height=4.2mm, text width=20mm},
+  node distance=3.0mm,
+  box/.style={draw, rounded corners=1pt, align=center, inner sep=2pt,
+              font=\scriptsize, minimum height=4.4mm, text width=26mm},
   env/.style={box, fill=blue!8},
-  core/.style={box, fill=green!10},
-  ann/.style={font=\tiny, align=left, text width=24mm},
-  arr/.style={-{Latex[length=1.3mm]}, shorten >=0.4pt}]
-\node[env] (c)  {(1) cordon\\tiny 16\,ms};
-\node[env, below=of c] (d) {(2) drain to idle\\tiny load-dependent};
-\node[env, below=of d] (s) {(3) settle 0.5\,s\\tiny no arrival};
-\node[env, below=of s] (k) {(4) outbound-KV\wait $\le$8\,s};
-\node[core, below=of k] (sl) {(5) sleep(2)\\tiny 58\,ms};
-\node[core, below=of sl] (rn) {(6) reconfig\_nixl\\tiny 5\,ms};
-\node[core, below=of rn] (rp) {(7) reset\_prefix\\tiny 2\,ms};
-\node[env, below=of rp] (rg) {(8) register\_mdc\\tiny 309\,ms};
-\node[env, below=of rg] (w) {(9) wake\\tiny 27\,ms};
-\foreach \a/\b in {c/d, d/s, s/k, k/sl, sl/rn, rn/rp, rp/rg, rg/w}
-  \draw[arr] (\a) -- (\b);
+  core/.style={box, fill=green!12},
+  ann/.style={font=\tiny, align=left, text width=26mm, inner sep=1pt},
+  arr/.style={-{Latex[length=1.3mm]}}]
+\node[env] (c) {(1) cordon, 16\,ms};
+\node[env, below=of c] (d) {(2) drain to idle};
+\node[env, below=of d] (s) {(3) settle 0.5\,s};
+\node[env, below=of s] (k) {(4) outbound-KV wait};
+\node[core, below=of k] (sl) {(5) sleep(2), 58\,ms};
+\node[core, below=of sl] (rn) {(6) reconfig\_nixl, 5\,ms};
+\node[core, below=of rn] (rp) {(7) reset\_prefix, 2\,ms};
+\node[env, below=of rp] (rg) {(8) register\_mdc, 309\,ms};
+\node[env, below=of rg] (w) {(9) wake, 27\,ms};
+\draw[arr] (c) -- (d);
+\draw[arr] (d) -- (s);
+\draw[arr] (s) -- (k);
+\draw[arr] (k) -- (sl);
+\draw[arr] (sl) -- (rn);
+\draw[arr] (rn) -- (rp);
+\draw[arr] (rp) -- (rg);
+\draw[arr] (rg) -- (w);
 \node[ann, right=3mm of c]  {withdraw the old-role ModelCard \emph{first}};
 \node[ann, right=3mm of d]  {in-flight requests finish naturally};
 \node[ann, right=3mm of s]  {continuous idle $\Rightarrow$ router converged};
 \node[ann, right=3mm of k]  {no peer still pulling KV we produced};
-\node[ann, right=3mm of sl] {frees GPU KV blocks};
+\node[ann, right=3mm of sl] {frees the GPU KV blocks};
 \node[ann, right=3mm of rp] {reset while asleep: no stale hit};
 \node[ann, right=3mm of rg] {publish only in the target role};
 \node[ann, right=3mm of w]  {\textbf{total 941\,ms} (884--1005)};
-\draw[dashed, gray] ($(c.north west)+(-1.5mm,1.5mm)$) rectangle ($(w.south east)+(1.5mm,-1.5mm)$);
-\node[font=\tiny, gray, anchor=west] at ($(c.north west)+(-1.5mm,3.5mm)$)
-  {dispatcher \textbf{holds} any arrival between (1) and (8), serving it under the pre-switch role};
 \end{tikzpicture}
 \caption{The deployed two-layer \texttt{switch\_role} protocol, annotated with the
-10-switch means of Table~\ref{tab:switchcost}. Blue = zero-loss envelope, green = engine
-core. This \emph{replaces} the mid-report state machine, which ordered \texttt{sleep}
-before \texttt{unregister\_mdc} and omitted steps (2)--(4) --- the three steps that
+10-switch means of Table~\ref{tab:switchcost}. Blue = zero-loss envelope,
+green = engine core; the dispatcher \textbf{holds} any request arriving between
+(1) and (8) and serves it under the pre-switch role. This \emph{replaces} the
+mid-term state machine, which ordered \texttt{sleep} before
+\texttt{unregister\_mdc} and omitted steps (2)--(4) --- the three steps that
 account for 89\% of the measured cost.}
 \label{fig:role-switch}
 \end{figure}
@@ -598,27 +603,29 @@ Read against the mid-term's 453\,ms (light load, no envelope) and this project's
 
 \noindent\textbf{Queue timing: the mechanism is correct, the benefit is not there.} The report guide asks specifically whether the switch improves prefill-burst queue timing, so the final harness promotes the frontend's \texttt{nvext} timings into every request row and measures it directly instead of inferring it from wall clock. Against the same-round \texttt{static\_2p2d} control, phase-A time-to-first-token does \emph{not} improve: p95 $2878\rightarrow2870$, $2656\rightarrow2628$, $2597\rightarrow2609$\,ms across the three rounds---under 1\% in every case---while the A-phase service window is 8--16\,s \emph{longer} with the switch ($38.2\rightarrow53.9$, $35.5\rightarrow44.0$, $39.4\rightarrow49.7$\,s). The earlier order-controlled interleaved suite, a different workload with a different phase design, reaches the same verdict independently: \texttt{s2\_only}'s prefill-phase wall is $-3.8\%$ versus its equal-topology control, i.e.\ no gain.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \centering
-\caption{Per-phase comparison against the equal-topology control (3-run means). Every difference is the \emph{mechanism}, not the GPU count.}
+\caption{Per-phase comparison against the equal-topology control (3-run means).
+Because the control has the same GPU count, every difference is the
+\emph{mechanism} rather than the topology.}
 \label{tab:perphase-s2}
 \scriptsize
 \begin{tabularx}{\linewidth}{@{}lLRRR@{}}
 \toprule
-Phase & Metric & static & s2\_only & $\Delta$ \
+Phase & Metric & static & s2\_only & $\Delta$ \\
 \midrule
-\multirow{4}{*}{A prefill} & prefill-queue wait p50 & 29.5\,ms & \textbf{24.7\,ms} & \textbf{$-16.2\%$} \
- & TTFT p95 & 2710\,ms & 2702\,ms & $-0.3\%$ \
- & service window & 37.7\,s & 49.2\,s & $+30.5\%$ \
- & latency p95 & 37.6\,s & 46.9\,s & $+25.0\%$ \
+A prefill & prefill-queue wait p50 & 29.5\,ms & \textbf{24.7\,ms} & \textbf{$-16.2\%$} \\
+          & TTFT p95 & 2710\,ms & 2702\,ms & $-0.3\%$ \\
+          & service window & 37.7\,s & 49.2\,s & $+30.5\%$ \\
+          & latency p95 & 37.6\,s & 46.9\,s & $+25.0\%$ \\
 \midrule
-\multirow{3}{*}{B decode} & TTFT p50 & 327\,ms & \textbf{291\,ms} & \textbf{$-10.8\%$} \
- & service window & 22.9\,s & 25.3\,s & $+10.3\%$ \
- & latency p50 & 18.9\,s & 20.3\,s & $+7.3\%$ \
+B decode  & TTFT p50 & 327\,ms & \textbf{291\,ms} & \textbf{$-10.8\%$} \\
+          & service window & 22.9\,s & 25.3\,s & $+10.3\%$ \\
+          & latency p50 & 18.9\,s & 20.3\,s & $+7.3\%$ \\
 \midrule
-\multirow{3}{*}{C tail} & latency p50 & 33.8\,s & \textbf{27.9\,s} & \textbf{$-17.5\%$} \
- & TTFT p95 & 415\,ms & \textbf{262\,ms} & \textbf{$-36.8\%$} \
- & service window & 37.9\,s & 37.1\,s & $-1.9\%$ \
+C tail    & latency p50 & 33.8\,s & \textbf{27.9\,s} & \textbf{$-17.5\%$} \\
+          & TTFT p95 & 415\,ms & \textbf{262\,ms} & \textbf{$-36.8\%$} \\
+          & service window & 37.9\,s & 37.1\,s & $-1.9\%$ \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -637,21 +644,23 @@ Phase & Metric & static & s2\_only & $\Delta$ \
 \end{itemize}
 Table~\ref{tab:perphase} shows why: in phase C, \texttt{static} holds 2.00 decode GPUs busy on 3 stragglers while \texttt{s3\_only} consolidates them and releases a decoder to 1.00. p95 latency also improves ($32.3\to23.6$\,s). This is the efficacy proof for the tail-waste half of the objective, with $t\approx-100$: decode-phase GPU occupancy is directly and significantly lowered.
 
-\begin{table}[t]
+\begin{table}[htbp]
 \centering
-\caption{The consolidation evidence chain (3-run means). Links 4--6 close arithmetically: releasing one decoder 12.23\,s early predicts 12.2\,GPU$\cdot$s and the independently integrated occupancy series measures 9.89.}
+\caption{The consolidation evidence chain (3-run means). Links 4--6 close
+arithmetically: releasing one decoder 12.23\,s early predicts 12.2\,GPU$\cdot$s
+and the independently integrated occupancy series measures 9.89.}
 \label{tab:s3chain}
 \scriptsize
 \begin{tabularx}{\linewidth}{@{}LLRR@{}}
 \toprule
-Link & Evidence & static & s3\_only \
+Link & Evidence & static & s3\_only \\
 \midrule
-1. migration happened & \texttt{migrated\_requests} & 0.00 & \textbf{1.00} \
-2. source drained & \texttt{drained\_source\_count} & 0.00 & \textbf{1.00} \
-3. request completed & finish reason & --- & normal \
-4. pool shrank & \texttt{min\_decode\_replicas} & 2.00 & \textbf{1.00} \
-5. freed early & \texttt{release\_lead\_s} & 0.00 & \textbf{12.23} \
-6. GPU time saved & \texttt{total\_gpu\_s} & 331.49 & \textbf{321.60} \
+1. migration happened & \texttt{migrated\_requests} & 0.00 & \textbf{1.00} \\
+2. source drained & \texttt{drained\_sources} & 0.00 & \textbf{1.00} \\
+3. request completed & finish reason & --- & normal \\
+4. pool shrank & \texttt{min\_decode\_replicas} & 2.00 & \textbf{1.00} \\
+5. freed early & \texttt{release\_lead\_s} & 0.00 & \textbf{12.23} \\
+6. GPU time saved & \texttt{total\_gpu\_s} & 331.49 & \textbf{321.60} \\
 \bottomrule
 \end{tabularx}
 \end{table}
