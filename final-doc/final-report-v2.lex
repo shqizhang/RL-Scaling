@@ -580,57 +580,68 @@ surviving stragglers onto fewer decoders as the batch drains; and release the fr
 once the batch completes. The remainder of this section states what the controller
 observes, the rule each lever applies, and how the three are kept from interfering.
 
-\begin{figure}[htbp]
+\begin{figure*}[t]
 \centering
 \scriptsize
 \begin{tikzpicture}[
-  node distance=3mm,
-  st/.style={draw, rounded corners=2pt, fill=blue!8, align=center,
-             font=\scriptsize, minimum height=5mm, text width=15mm},
-  pol/.style={draw, rounded corners=1pt, fill=green!12, align=center,
-              font=\scriptsize, minimum height=4.4mm, text width=30mm},
-  act/.style={draw, dashed, rounded corners=1pt, align=center,
-              font=\tiny, minimum height=4mm, text width=30mm},
-  lbl/.style={font=\tiny, align=center},
-  ar/.style={-{Latex[length=1.2mm]}}]
+  node distance=4mm,
+  sig/.style={draw, rounded corners=2pt, fill=gray!10, align=center,
+              font=\scriptsize, minimum height=6mm, text width=24mm},
+  pol/.style={draw, rounded corners=2pt, fill=green!12, align=center,
+              font=\scriptsize, minimum height=6mm, text width=32mm},
+  act/.style={draw, dashed, rounded corners=2pt, align=left,
+              font=\tiny, minimum height=5mm, text width=42mm},
+  st/.style={draw, rounded corners=3pt, fill=blue!10, align=center,
+             font=\scriptsize, minimum height=6mm, text width=20mm},
+  cond/.style={font=\tiny, align=center, inner sep=1pt},
+  ar/.style={-{Latex[length=1.4mm]}},
+  dar/.style={-{Latex[length=1.4mm]}, dashed}]
 
-\node[pol] (s3) {(1) S3 consolidation};
-\node[pol, below=of s3] (s2) {(2) S2 role switch};
-\node[pol, below=of s2] (s1) {(3) S1 cluster scaling};
+% --- signal source -------------------------------------------------------
+\node[sig] (rl) {RL training job};
+\node[pol, right=22mm of rl] (s3) {\ding{182}~S3 placement};
+\node[pol, below=of s3] (s2) {\ding{183}~S2 role};
+\node[pol, below=of s2] (s1) {\ding{184}~S1 allocation};
 \draw[ar] (s3) -- (s2);
 \draw[ar] (s2) -- (s1);
-\node[lbl, above=1.5mm of s3] (tick) {one periodic loop, every tick};
-\node[lbl, above=1.5mm of tick] (sig)
-  {RL phase signal: \texttt{sampling\_progress}, \texttt{sampling\_done}, \texttt{batch\_complete}};
-\draw[ar] (sig) -- (tick);
+\draw[ar] (rl) -- node[cond, above, text width=26mm]
+  {\texttt{sampling\_progress}\\\texttt{sampling\_done}\\\texttt{batch\_complete}} (s3);
+\node[draw, dotted, thick, fit=(s3)(s2)(s1), inner sep=3mm] (loop) {};
+\node[cond, above=0.5mm of loop.north] {one periodic loop; every tick, in this order};
 
-\node[act, right=5mm of s3] (mig) {migrate most-progressed request; when a decoder is drained: cordon, settle, scale down};
-\node[act, right=5mm of s2] (sw) {D$\to$P when prefill pressure is high and decode idle; P$\to$D on the reverse};
-\draw[ar, dashed] (s3) -- (mig);
-\draw[ar, dashed] (s2) -- (sw);
+% --- actions -------------------------------------------------------------
+\node[act, right=26mm of s3] (mg) {$\Rightarrow$ \texttt{/migrate}: most-progressed request $\to$ least-loaded peer};
+\node[act, below=2mm of mg] (rls) {$\Rightarrow$ cordon, settle, scale down: when a decoder is drained};
+\node[act, right=26mm of s2] (dp) {$\Rightarrow$ \texttt{/switch\_role} D$\to$P: prefill backlog reached, decode idle};
+\node[act, below=2mm of dp] (pd) {$\Rightarrow$ \texttt{/switch\_role} P$\to$D: decode backlog reached, prefill idle and clear};
+\draw[dar] (s3.east) -- (mg.west);
+\draw[dar] (s3.east) -- (rls.west);
+\draw[dar] (s2.east) -- (dp.west);
+\draw[dar] (s2.east) -- (pd.west);
 
-\node[st, below=7mm of s1] (idle) {IDLE};
-\node[st, right=6mm of idle] (warm) {WARM\_UP};
-\node[st, right=6mm of warm] (active) {ACTIVE};
-\node[st, right=6mm of active] (cool) {COOL\_DOWN};
-\draw[ar] (idle) -- (warm);
-\draw[ar] (warm) -- (active);
-\draw[ar] (active) -- (cool);
-\draw[ar] (cool.south) to[out=250,in=290] (idle.south);
-\draw[ar] (cool.north) to[out=110,in=70] (warm.north);
-\draw[ar] (s1) -- (idle);
-\node[lbl, below=6mm of warm] {S1 alters the deployment's \emph{size} over a rollout; S2 and S3 alter its \emph{shape} within a phase};
+% --- S1 state machine ----------------------------------------------------
+\node[st, below=14mm of rl] (idle) {IDLE\\\tiny no GPUs held};
+\node[st, right=13mm of idle] (warm) {WARM\_UP\\\tiny scaled up, not Ready};
+\node[st, right=13mm of warm] (act) {ACTIVE\\\tiny Ready, serving};
+\node[st, right=13mm of act] (cool) {COOL\_DOWN\\\tiny batch done, grace};
+\draw[ar] (idle) -- node[cond, above] {new batch} (warm);
+\draw[ar] (warm) -- node[cond, above] {Ready} (act);
+\draw[ar] (act) -- node[cond, above] {\texttt{batch\_complete}} (cool);
+\draw[ar] (cool.south) to[out=250, in=290] node[cond, below] {grace elapsed} (idle.south);
+\draw[ar] (cool.north) to[out=110, in=70] node[cond, above] {new batch, pods still warm} (warm.north);
+\draw[ar] (warm.south) to[out=310, in=230] node[cond, below] {pre-warm cancelled} (cool.south);
+\draw[ar] (s1.west) to[out=180, in=90] (idle.north);
+\node[cond, right=3mm of cool, text width=26mm]
+  {S2 and S3 act only while the batch is \textsc{active}; S1 alone changes how many GPUs are held};
 \end{tikzpicture}
-\caption{The RL-driven control plane as implemented. A single periodic loop
-consumes the training job's phase signal and takes three decisions per tick,
-in this order: consolidation, role switch, cluster scaling. Only cluster
-scaling is a state machine (four states over the rollout lifecycle); S2 and S3
-are policies re-evaluated every tick while the batch is active, so both may act
-in the same tick. This replaces the mid-term figure, which drew rebalancing and
-consolidation as sequential \emph{states} of one machine and gated consolidation
-on a training signal.}
+\caption{The control plane as implemented. A single periodic loop consumes the training
+job's phase signal and evaluates three policies per tick, in the order shown: placement
+(S3), role (S2), then allocation (S1). Only allocation is a state machine; S2 and S3 are
+re-evaluated every tick while a batch is active, so both may act in the same tick, which is
+why the interlocks of Section~\ref{sec:interlocks} are required. Dashed edges are the
+actions each policy may issue.}
 \label{fig:rl-controller}
-\end{figure}
+\end{figure*}
 
 \subsection{What the Controller Observes}
 \label{sec:inputs}
@@ -658,40 +669,95 @@ failure degrades the policy rather than disabling it.
 \label{sec:rules}
 
 On each tick the loop evaluates placement, then role, then allocation. The order is
-deliberate: consolidation may empty a decoder, which changes the idleness that the role
-rule reads, which in turn changes the replica count the allocation rule sees.
+deliberate: consolidation may empty a decoder, which changes the idleness the role rule
+reads, which in turn changes the replica count the allocation rule sees.
+
+\noindent\textbf{The two quantities every rule is written in.} Let $\mathcal{P}$ and
+$\mathcal{D}$ be the sets of pods currently holding the prefill and decode roles, $n_i$ the
+number of requests in flight on pod $i$, and $c$ the per-worker concurrency limit
+($c=64$ here). Pool occupancy is the fraction of admitted slots in use,
+\begin{equation}
+U_r \;=\; \min\!\left(1,\;
+\frac{\sum_{i \in r} n_i}{\max(1,\,|r|\cdot c)}\right),
+\qquad r \in \{\mathcal{P}, \mathcal{D}\},
+\label{eq:util}
+\end{equation}
+and a pool is called \emph{idle} when $U_r \le \theta_r$, with $\theta_r$ a configured
+bound. Writing idleness as an occupancy fraction rather than an absolute count is what
+makes the rule independent of pool size: a single request on a two-decoder pool and two
+requests on a four-decoder pool are equally idle, and the same threshold governs both.
+
+Backlog is the work admitted to the frontend but not yet placed on a worker. It is read
+from the frontend's per-role queue gauge, falling back to in-flight counts when that
+metric is unavailable, and---for the prefill side only---combined with a term derived from
+the phase signal:
+\begin{equation}
+Q_{\mathcal{P}} \;=\; \max\!\Big(q_{\mathcal{P}},\;
+\underbrace{\lceil B/c \rceil \cdot \mathbf{1}\big[\bar{L}_{\text{in}} \ge L^{*}\big]}_{\text{announced by the RL signal}}\Big),
+\qquad
+Q_{\mathcal{D}} \;=\; q_{\mathcal{D}},
+\label{eq:backlog}
+\end{equation}
+where $q_r$ is the observed queue depth, $B$ the announced batch size and
+$\bar{L}_{\text{in}}$ its announced average input length. The indicator fires only for
+prompt-heavy batches ($L^{*}=1024$ tokens), and the term expires when a later signal
+reports that the remaining work is no longer prompt-heavy. Equation~\ref{eq:backlog} is
+where the ``demand is known in advance'' property enters the policy quantitatively: the
+prefill backlog a rollout is \emph{about to} create is admitted as evidence alongside the
+backlog it has already created.
 
 \noindent\textbf{S1 --- allocation.} A four-state machine follows the rollout lifecycle.
-\texttt{IDLE} $\rightarrow$ \texttt{WARM\_UP} on the first signal of a batch, which raises
-replicas so the engines load; \texttt{WARM\_UP} $\rightarrow$ \texttt{ACTIVE} once the
-workers report Ready; \texttt{ACTIVE} $\rightarrow$ \texttt{COOL\_DOWN} on
-\texttt{batch\_complete}; and \texttt{COOL\_DOWN} $\rightarrow$ \texttt{IDLE} after a grace
-period, or back to \texttt{WARM\_UP} if a further batch arrives first. The grace period is
-what keeps consecutive batches warm, so the cold-start cost is paid once per rollout
-rather than once per batch.
+\textsc{idle} $\rightarrow$ \textsc{warm\_up} on the first signal of a batch, which raises
+replicas so the engines load; \textsc{warm\_up} $\rightarrow$ \textsc{active} once the
+workers report Ready; \textsc{active} $\rightarrow$ \textsc{cool\_down} on
+\texttt{batch\_complete}; and \textsc{cool\_down} $\rightarrow$ \textsc{idle} after a grace
+period, or back to \textsc{warm\_up} if a further batch arrives first. The grace period is
+what keeps consecutive batches warm, so cold start is paid once per rollout rather than
+once per batch.
 
-\noindent\textbf{S2 --- role.} A decoder is converted to prefill when three conditions
-hold together: the prefill queue depth reaches a threshold, the decode pool's utilisation
-is at or below an idleness bound, and more than the minimum number of decoders remain. The
-reverse conversion requires the symmetric three---decode queue depth above threshold,
-prefill pool idle, more than the minimum number of prefill workers---and one additional
-condition discussed in Section~\ref{sec:interlocks}. The target is the most idle eligible
-worker, and a minimum interval between switches bounds how often the topology may change.
+\noindent\textbf{S2 --- role.} A decoder is converted to prefill when
+\begin{equation}
+Q_{\mathcal{P}} \ge \tau_{\mathcal{P}}
+\;\wedge\;
+U_{\mathcal{D}} \le \theta_{\mathcal{D}}
+\;\wedge\;
+|\mathcal{D}| > D_{\min},
+\label{eq:d2p}
+\end{equation}
+and a prefill worker is converted back to decode when
+\begin{equation}
+Q_{\mathcal{D}} \ge \tau_{\mathcal{D}}
+\;\wedge\;
+U_{\mathcal{P}} \le \theta_{\mathcal{P}}
+\;\wedge\;
+\underbrace{Q_{\mathcal{P}} < \tau_{\mathcal{P}}}_{\text{backlog clear}}
+\;\wedge\;
+|\mathcal{P}| > P_{\min}.
+\label{eq:p2d}
+\end{equation}
+Each conjunct rules out one way of making the topology worse. The backlog term establishes
+that the destination pool is actually short of capacity; the occupancy term establishes
+that the source pool can spare a worker, so the switch does not create the shortage it is
+meant to relieve; and the cardinality term preserves a minimum of each role, without which
+a pool could be emptied and the deployment would cease to serve. The extra conjunct in
+Equation~\ref{eq:p2d} is discussed in Section~\ref{sec:interlocks}. The target is the
+eligible worker with the fewest in-flight requests, which minimises the drain the protocol
+must wait for, and a minimum interval between switches bounds how often the topology may
+change.
 
-Because the prefill queue is the trigger for the forward direction, how it is measured
-decides whether the mechanism can fire at all. Measured reactively it never rises on this
-stack: prefill completes fast enough that the frontend's prefill queue stays at zero
-through a burst of dozens of prompts while the decode queue climbs to match the burst
-size. The controller therefore also derives a prefill-pressure term from the phase
-signal---proportional to the announced batch size when the announced input length is
-large---and takes the larger of the two. This is the concrete form of the ``demand is
-known in advance'' property that distinguishes an RL rollout from chat traffic: the
-switch is issued because the batch was announced, not because a queue has already built.
+Equation~\ref{eq:d2p} also explains why the first term of Equation~\ref{eq:backlog} is
+insufficient on its own. Measured reactively, $q_{\mathcal{P}}$ never rises on this stack:
+prefill completes fast enough that the frontend's prefill queue remains at zero throughout
+a burst of dozens of prompts, while the decode queue climbs to the burst size. Without the
+signal-derived term the conjunction is never satisfied and the mechanism, though correct,
+would never fire.
 
 \noindent\textbf{S3 --- placement.} While a batch is active, the controller pairs the
-most-progressed request on a lightly-loaded decoder with the least-loaded eligible peer
-and issues the three-phase migration. A decoder that reports no active requests for
-several consecutive samples is then cordoned and, after the settle interval, scaled down.
+most-progressed request on a lightly-loaded decoder with the least-loaded eligible peer and
+issues the three-phase migration. A decoder observed with $n_i = 0$ on several consecutive
+ticks is then cordoned and, after the settle interval, scaled down. Requiring consecutive
+observations rather than a single one distinguishes a decoder that has genuinely finished
+from one that is momentarily between requests.
 
 \subsection{Keeping the Levers from Interfering}
 \label{sec:interlocks}
@@ -1055,5 +1121,5 @@ X.~Miao, C.~Shi, J.~Duan, et~al., ``SpotServe: Serving Generative Large Language
 
 \end{thebibliography}
 }
-\includepdf[pages=-]{meeting-minutes.pdf}
+
 \end{document}
