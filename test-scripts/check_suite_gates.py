@@ -46,14 +46,48 @@ def _log_epoch(stamp: str) -> float:
 def parse_switches(run_dir: Path) -> list[dict]:
     log = run_dir / "logs" / "controller.log"
     out: list[dict] = []
-    if not log.exists():
+    if log.exists():
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = _SWITCH_RE.match(line)
+            if m:
+                out.append({"ts": _log_epoch(m.group(1)),
+                            "new_role": m.group(2),
+                            "switch_time_ms": float(m.group(3))})
+    if out:
         return out
-    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-        m = _SWITCH_RE.match(line)
-        if m:
-            out.append({"ts": _log_epoch(m.group(1)),
-                        "new_role": m.group(2),
-                        "switch_time_ms": float(m.group(3))})
+    # Fallback: the captured controller log is tail-truncated, so a long run
+    # can lose its own switch lines and look switch-less to G2/G3/G4. The
+    # sampled controller status carries the authoritative switch records; date
+    # each one by the first status sample it appeared in (bounded by the ~1s
+    # sampling interval, which is far finer than the phase windows G3 checks).
+    return switches_from_status(run_dir)
+
+
+def switches_from_status(run_dir: Path) -> list[dict]:
+    status = run_dir / "controller_status.jsonl"
+    if not status.exists():
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for line in status.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts = float(row.get("ts") or 0.0)
+        history = ((row.get("status") or {}).get("strategy") or {}).get("s2_history") or []
+        for item in history:
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key in seen or not item.get("executed"):
+                continue
+            seen.add(key)
+            result = item.get("result") or {}
+            out.append({"ts": ts,
+                        "new_role": result.get("new_role") or item.get("to_role"),
+                        "switch_time_ms": float(result.get("switch_time_ms") or 0.0),
+                        "source": "status_sample"})
     return out
 
 

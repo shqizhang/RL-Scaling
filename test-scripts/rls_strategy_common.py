@@ -1052,7 +1052,12 @@ def capture_logs(out_dir: Path, since_iso: str) -> None:
     errors: list[str] = []
     try:
         controller = kubectl(
-            ["logs", "-n", CONTROLLER_NS, "-l", f"app={CONTROLLER_DEPLOY}", f"--since-time={since_iso}", "--tail=2600"],
+            # The controller emits ~6 httpx INFO lines/second, so --tail=2600
+            # only covers the last ~3.5 min: a long run (e.g. one that hits the
+            # straggler timeout) silently loses its own switch lines, and the
+            # gate checker then reports "no switches" for a run that switched
+            # correctly. Keep an hour of chatter.
+            ["logs", "-n", CONTROLLER_NS, "-l", f"app={CONTROLLER_DEPLOY}", f"--since-time={since_iso}", "--tail=20000"],
             timeout=120,
             check=False,
         )
