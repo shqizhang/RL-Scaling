@@ -101,6 +101,16 @@ done
 kubectl -n "$NS_WORKERS" patch dgd vllm-v1-disagg-router --type merge -p \
   "{\"spec\":{\"services\":{\"VllmDecodeWorker\":{\"extraPodSpec\":{\"mainContainer\":{\"image\":\"$NEW_IMAGE\"}}},\"VllmPrefillWorker\":{\"extraPodSpec\":{\"mainContainer\":{\"image\":\"$NEW_IMAGE\"}}}}}}" \
   2>/dev/null || echo "note: DGD patch skipped (schema/CRD mismatch is fine — operator is at 0)"
+# Between suites the controller's cool-down leaves both worker Deployments at
+# replicas=0, so `rollout status` passes trivially and no pod ever runs the new
+# image — the verification below would fail on an otherwise-correct deploy.
+# Bring one replica of each up so the image is actually exercised (crashloop,
+# bad NIXL wheel, etc. surface here rather than 20 min into the suite); the
+# suite's own prewarm sets the real per-scenario topology afterwards.
+for D in "$DECODE_DEPLOY" "$PREFILL_DEPLOY"; do
+  REPLICAS=$(kubectl -n "$NS_WORKERS" get "$D" -o jsonpath='{.spec.replicas}')
+  [ "${REPLICAS:-0}" -ge 1 ] || kubectl -n "$NS_WORKERS" scale "$D" --replicas=1
+done
 for D in "$DECODE_DEPLOY" "$PREFILL_DEPLOY"; do
   kubectl -n "$NS_WORKERS" rollout status "$D" --timeout=600s
 done
