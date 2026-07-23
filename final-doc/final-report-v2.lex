@@ -65,7 +65,7 @@ Prefill--Decode (PD) disaggregation is the mainstream LLM inference architecture
 
 This report introduces two runtime primitives on Dynamo + vLLM~0.16, driven end-to-end by an RL-signal autoscaling controller: (1)~Elastic PD Role Switching---a state-machine-driven in-place protocol that flips a worker's role via ModelCard mutation and engine sleep/wake cycling, with no engine rebuild or pod redeploy; (2)~In-Flight Decoder Request Consolidation---a three-phase block-hold protocol that migrates running decode requests across GPUs with zero KV loss and then releases the drained decoders.
 
-Beyond confirming correctness, we evaluate efficacy with purpose-built phased workloads run across five topologies ($\times 3$ repeats) on a Kubernetes deployment of \texttt{Qwen3-0.6B}, attributing timing and GPU occupancy per rollout phase, and gate every suite on eight automated acceptance checks before it may be analysed. The results: all runs are 100\% valid (0 HTTP errors, 0 timeout); topology elasticity cuts batch makespan by \textbf{21.2\%} ($t=-9.98$); reclaiming drained decoders inside the rollout lowers tail-phase decode-GPU occupancy by \textbf{44.5\%} ($t=-103.9$) and average decode-GPU count by 22.1\%; and a role switch costs \textbf{941\,ms} with zero request loss, decomposed per protocol step. We also report two boundaries the data imposes rather than hiding them: role switching yields \emph{no} queue-timing benefit here---phase-A time-to-first-token stays within 1\% of the equal-topology control across two independent suites---because this fabric has no RDMA and the prefill phase is bounded by KV transport rather than prefill compute; and the 44.5\% is attributable to idle-release plus scale-down, since the runs producing it performed no live migration.
+Beyond confirming correctness, we evaluate efficacy on a Kubernetes deployment of \texttt{Qwen3-0.6B} with a phased workload that isolates each mechanism's regime in time, run across five topologies ($\times3$ repeats, interleaved and counterbalanced) and gated by eight automated acceptance checks. Because the elastic scenarios run at the same GPU count as a static control, every reported difference is attributable to the mechanism rather than to added resources. All 15 accepted runs are 100\% valid with zero HTTP errors and zero timeouts. Against that control, consolidation reclaims decode GPUs inside the rollout: the decode pool contracts from 2.00 to 1.00 replicas, the released GPU is freed $12.2$\,s before the batch ends, and whole-run GPU time falls by $9.9$\,GPU$\cdot$s---closing arithmetically against the $12.2$\,GPU$\cdot$s the release predicts---rising to $-44.5$\% of tail-phase decode-GPU$\cdot$s ($t=-103.9$) when the straggler phase is isolated. A role switch completes in $941$\,ms (range $884$--$1005$) with zero request loss, and costs only $0.27$\,s of additional makespan because the protocol time is absorbed by concurrency. We also report two boundaries the data imposes: role switching improves the quantity it targets (prefill routing wait $-16.2$\%) but that quantity is negligible on a fabric where KV transport, not prefill compute, bounds the burst; and the tail reclaim is attributable to releasing drained decoders, since the runs producing it performed no live migration.
 \end{abstract}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -124,11 +124,11 @@ By re-rolling idle GPUs into the currently-bottlenecked phase and by consolidati
 \label{sec:contributions}
 
 \begin{itemize}[nosep]
-\item (C1) A two-layer in-place role-switch protocol---an eight-step engine-core state machine wrapped in a zero-loss safety envelope (cordon-first, drain\,+\,settle, hold-during-switch, bounded outbound-KV drain)---that atomically transitions a worker between decode and prefill roles. Measured cost \textbf{941\,ms} per flip under in-flight load (engine steps ${\sim}115$\,ms; \texttt{register\_mdc} control-plane round-trip ${\sim}309$\,ms; drain\,+\,settle ${\sim}502$\,ms) at 100\% request validity.
+\item (C1) A two-layer in-place role-switch protocol---a five-stage engine core wrapped in a three-stage zero-loss envelope (cordon-first, drain\,+\,settle, hold-during-switch, bounded outbound-KV drain)---that atomically transitions a worker between decode and prefill roles. Measured cost \textbf{941\,ms} per flip under in-flight load (engine steps ${\sim}115$\,ms; \texttt{register\_mdc} control-plane round-trip ${\sim}309$\,ms; drain\,+\,settle ${\sim}502$\,ms) at 100\% request validity.
 \item (C2) A single-TCP-slot dispatcher for partner-prefill that lets the same vLLM engine serve both decode and prefill traffic at run-time without socket re-binding.
 \item (C3) A three-phase block-hold NIXL-pull migration protocol that consolidates running decoders with zero KV loss, bounded by a safety-net sweep timer.
 \item (C4) An RL-signal-driven autoscaling controller that dispatches the above primitives with a cordon-first quiesce/settle discipline that makes them composable without dropping requests.
-\item (C5) A phase-attributed end-to-end evaluation on a Kubernetes deployment of \texttt{Qwen3-0.6B} demonstrating both correctness (100\% valid across all scenarios) and efficacy (makespan $-21.2\%$; tail decode-GPU$\cdot$s $-44.5\%$), with an honest account of what could not be resolved at this scale.
+\item (C5) A phase-attributed evaluation in which every elastic scenario is compared against a static control at identical GPU count, gated by eight automated acceptance checks that rejected six suites before one was analysed. It establishes correctness (15/15 runs 100\% valid, zero 5xx, zero timeouts), quantifies consolidation end to end (decode replicas $2.00\to1.00$, GPU released $12.2$\,s early, whole-run $-9.9$\,GPU$\cdot$s, rising to $-44.5\%$ of tail decode-GPU$\cdot$s when the tail is isolated), and bounds the switch cost ($941$\,ms protocol, $0.27$\,s makespan), while reporting where the data refuses a claim.
 \end{itemize}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -160,10 +160,12 @@ The architecture consists of three core subsystems relevant to this work. The di
 
 For our autoscaling research, Dynamo's CR-based discovery provides the critical property that role changes can be made visible to the entire system through a single metadata mutation, without restarting pods or rebuilding engines.
 
-\subsection{KV Cache and Prefix Caching}
+\subsection{KV Cache, Prefix Caching, and the Coherence Problem}
 \label{sec:kv-cache}
 
-The KV cache stores the keys/values of every prior token so decode amortizes attention cost. Prefix caching~\cite{lmcache} reuses KV blocks across requests that share a prompt prefix. vLLM~0.16 keeps the cache index in CPU memory and the blocks pinned in GPU VRAM. This split is the coherence target of our role-switch protocol: the index can outlive the blocks when \texttt{engine.sleep(2)} releases them to the GPU allocator, and a stale hit at wake-up will corrupt a later request.
+Decode is only affordable because the keys and values of every prior token are retained: the KV cache turns a quadratic re-computation into an incremental one. Prefix caching~\cite{lmcache} extends the same idea across requests, reusing blocks whenever two prompts share a prefix. The implementation detail that matters for this work is that vLLM~0.16 splits the structure in two: an \emph{index} in CPU memory that maps token prefixes to block identifiers, and the \emph{blocks} themselves, pinned in GPU VRAM.
+
+That split is what makes an in-place role change delicate. Reclaiming a worker's GPU memory (via \texttt{engine.sleep(level=2)}) returns the blocks to the allocator but leaves the index intact, so the two halves can disagree: an index entry may point at a block that now belongs to a different request. A hit on such an entry after wake-up would silently splice another request's state into the current one. Any protocol that cycles the engine must therefore treat the index and the blocks as a single object and re-establish their agreement while the engine is quiescent---the constraint developed in Section~\ref{sec:ordering}. The same split has a second consequence used later: because the blocks are addressable GPU memory, a peer worker can read them directly over NIXL, which is the mechanism that makes live request migration possible at all (Section~\ref{sec:three-phase}).
 
 \subsection{Related Systems and Distinctions}
 \label{sec:related}
@@ -226,7 +228,7 @@ Rollout-driven cluster scaling serves as the foundation: it simulates hot-start 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{RL-controller.png}
-\caption{RL-Scaling controller architecture. The controller consumes phase signals from the RL training job and dispatches scaling primitives.}
+\caption{RL-Scaling control plane. One periodic loop consumes the training job's phase signal and takes three decisions per tick: consolidation (S3), role switch (S2), and cluster scaling (S1, a four-state machine over the rollout lifecycle). S1 changes the deployment's size; S2 and S3 change its shape without cold-starting a pod.}
 \label{fig:rl-controller}
 \end{figure}
 
@@ -270,20 +272,6 @@ The key invariant for dual-mode operation is: one pod, one engine, one TCP slot-
 
 The \texttt{switch\_role} operation never reopens any socket; it only renames the entry that the frontend's \texttt{ModelWatcher} observes in the worker CR.
 
-\subsection{Request Path}
-\label{sec:request-path}
-
-A single chat request traverses the system in the following ordered steps:
-
-\begin{enumerate}[nosep]
-\item The client issues \texttt{POST /v1/chat/completions} to the frontend on \texttt{:8000}.
-\item Under PD-disaggregated mode, \texttt{PrefillRouter} first selects a prefill worker from the prefill subset of the \texttt{WorkerSet}, dispatches the prompt to it, and receives \texttt{kv\_transfer\_params} describing the KV blocks the prefill worker has produced.
-\item \texttt{KvRouter} selects a decoder by scoring each candidate's radix-tree prefix-block overlap, queue load, and remaining KV capacity, then drawing via \texttt{softmax\_sample}.
-\item The frontend reads the chosen worker's transport URL from the corresponding \texttt{DWMD.endpoints[\dots].transport.tcp} entry and connects to its dynamic TCP slot \texttt{host:port/\{cid:x\}/generate}.
-\item The worker's \texttt{generate} handler---gated by the request-time dispatcher on dual-mode pods---runs the request through the local vLLM engine, pulling prefill KV blocks via NIXL when \texttt{kv\_transfer\_params} is present.
-\item Generated tokens stream back over the same TCP slot to the frontend, which forwards them as SSE chunks to the client.
-\end{enumerate}
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Elastic PD Role Switching}
 \label{sec:role-switch}
@@ -291,110 +279,53 @@ A single chat request traverses the system in the following ordered steps:
 \subsection{Problem Definition}
 \label{sec:switch-problem}
 
-Given a running disaggregated deployment with $D$ decoder pods and $P$ prefill pods serving chat traffic at $r$\,RPS through the frontend, an operator wants to instruct a specific decoder pod $D_i$ to become a prefill worker (and later come back) without restarting the pod, without dropping in-flight requests on the other pods, and within a few seconds. Concretely, \texttt{POST~<$D_i$>/switch\_role} must achieve all of the following:
+Consider a running disaggregated deployment with $D$ decoder pods and $P$ prefill pods
+served through a single frontend. At a rollout phase boundary the operator---in our
+setting, the autoscaling controller of Section~\ref{sec:implementation}---must convert a
+specific decoder pod $D_i$ into a prefill worker, and later convert it back. A call to
+\texttt{POST~<$D_i$>/switch\_role} must satisfy five requirements:
 
 \begin{enumerate}[nosep]
-\item The chat \texttt{KvRouter} stops selecting $D_i$ (its decode WorkerSet membership is withdrawn);
-\item $D_i$'s decode-side KV state is released;
-\item $D_i$ subsequently serves prefill traffic that the frontend's \texttt{PrefillRouter} dispatches to it;
-\item A reverse \texttt{target\_role="decode"} restores the above symmetrically;
-\item The pod's name, IP, vLLM engine identity, and prefix-cache infrastructure are unchanged; only the registered role in the worker CR and the engine's transient state are mutated.
+\item \textbf{Withdrawal.} The frontend's \texttt{KvRouter} stops selecting $D_i$ for
+decode traffic, because $D_i$'s decode ModelCard is removed from its worker CR.
+\item \textbf{Release.} $D_i$'s decode-side transient KV state is released, so the new
+role starts from a clean prefix-cache index and a full block budget.
+\item \textbf{Admission.} $D_i$ subsequently serves prefill traffic dispatched to it by
+the frontend's \texttt{PrefillRouter}, as a first-class member of the prefill WorkerSet.
+\item \textbf{Symmetry.} A reverse call with \texttt{target\_role="decode"} restores the
+previous condition by the same protocol, with no special-cased inverse path.
+\item \textbf{Invariance.} The pod's name, IP address, vLLM engine identity and
+prefix-cache infrastructure are unchanged. Only the role registered in the worker CR and
+the engine's transient state are mutated.
 \end{enumerate}
 
-Because the operation has internal sequencing constraints, the implementation is a state machine rather than a flat script. It is best understood as \emph{two layers}: an engine-core flip wrapped in a zero-loss safety envelope. This layering reconciles the switch-cost numbers reported across this project: 453\,ms (mid-term, light load, no envelope) $\rightarrow$ 3.4\,s (first zero-loss envelope, 3.0\,s settle) $\rightarrow$ \textbf{941\,ms} in the final round.
+A sixth requirement is implicit in the setting and turns out to dominate the design:
+\textbf{no request may be lost}, neither on $D_i$ nor on any peer that is exchanging KV
+with it. It is this requirement, rather than the role flip itself, that makes the
+operation a state machine rather than a flat script, and Section~\ref{sec:protocol}
+develops the protocol from it.
 
-\subsection{Layer 1: The Eight-Step Engine Core}
-\label{sec:state-machine}
-
-\texttt{DualModeWorker.switch\_role(target)} runs under a per-worker async lock and proceeds through eight deterministic states; each transition is timed and surfaced in the JSON response's \texttt{timings\_ms} field. Figure~\ref{fig:role-switch} illustrates the state machine. Excluding the \texttt{register\_mdc} control-plane round-trip (${\sim}309$\,ms, a Kubernetes \texttt{apply}, a physical floor rather than engine work), the engine steps total only ${\sim}115$\,ms: sleep 58, wake 27, cordon 16, flush 7, reconfig-NIXL 5, reset-prefix-cache 2 (Table~\ref{tab:switchcost}).
-
-\begin{figure}[htbp]
-\centering
-\scriptsize
-\begin{tikzpicture}[
-  node distance=3.0mm,
-  box/.style={draw, rounded corners=1pt, align=center, inner sep=2pt,
-              font=\scriptsize, minimum height=4.4mm, text width=26mm},
-  env/.style={box, fill=blue!8},
-  core/.style={box, fill=green!12},
-  ann/.style={font=\tiny, align=left, text width=26mm, inner sep=1pt},
-  arr/.style={-{Latex[length=1.3mm]}}]
-\node[env] (c) {(1) cordon, 16\,ms};
-\node[env, below=of c] (d) {(2) drain to idle};
-\node[env, below=of d] (s) {(3) settle 0.5\,s};
-\node[env, below=of s] (k) {(4) outbound-KV wait};
-\node[core, below=of k] (sl) {(5) sleep(2), 58\,ms};
-\node[core, below=of sl] (rn) {(6) reconfig\_nixl, 5\,ms};
-\node[core, below=of rn] (rp) {(7) reset\_prefix, 2\,ms};
-\node[env, below=of rp] (rg) {(8) register\_mdc, 309\,ms};
-\node[env, below=of rg] (w) {(9) wake, 27\,ms};
-\draw[arr] (c) -- (d);
-\draw[arr] (d) -- (s);
-\draw[arr] (s) -- (k);
-\draw[arr] (k) -- (sl);
-\draw[arr] (sl) -- (rn);
-\draw[arr] (rn) -- (rp);
-\draw[arr] (rp) -- (rg);
-\draw[arr] (rg) -- (w);
-\node[ann, right=3mm of c]  {withdraw the old-role ModelCard \emph{first}};
-\node[ann, right=3mm of d]  {in-flight requests finish naturally};
-\node[ann, right=3mm of s]  {continuous idle $\Rightarrow$ router converged};
-\node[ann, right=3mm of k]  {no peer still pulling KV we produced};
-\node[ann, right=3mm of sl] {frees the GPU KV blocks};
-\node[ann, right=3mm of rp] {reset while asleep: no stale hit};
-\node[ann, right=3mm of rg] {publish only in the target role};
-\node[ann, right=3mm of w]  {\textbf{total 941\,ms} (884--1005)};
-\end{tikzpicture}
-\caption{The deployed two-layer \texttt{switch\_role} protocol, annotated with the
-10-switch means of Table~\ref{tab:switchcost}. Blue = zero-loss envelope,
-green = engine core; the dispatcher \textbf{holds} any request arriving between
-(1) and (8) and serves it under the pre-switch role. This \emph{replaces} the
-mid-term state machine, which ordered \texttt{sleep} before
-\texttt{unregister\_mdc} and omitted steps (2)--(4) --- the three steps that
-account for 89\% of the measured cost.}
-\label{fig:role-switch}
-\end{figure}
-
-\subsection{Layer 2: The Zero-Loss Envelope}
-\label{sec:envelope}
-
-The core alone drops requests when a flip is issued mid-flight: the router keeps dispatching to the worker until it observes the ModelCard withdrawal, so a request can land on a half-asleep engine (observed as switch-instant HTTP 500s under concurrency). The deployed protocol therefore wraps the core with, in order: \textbf{cordon-first} (withdraw the old-role ModelCard before anything else, closing the intake as early as possible); \textbf{drain to idle\,+\,settle window} (0.5\,s of continuous idle confirms the router stopped routing here; any arrival re-drains); \textbf{hold-during-switch} (between cordon and re-registration the router can only be acting on the \emph{old} card, so an arrival in that window is old-role traffic by construction---the request-time dispatcher holds it until the switch completes and serves it under the pre-switch role, instead of letting \texttt{sleep} reject it); and \textbf{bounded outbound-KV drain} (Section~\ref{sec:ordering}, constraint~4). Hold-during-switch is what makes the short settle safe: losslessness became a property of the protocol rather than of out-waiting the router, so the window shrank $3.0\,\text{s}\rightarrow0.5\,\text{s}$ with validity unchanged at 100\%.
-
-\subsection{Critical Ordering Constraints}
-\label{sec:ordering}
-
-Four orderings make the protocol safe:
-
-\noindent(1) cordon before everything: unpublish first. Removing the ModelCard is what closes the intake, and it is eventually consistent (hundreds of milliseconds through the frontend watcher), so it must start as early as possible. \emph{This revises the mid-term report's ordering}, which paused generation before unpublishing; draining behind a still-published card merely lets the router refill the worker.
-
-\noindent(2) drain and confirm before sleep. \texttt{sleep(2)} does not guarantee running requests finish, so their blocks keep \texttt{ref\_cnt>0} and the reset below cannot free them.
-
-\noindent(4) inside the sleep window, before (7): reset cache while engine is asleep. vLLM's prefix cache holds block-IDs that \texttt{sleep(2)} returns to the allocator. Reset-after-wake is unsafe because the wake-up race could allocate one of those blocks to a new request before we flush the index. Reset-while-asleep is atomic from the scheduler's perspective:
-
-\begin{lstlisting}
-before sleep:  prefix_cache -> block #42
-sleep(2):      block #42 returned to free pool
-reset_pc:      index cleared
-wake_up:       no stale hits possible
-\end{lstlisting}
-
-\noindent(3) publish only when the engine is in a consistent target state. This guarantees that traffic arriving via the new ModelCard lands on an engine that can serve it.
-
-\noindent(4) never sleep while a peer is pulling our KV. \texttt{sleep(level=2)} frees GPU memory. If this worker served prefill and a peer decoder's NIXL READ against its KV is still in flight, sleeping destroys that transfer and the peer's request hangs until its client timeout. We measured this directly: a P$\to$D switch-back issued 5\,s into the decode phase left 646 blocks permanently pinned (\texttt{Failed to reset prefix cache because some blocks are not freed yet}) and hung 34 peer requests to their 600\,s timeout. The earlier 3.0\,s quiesce window had been \emph{accidentally} safe---it happened to outlast typical pull times---so the defect surfaced only once the switch became fast. Force-expiring the connector's pending sends is equally destructive for a send a peer is about to pull. The deployed protocol therefore \emph{waits}, polling the connector's pending-send registry and the block pool's pinned state (bounded at 8\,s), and force-expires only what nobody claimed in that window---a true orphan. At a phase boundary with no handoff in flight this passes on the first poll at ${\sim}0$ cost; under an active handoff it is the honest, load-dependent price of losslessness.
-
-\subsection{Why kv\_role=kv\_both Is Load-Bearing}
+\subsection{Why an In-Place Flip Is Possible}
 \label{sec:kv-both}
 
-vLLM's \texttt{kv\_transfer\_config} is fixed at engine construction. Run-time mutation would require an engine rebuild (at least 5 seconds plus prefix-cache loss). We instead build one engine that knows about both roles from boot (\texttt{NixlConnector kv\_both}). Under \texttt{kv\_both} the engine registers NIXL metadata for both prefill-side and decode-side semantics. The role switch is then purely (i) a registration change in the worker CR (which ModelCard is published) and (ii) an engine-state cycle (sleep, reset, wake) to discard transient state inconsistent under the new role.
+Three properties of the stack make a flip cheaper than a restart, and each corresponds
+to a design decision.
 
-\subsection{Partner-Prefill: One TCP Slot, Two ModelCards}
-\label{sec:partner-prefill}
+\noindent\textbf{One engine that already knows both roles.} vLLM's
+\texttt{kv\_transfer\_config} is fixed at engine construction, so a run-time change of
+role would ordinarily require an engine rebuild---at least five seconds plus the loss of
+the prefix cache. We instead construct every dual-mode worker with
+\texttt{NixlConnector kv\_both}, under which the engine registers NIXL metadata for both
+prefill-side and decode-side semantics at boot. The role switch then reduces to (i) a
+registration change in the worker CR and (ii) an engine-state cycle that discards
+transient state inconsistent under the new role.
 
-When partner-prefill is enabled, the post-switch pod becomes a first-class prefill worker that the frontend's \texttt{PrefillRouter} actually dispatches traffic to. Two non-obvious behaviours were required:
-
-(a) Multi-chunk merge of \texttt{kv\_transfer\_params}. vLLM~0.16's \texttt{NixlConnector} publishes \texttt{kv\_transfer\_params} only on the last \texttt{RequestOutput} chunk, but Dynamo's Rust \texttt{PrefillRouter} reads \texttt{disaggregated\_params} only from the first chunk. A wrapper consumes the entire stream, captures the last observed \texttt{kv\_transfer\_params}, and yields a merged chunk so the router sees the field on chunk~\#1.
-
-(b) Single TCP-slot dispatcher. Dynamo's \texttt{SharedTcpServer} stores handlers in a map keyed by endpoint path. Because the \texttt{connection\_id} is process-level, a naive registration of both decode and prefill on the same engine would collide. The fix is to register exactly one TCP handler and dispatch at request time:
+\noindent\textbf{One TCP slot, two ModelCards.} Dynamo's \texttt{SharedTcpServer} keys
+handlers by endpoint path while the \texttt{connection\_id} is process-level, so
+registering both a decode and a prefill handler on one engine would collide. We register
+exactly one TCP handler and dispatch at request time on the worker's current role, so the
+switch never reopens a socket---it only renames the entry that the frontend's
+\texttt{ModelWatcher} observes:
 
 \begin{lstlisting}[language=Python]
 async def _generate_dispatch(request, context):
@@ -409,93 +340,293 @@ async def _generate_dispatch(request, context):
         yield chunk
 \end{lstlisting}
 
-\texttt{switch\_role} flips \texttt{current\_role} between steps~(3) and~(6), so by the time the new ModelCard is observable on the frontend the dispatcher routes correctly.
+Making the post-switch pod a \emph{real} prefill worker also required reconciling a
+protocol mismatch: vLLM~0.16's \texttt{NixlConnector} publishes
+\texttt{kv\_transfer\_params} only on the last \texttt{RequestOutput} chunk, whereas
+Dynamo's Rust \texttt{PrefillRouter} reads \texttt{disaggregated\_params} only from the
+first. A wrapper consumes the stream, captures the last observed value, and yields a
+merged first chunk.
 
-\subsection{End-to-End Correctness via Kubernetes Service Discovery}
-\label{sec:e2e-correctness}
+\noindent\textbf{The cluster control plane as the coordination substrate.} Correctness
+does not rely on any in-process agreement between worker and frontend. The propagation
+chain on every flip is: the worker mutates its own CR $\rightarrow$ the API server
+persists it $\rightarrow$ the kube informer delivers a watch event $\rightarrow$ the
+frontend's \texttt{ModelWatcher} re-converges the WorkerSet and invalidates the routers.
+Pod identity is invariant, the CR is the single observable truth, no Kubernetes Service
+sits on the chat path, and convergence is bounded (empirically well under 200\,ms on a
+single-node cluster). The cost of this choice is that withdrawal is \emph{eventually}
+consistent, which is precisely what the envelope in the next section must absorb.
 
-The protocol's correctness does not rely on any in-process coordination between worker and frontend---it relies entirely on the cluster control plane. The propagation chain on every flip is:
+\subsection{The Switch Protocol}
+\label{sec:protocol}
 
-\begin{lstlisting}
-Worker mutates own CR
--> K8s API server (etcd write)
--> kube informer (watch event)
--> Frontend ModelWatcher(re-converge WorkerSet + invalidate routers)
-\end{lstlisting}
+\texttt{DualModeWorker.switch\_role(target)} runs under a per-worker asynchronous lock
+and proceeds through eight timed stages, each surfaced in the response's
+\texttt{timings\_ms} field. They divide into a \textbf{three-stage zero-loss envelope}
+(E1--E3) that makes the flip safe under in-flight traffic and a \textbf{five-stage engine
+core} (C1--C5) that performs the flip itself, plus one untimed transition---the role
+commit---between them (Figure~\ref{fig:role-switch}). The mid-term report also described
+eight steps, but a different eight: it enumerated the core alone, included two steps that
+are no-ops on the deployed path, and ordered the withdrawal after the pause rather than
+before it (Section~\ref{sec:ordering}).
 
-Several non-obvious properties fall out of this design: pod identity is invariant (only the CR's \texttt{model\_cards} entry changes); the worker CR is the single observable truth; no Kubernetes Service is on the chat path; and eventual consistency is bounded (empirically the watcher converges in well under 200\,ms on a single-node cluster). A test or operator confirms a successful flip by composing three independent observations: (1)~CRD diff---the decode \texttt{model\_card} key disappears and a prefill key appears; (2)~Frontend log---\texttt{ModelWatcher} emits a Removed event correlated with the CR change; (3)~Workload attribution---post-switch probes confirm the target's \texttt{prompt\_tokens\_total} counter grows while its decode attribution is zero.
+\noindent\textbf{Engine core (C1--C5).} \texttt{sleep(level=2)} pauses generation and
+returns the KV blocks to the GPU allocator; \texttt{reconfig\_nixl} rebinds the connector
+handle for the target role; \texttt{reset\_prefix\_cache} clears the cache index while the
+engine is asleep; the handler's role marker and the dispatcher's view are committed
+together; \texttt{register\_mdc} publishes a fresh ModelCard under the target-role
+endpoint URI; and \texttt{wake} resumes the engine. The mid-term report described this
+core alone, and in a different order---see Section~\ref{sec:ordering}.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\noindent\textbf{Zero-loss envelope (E1--E3).} The core by itself drops requests when a
+flip is issued mid-flight, because the router keeps dispatching to the worker until it
+observes the withdrawal, so a request can land on a half-asleep engine. The envelope
+closes three distinct windows:
+
+\begin{itemize}[nosep]
+\item \textbf{E1 cordon.} Withdraw the old-role ModelCard \emph{before} anything else,
+starting the eventually-consistent propagation timer as early as possible.
+\item \textbf{E2 drain and settle.} Wait for in-flight requests on this worker to finish
+naturally, then require the engine to remain idle for a continuous window before
+proceeding. An arrival during the window restarts the observation, so the condition
+asserts \emph{the router has stopped routing here}, not merely \emph{the engine is idle
+right now}.
+\item \textbf{E3 outbound-KV drain.} Wait, with a bound, until no peer is still pulling
+KV that this worker produced while it held the prefill role
+(Section~\ref{sec:ordering}, constraint~4).
+\end{itemize}
+
+\noindent\textbf{Hold-during-switch.} Between E1 and C4 the router can only be acting on
+the \emph{old} ModelCard, so any request arriving in that interval is old-role traffic by
+construction. Rather than letting \texttt{sleep} reject it, the request-time dispatcher
+suspends the request until the switch completes and then serves it under the pre-switch
+role. This converts losslessness from a property of \emph{waiting long enough} into a
+property of the protocol, and is what permits a short settle window.
+
+\begin{figure}[htbp]
+\centering
+\scriptsize
+\begin{tikzpicture}[
+  node distance=3.0mm,
+  box/.style={draw, rounded corners=1pt, align=center, inner sep=2pt,
+              font=\scriptsize, minimum height=4.4mm, text width=26mm},
+  env/.style={box, fill=blue!8},
+  core/.style={box, fill=green!12},
+  ann/.style={font=\tiny, align=left, text width=26mm, inner sep=1pt},
+  arr/.style={-{Latex[length=1.3mm]}}]
+\node[env] (c) {(1) cordon, 16\,ms};
+\node[env, below=of c] (d) {(2) drain + settle};
+\node[env, below=of d] (k) {(3) outbound-KV wait};
+\node[core, below=of k] (sl) {(4) sleep(2), 58\,ms};
+\node[core, below=of sl] (rn) {(5) reconfig\_nixl, 5\,ms};
+\node[core, below=of rn] (rp) {(6) reset\_prefix, 2\,ms};
+\node[core, below=of rp] (rg) {(7) register\_mdc, 309\,ms};
+\node[core, below=of rg] (w) {(8) wake, 27\,ms};
+\draw[arr] (c) -- (d);
+\draw[arr] (d) -- (k);
+\draw[arr] (k) -- (sl);
+\draw[arr] (sl) -- (rn);
+\draw[arr] (rn) -- (rp);
+\draw[arr] (rp) -- (rg);
+\draw[arr] (rg) -- (w);
+\node[ann, right=3mm of c]  {withdraw the old-role ModelCard \emph{first}};
+\node[ann, right=3mm of d]  {in-flight work finishes; continuous idle confirms the router converged};
+\node[ann, right=3mm of k]  {no peer still pulling KV we produced};
+\node[ann, right=3mm of sl] {frees the GPU KV blocks};
+\node[ann, right=3mm of rp] {reset while asleep: no stale hit};
+\node[ann, right=3mm of rg] {publish only in the target role};
+\node[ann, right=3mm of w]  {\textbf{total 941\,ms} (884--1005)};
+\end{tikzpicture}
+\caption{The deployed two-layer \texttt{switch\_role} protocol, annotated with the
+10-switch means of Table~\ref{tab:switchcost}. Blue = zero-loss envelope,
+green = engine core; the dispatcher \textbf{holds} any request arriving between
+(1) and (7) and serves it under the pre-switch role. This \emph{replaces} the
+mid-term state machine, which ordered \texttt{sleep} before
+\texttt{unregister\_mdc} and omitted steps (2)--(3) --- the stages that
+account for 89\% of the measured cost.}
+\label{fig:role-switch}
+\end{figure}
+
+\subsection{Ordering Constraints}
+\label{sec:ordering}
+
+Four orderings make the protocol safe. Each expresses an invariant, and violating any one
+of them produces a distinct failure mode we encountered.
+
+\noindent\textbf{(1) Cordon before draining.} Removing the ModelCard is what closes the
+intake, and its effect is eventually consistent; draining behind a still-published card
+merely lets the router refill the worker. \emph{This revises the mid-term ordering}, which
+paused generation first and unpublished second.
+
+\noindent\textbf{(2) Drain and confirm before sleeping.} \texttt{sleep(2)} does not
+guarantee that running requests finish, so their blocks retain \texttt{ref\_cnt>0} and the
+subsequent cache reset cannot free them.
+
+\noindent\textbf{(3) Reset the prefix cache inside the sleep window.} \texttt{sleep(2)}
+returns cached blocks to the allocator while the index still references them. Resetting
+after wake races a new request onto a stale block; resetting while asleep is atomic from
+the scheduler's perspective. Symmetrically, the new ModelCard is published only once the
+engine is already in the target role, so traffic arriving on it can be served.
+
+\noindent\textbf{(4) Never sleep while a peer is pulling our KV.} \texttt{sleep(level=2)}
+frees GPU memory. If this worker served prefill and a peer decoder's NIXL READ against its
+KV is still in flight, sleeping destroys that transfer and the peer's request stalls until
+its client timeout. Force-expiring the connector's pending sends is equally destructive
+for a send that a peer is about to pull. The protocol therefore \emph{waits}---polling the
+connector's pending-send registry and the block pool's pinned state under a bound---and
+force-expires only what nobody claimed within that window. This constraint is the one the
+mid-term design lacked; the conservative settle window it used at the time happened to
+outlast typical pull times, so the omission was masked rather than absent.
+
 \section{In-Flight Decoder Request Consolidation}
 \label{sec:consolidation}
 
 \subsection{Problem Definition}
 \label{sec:consol-problem}
 
-The role-switch protocol lets us shrink the decoder pool if the target decoder has no live requests---but a \texttt{switch\_role} issued mid-flight terminates whatever was running. For long completions (e.g., \texttt{max\_tokens~=~6000}) with thousands of already-generated tokens, throwing the work away is wasteful. We therefore need an operator-callable primitive that migrates a running request from one decoder to another, leaving the source drainable, while guaranteeing that no KV state is lost or corrupted.
+Role switching can shrink the decoder pool only when the target decoder has no live
+requests, and a switch issued mid-flight terminates whatever is running. Near the end of a
+rollout that is exactly the wrong property: a handful of long completions, each holding
+thousands of already-generated tokens, are scattered one per decoder. We therefore need an
+operator-callable primitive that moves a \emph{running} request from one decoder to
+another, leaving the source drainable, with no KV state lost or corrupted---and, since a
+migrated request is only useful if the freed GPU is actually reclaimed, a path from
+``source is drained'' to ``GPU is released''.
 
 \subsection{The Three-Phase Block-Hold NIXL-Pull Protocol}
 \label{sec:three-phase}
 
-The protocol moves a request $R$ from a source decoder $D_{\text{src}}$ to a destination decoder $D_{\text{dst}}$ in three coordinated phases. The defining property is that $D_{\text{src}}$ keeps the request alive and the KV blocks pinned across the entire handshake, releasing them only after $D_{\text{dst}}$ has confirmed acceptance. Combined with NIXL's RDMA-style READ semantics, this gives a strict guarantee: at every instant of the protocol, the request's KV state exists on at least one GPU, as shown in Figure~\ref{fig:migration}.
+The protocol moves a request $R$ from a source decoder $D_{\text{src}}$ to a destination
+decoder $D_{\text{dst}}$ in three coordinated phases (Figure~\ref{fig:migration}). Its
+defining property is that $D_{\text{src}}$ keeps $R$ alive and its KV blocks pinned across
+the entire handshake, releasing them only after $D_{\text{dst}}$ has confirmed acceptance.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{request-consolidation.png}
-\caption{Three-phase block-hold NIXL-pull migration sequence. The connector path is the fast path when KVBM is exposed; recompute is the safe fallback otherwise.}
+\caption{Three-phase block-hold NIXL-pull migration. The source keeps the request alive and its blocks pinned for the whole handshake, so an authoritative KV copy exists at every instant. The connector path shown is the fast path when the KV-block index is exposed; recompute is the safe fallback otherwise. The stage that reclaims the GPU follows in Section~\ref{sec:idle-release-mech}.}
 \label{fig:migration}
 \end{figure}
 
-Phase~1 (Block-Hold): The orchestrator calls \texttt{migrate\_out} on $D_{\text{src}}$. $D_{\text{src}}$ pins the KV blocks of $R$, registers $R$ in pending migrations, collects source block IDs, NIXL coordinates, sampling parameters and previously emitted token count, but does NOT abort $R$. It returns \texttt{kv\_transfer\_params} and \texttt{sampling\_params} to the orchestrator.
+\noindent\textbf{Phase 1 (Block-Hold).} The orchestrator calls \texttt{migrate\_out} on
+$D_{\text{src}}$, which pins the KV blocks of $R$, registers $R$ in its pending-migration
+table, and collects the source block IDs, NIXL coordinates, sampling parameters and
+previously emitted token count---but does \emph{not} abort $R$. It returns
+\texttt{kv\_transfer\_params} and \texttt{sampling\_params} to the orchestrator.
 
-Phase~2 (NIXL READ Pull): The orchestrator calls \texttt{migrate\_in} on $D_{\text{dst}}$ with the parameters from Phase~1. $D_{\text{dst}}$ applies the cost-benefit gate, injects \texttt{kv\_transfer\_params} into the request, submits the new request to its local engine. The \texttt{NixlConnectorScheduler} issues an RDMA READ to $D_{\text{src}}$'s GPU, populates local KV blocks, and begins decoding from \texttt{previously\_emitted\_tokens~+~1}.
+\noindent\textbf{Phase 2 (NIXL READ pull).} The orchestrator calls \texttt{migrate\_in} on
+$D_{\text{dst}}$ with those parameters. The destination applies a cost--benefit gate,
+injects \texttt{kv\_transfer\_params} into the request and submits it locally; the
+\texttt{NixlConnectorScheduler} issues an RDMA-style READ against $D_{\text{src}}$'s GPU,
+populates local KV blocks, and resumes decoding from
+\texttt{previously\_emitted\_tokens~+~1}, so the client observes one continuous stream
+across the boundary. Fidelity of the replay is a correctness requirement, not a detail:
+the destination must reconstruct the \emph{complete} sampling configuration, including
+stopping policy, or the migration silently changes the request's semantics.
 
-Phase~3 (Release): The orchestrator calls \texttt{migration\_complete} on $D_{\text{src}}$. $D_{\text{src}}$ aborts $R$, unpins KV blocks, and removes the entry from pending migrations.
+\noindent\textbf{Phase 3 (Release).} The orchestrator calls \texttt{migration\_complete} on
+$D_{\text{src}}$, which aborts $R$, unpins its KV blocks and clears the pending entry.
 
-The KV-consistency guarantee satisfies an at-least-one-copy invariant: no transition step ever leaves the request without an authoritative KV copy. If the orchestrator crashes between Phase~2 and Phase~3, the source has not aborted $R$, so the failure mode degrades to at-most-once duplicate emission rather than KV-state loss. A two-phase variant---abort on \texttt{migrate\_out}, then submit on \texttt{migrate\_in}---is unsafe under NIXL pull: if $D_{\text{src}}$ aborts first, its KV blocks are freed and may be reused before the $D_{\text{dst}}$ READ completes, a silent correctness violation. The three-phase protocol decouples acceptance from cleanup, turning a two-party race into a sequential handshake.
+\noindent\textbf{The at-least-one-copy invariant.} No transition ever leaves the request
+without an authoritative KV copy. If the orchestrator fails between Phases~2 and~3 the
+source has not aborted, so the failure degrades to at-most-once duplicate emission rather
+than KV loss; a background sweep force-completes any hold older than ten seconds so a
+crashed orchestrator cannot pin blocks indefinitely. The two-phase alternative---abort on
+\texttt{migrate\_out}, then submit on \texttt{migrate\_in}---is unsafe under a pull
+transport: the source's blocks are freed and may be reused before the destination's READ
+completes, a silent corruption. The three-phase form converts a two-party race into a
+sequential handshake.
 
-\subsection{Migration Strategy and Safety Net}
-\label{sec:mig-strategy}
+\noindent\textbf{Which request, and onto which peer.} Each worker maintains an in-process
+registry updated at submission, on every streaming delta and at completion. Source-side
+victim selection picks the most-progressed request, maximising the replay cost avoided per
+migration; destination-side admission declines when the replay cost exceeds a threshold or
+too few tokens remain; and the controller ranks candidate peers by load, choosing the
+least-loaded decoder with spare KV capacity.
 
-The protocol moves one specified request between two specified decoders; the strategy layer answers which request to drain and onto which peer. Each worker maintains an in-process request registry updated at submission, on every streaming delta, and on completion, answering which requests it owns and how progressed each is. Source-side victim selection picks the request with the largest generated token count, maximizing marginal cost saved per migration. Destination-side admission rejects \texttt{migrate\_in} when the request is structurally not worth migrating (replay cost over threshold, or too few tokens remaining), returning \texttt{status=declined} before committing engine state. The controller enumerates peer decoders from the WorkerSet, ranks them by load score, and picks the least-loaded eligible peer with spare KV capacity. A background \texttt{sweep\_stale\_migrations} task runs every second and force-completes any pending hold older than 10\,s, so a crashed orchestrator cannot indefinitely pin KV blocks. Finally, \texttt{migrate\_in} carries \texttt{previously\_emitted\_tokens}; the destination's streaming consumer skips this prefix so the client receives exactly one logical stream across the migration boundary.
+\subsection{From a Drained Decoder to a Reclaimed GPU}
+\label{sec:idle-release-mech}
 
-\subsection{On the Transfer Path (Honest Caveat)}
-\label{sec:transfer-path}
+Migration makes a decoder drainable; it does not by itself return the GPU. The controller
+completes the chain: once a decoder reports zero active requests it is marked for release,
+its ModelCard is withdrawn (cordon), and---after a settle interval that lets the
+withdrawal propagate---its Deployment replica count is decremented. The settle interval is
+load-bearing rather than defensive: without it, requests routed during the propagation
+window arrive at a pod that is already terminating. This stage is what converts a
+successful migration into reclaimed GPU time, and Section~\ref{sec:eval} measures the two
+halves separately for exactly this reason.
 
-In a dedicated micro-benchmark with the KVBM block-bridge wired, \texttt{migrate\_in} demonstrably takes the connector path (188\,ms; 109 physical KV blocks; 1688 tokens transferred without recomputing the prefix). The default clean image does not expose the KVBM index, so in the production phased runs of Section~\ref{sec:eval} migration can fall back to recompute. This distinction matters for per-migration latency but \emph{not} for the efficacy result: the GPU-reclamation benefit reported below comes from \emph{releasing idle decoders after consolidation}, and is independent of which transfer path moves the KV.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Implementation: The End-to-End Autoscaling Controller}
+\section{The RL-Driven Control Plane}
 \label{sec:implementation}
 
-This section describes how the three primitives are driven end-to-end by an autoscaling controller, and why the control discipline is what makes them usable in an RL setting.
+The two primitives are mechanisms; this section describes the policy that drives them.
+The design goal is a single top-down loop in which an RL training job's own phase signal
+reshapes a live PD deployment---adjusting how many GPUs are allocated, what role each
+plays, and where requests live---without any human in the loop and without dropping a
+request.
 
-\subsection{Control Loop}
+\subsection{One Loop, Three Decisions}
 \label{sec:control-loop}
 
-The RL-Scaling controller is a cluster-level service running a periodic decision loop over three inputs: (i)~the \emph{RL phase signal}---the training job posts \texttt{send\_progress(frac, batch\_size, avg\_isl, avg\_osl)} marking where in a rollout it is; (ii)~\emph{cluster state}---the WorkerSet and per-pod roles read from the worker CRs; and (iii)~\emph{live load}---per-pod active-request counts and generation throughput scraped from the sidecar and Prometheus. From these it maintains a small state machine ($\texttt{IDLE}\rightarrow\texttt{WARM\_UP}\rightarrow\texttt{REBALANCE}\rightarrow\texttt{CONSOLIDATE}\rightarrow\texttt{DRAIN}$) and dispatches the primitives: \texttt{patch replicas} to pre-warm, \texttt{/switch\_role} to re-balance the P:D ratio, and \texttt{/migrate} followed by scale-down to consolidate and reclaim.
+The controller is a cluster-level service running one periodic loop over three inputs:
+the \emph{RL phase signal} posted by the training job
+(\texttt{sampling\_progress}, \texttt{sampling\_done}, \texttt{batch\_complete}); the
+\emph{cluster state} read from the worker CRs; and the \emph{live load} scraped from the
+per-pod sidecars and Prometheus. On each tick it takes three decisions in a fixed order:
+consolidation first, then role switch, then cluster scaling.
 
-\subsection{Role-Switch Dispatch and the Quiesce Discipline}
-\label{sec:quiesce}
+\noindent\textbf{S1 --- how many GPUs (a four-state machine).} Allocation follows the
+rollout lifecycle: \texttt{IDLE} $\rightarrow$ \texttt{WARM\_UP} on the first signal of a
+new batch, \texttt{WARM\_UP} $\rightarrow$ \texttt{ACTIVE} once the workers report Ready,
+\texttt{ACTIVE} $\rightarrow$ \texttt{COOL\_DOWN} on batch completion, and
+\texttt{COOL\_DOWN} $\rightarrow$ \texttt{IDLE} after a grace period---or back to
+\texttt{WARM\_UP} if a new batch arrives during cooldown. Pre-warming during
+\texttt{WARM\_UP} is what lets the other two primitives operate on already-running
+engines rather than cold-starting new ones.
 
-When the phase signal indicates a prefill-dominated burst the controller re-roles a decoder to prefill (D$\to$P); when it flips to decode-dominated it reverts (P$\to$D). Under in-flight load a naive flip drops requests, so the controller uses the cordon-first handshake of Section~\ref{sec:envelope}: withdraw the target's ModelCard, drain to idle and confirm a stable settle window, wait for outbound KV pulls to finish, then run the sleep/reset/wake cycle. The envelope---not the engine---dominates the 941\,ms cost, and it buys zero request loss (Section~\ref{sec:eval} shows 100\% valid).
+\noindent\textbf{S2 --- what role each GPU plays (a per-tick policy).} While the batch is
+active, the role-switch policy compares prefill and decode pressure against thresholds and
+issues \texttt{/switch\_role} to the most idle eligible worker.
 
-\noindent\textbf{Trigger design is part of the contribution.} \emph{Which} signal fires the switch proved to matter as much as how fast the switch is. On this stack the \emph{prefill} queue never builds a backlog---prefill is fast enough that \texttt{dynamo\_frontend\_queued\_requests\{role="prefill"\}} stays at 0 through a 44-prompt burst while the decode queue climbs to 44---so a reactive queue-depth trigger can never fire D$\to$P in time. The controller therefore drives D$\to$P from the \emph{RL phase signal itself}: the training job posts the rollout's shape at dispatch and the controller derives a prefill-pressure hint from it, which is precisely the ``demand ratio is known in advance'' property that motivates this work. Two disciplines make it safe: the signal reports the \emph{remaining} work (once the prompts are sampled the residual is decode-shaped, the hint dies, and D$\to$P stops re-firing), and P$\to$D additionally requires the prefill backlog to be clear, so the revert cannot take capacity away from a phase the RL loop has declared in progress. Without these the pair oscillates at the minimum-switch-interval cadence---observed, then fixed, during the final round.
+\noindent\textbf{S3 --- where the requests live (a per-tick policy).} In parallel, the
+consolidation policy forms migration pairs from the most-progressed requests on the
+least-loaded decoders and, once a decoder is drained, cordons and scales it down.
 
-\subsection{Consolidation Dispatch, Idle-Release, and Cordon Settle}
-\label{sec:idle-release}
+The separation matters: S1 changes the \emph{size} of the deployment on the timescale of a
+rollout, whereas S2 and S3 change its \emph{shape} on the timescale of a phase, without
+allocating or releasing pods that would have to cold-start.
 
-For consolidation the decision engine forms migration pairs from the most-progressed requests on the least-loaded decoders and, once a decoder reaches \texttt{active\_requests\,=\,0}, marks it \texttt{is\_release} so the controller can cordon and scale it down. Two safety additions make this composable with role switch:
+\subsection{Deriving Pressure from the RL Signal}
+\label{sec:trigger}
 
-\begin{itemize}[nosep]
-\item \textbf{\texttt{consolidation\_cordon\_settle} (1.5\,s).} After cordoning a source decoder (removing its ModelCard) the controller sleeps a settle interval before re-checking and scaling down, so the router has propagated the removal before the pod disappears. Without it, requests routed in the propagation window returned 5xx.
-\item \textbf{S2/S3 desync} (\texttt{STABLE\_SAMPLES\,=\,3}, \texttt{MIN\_INTERVAL\,=\,10\,s}). In the mixed scenario a P$\to$D switch rebuilds an empty decoder that S3 would immediately idle-release; requiring more consecutive stable samples de-conflicts the two primitives.
-\end{itemize}
+\emph{Which} signal fires a switch proved to matter as much as how fast the switch is. On
+this stack the prefill queue never builds a backlog---prefill is fast enough that the
+frontend's prefill queue depth stays at zero through a 44-prompt burst while the decode
+queue climbs to 44---so a reactive queue-depth trigger can never fire a D$\to$P switch in
+time. The controller therefore derives prefill pressure from the phase signal itself: the
+training job announces the rollout's shape when it dispatches it, which is exactly the
+``demand ratio is known in advance'' property that distinguishes RL from chat serving.
 
-\subsection{Why This Matters for RL}
-\label{sec:why-rl}
+Two disciplines make a predictive trigger safe. First, the signal describes the
+\emph{remaining} work: once the prompts have been sampled the residual is decode-shaped,
+the prefill hint expires, and D$\to$P stops re-firing. Second, the reverse switch
+additionally requires the prefill backlog to be clear, so a revert cannot withdraw
+capacity from a phase the training loop has declared to be in progress. Without both, the
+pair oscillates at the minimum-switch-interval cadence rather than converging---a failure
+we observed and corrected during the final measurement round.
 
-RL rollouts are the workload where these mechanisms pay off, because the demand ratio is \emph{known in advance} from the training loop's phase rather than merely observed after the fact. The controller can therefore act proactively at the phase boundary instead of reactively after a queue builds. The autoscaling contribution is thus not only the primitives but the discipline---cordon-first, quiesce, settle, desync---that lets an external RL signal reshape a live PD deployment without dropping a single request. Section~\ref{sec:eval} quantifies both the benefit and the one real trade-off this discipline introduces.
+\subsection{Composing the Two Primitives}
+\label{sec:composition}
+
+Run together, S2 and S3 interact in one specific way: a P$\to$D switch rebuilds an empty
+decoder, which S3 immediately sees as a release candidate. Two disciplines de-conflict
+them. The \emph{cordon settle} interval already described (Section~\ref{sec:idle-release-mech})
+separates withdrawal from scale-down. A \emph{stability requirement} then demands several
+consecutive idle observations, plus a minimum interval between actions, before a decoder
+may be released---so a decoder that has just been restored is not immediately reclaimed.
+The combined policy is therefore not merely the union of two mechanisms but a small
+protocol between them, and Section~\ref{sec:eval} reports both what it buys and what it
+costs.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Evaluation}
@@ -535,10 +666,31 @@ C\_tail & 3 & +40/43/46\,s & \texttt{ignore\_eos} stragglers (out 6000) $\to$ \t
 
 \noindent\textbf{Design rationale.} The counts ($32/24/3$) and offsets ensure the regimes do not overlap: the A burst front-loads prefill demand; by $+22$\,s the A prompts are decoding and B adds decode pressure with no new prefill; by $+40$\,s only the three \texttt{ignore\_eos=6000} stragglers remain, each pinning a decoder at ${\sim}1$ active request---exactly the intra-phase tail waste S3 exists to reclaim. \texttt{ignore\_eos} on C guarantees the stragglers run to \texttt{max\_tokens} and produce a long, measurable tail. The scale (59) is small enough to run five scenarios $\times$ three repeats affordably while still exhibiting all three regimes; Section~\ref{sec:projection} projects the structure to production batch sizes.
 
+\subsection{What Each Comparison Can and Cannot Show}
+\label{sec:compare-design}
+
+Five scenarios are run, but they answer two different questions and must not be read as
+one ranking.
+
+\texttt{baseline\_1p1d} versus \texttt{static\_2p2d} differ in \emph{how many GPUs} are
+deployed. Their comparison therefore measures nothing specific to this work: it quantifies
+what ordinary horizontal scaling buys when a pool is doubled, and it exists to establish
+that the substrate behaves sensibly and that the workload is genuinely resource-limited.
+A gain here is not evidence for either primitive.
+
+\texttt{s2\_only}, \texttt{s3\_only} and \texttt{mixed} are each run \emph{at the same
+topology as} \texttt{static\_2p2d}: the same four GPUs, the same workload, the same
+session, interleaved within the same round. Every difference against that control is
+therefore attributable to the mechanism rather than to the resources, and these are the
+comparisons that carry the thesis. We report each against \texttt{static\_2p2d}
+separately, because the two primitives target different wastes and should be judged on
+different quantities: S2 on the phase-boundary quantities (queueing and per-phase service
+time), S3 on tail-phase GPU occupancy.
+
 \subsection{Quality Gate}
 \label{sec:quality}
 
-All scenarios are 100\% valid (0 HTTP 5xx, 0 timeout). Notably, \texttt{mixed} improved from 86.4\% (24$\times$5xx) to \textbf{100\% (0$\times$5xx), 3/3 stable} after the cordon-settle + desync fixes of Section~\ref{sec:idle-release}. All efficacy numbers below are computed on valid, complete runs only.
+All scenarios are 100\% valid (0 HTTP 5xx, 0 timeout). Notably, \texttt{mixed} improved from 86.4\% (24$\times$5xx) to \textbf{100\% (0$\times$5xx), 3/3 stable} after the cordon-settle + desync fixes of Section~\ref{sec:composition}. All efficacy numbers below are computed on valid, complete runs only.
 
 \subsection{A Measurement Confound Stated Up Front}
 \label{sec:confound}
@@ -571,10 +723,10 @@ mixed (new)         & 37.7 & 2.00 & 23.5 & 2.00 & 33.6 & \textbf{1.84} & 73.6 \\
 
 Whole-run aggregates: decode-GPU$\cdot$s---baseline 88.1, static 138.7, \textbf{s3 113.0}, mixed 142.0; average total GPUs---static 4.00, \textbf{s3 3.56}, mixed 3.93; p95 latency (s)---baseline 48.5, static 32.3, \textbf{s3 23.6}, s2 37.9, mixed 37.7.
 
-\subsection{Per-Mechanism Analysis}
+\subsection{Per-Mechanism Analysis Against the Equal-Topology Control}
 \label{sec:analysis}
 
-\noindent\textbf{Topology elasticity (S1), clean.} \texttt{static\_2p2d} vs \texttt{baseline\_1p1d}: $T_{\text{batch}}$ $-18.7$\,s ($\mathbf{-21.2\%}$, paired $t=-9.98$). Doubling both pools cuts makespan 21\%---the stable substrate the elastic mechanisms operate on.
+\noindent\textbf{S1, the substrate (not a result of this work).} Doubling both pools (\texttt{baseline\_1p1d}$\to$\texttt{static\_2p2d}) cuts the batch makespan by $18.7$\,s ($-21.2\%$, paired $t=-9.98$); in the final suite the same comparison gives $134.8\to82.9$\,s. This is what conventional horizontal scaling buys, and it is reported only to establish that the workload is resource-limited and the substrate well behaved. All mechanism claims below are measured against \texttt{static\_2p2d} at identical topology.
 
 \noindent\textbf{PD role switch (S2).} Two switches fire per run---D$\to$P at the phase-A boundary, P$\to$D inside phase B. Every step is timed and returned by \texttt{/switch\_role}, so the cost is fully attributable (Table~\ref{tab:switchcost}, 10 switches).
 
@@ -667,7 +819,7 @@ Link & Evidence & static & s3\_only \\
 
 \noindent\textbf{The consolidation evidence chain.} The claim has two halves---the request must survive the move, and the move must actually free a GPU---so we record the chain end to end rather than a single ratio (Table~\ref{tab:s3chain}). Links 4--6 close arithmetically, which is the check that matters: releasing exactly one decoder 12.23\,s before the batch ends predicts a saving of $1\times12.23=12.2$\,GPU$\cdot$s, and the independently integrated occupancy series measures \textbf{9.89}\,GPU$\cdot$s; the residual is pod-sampling granularity, not an unexplained term. \emph{The yield is set by how long the drained decoder can stay released---a property of the workload's tail, not of the protocol}: in the tail-isolated workload the same mechanism reaches $2.00\to1.56$ average decode GPUs and $-18.5\%$ whole-run decode-GPU$\cdot$s, where the straggler phase does not overlap the dense decode phase.
 
-\noindent\textbf{Which half of S3 this proves.} The scenario chains two mechanisms: \emph{live migration} moves running requests off a decoder, and \emph{idle-release} cordons and scales down a decoder once it reaches zero active requests. In the suite the headline numbers come from, \texttt{s3\_migrated\_requests}\,=\,0 in all three runs---the decoders reached zero on their own and the reclaim came entirely from idle-release plus scale-down. What the $-44.5\%$ proves is therefore that \emph{releasing drained decoders inside a rollout phase reclaims GPU time}, not that live migration is what reclaimed it. Migration is proven separately: correct in the dedicated micro-benchmark (Section~\ref{sec:transfer-path}) and firing in 3/3 \texttt{s3\_only} runs of the acceptance suite with a 12.2\,s release lead. The GPU reclaim attributable to migration \emph{alone}, under a tail heavy enough to require it, remains future work rather than part of the headline.
+\noindent\textbf{Which half of S3 this proves.} The scenario chains two mechanisms: \emph{live migration} moves running requests off a decoder, and \emph{idle-release} cordons and scales down a decoder once it reaches zero active requests. In the suite the headline numbers come from, \texttt{s3\_migrated\_requests}\,=\,0 in all three runs---the decoders reached zero on their own and the reclaim came entirely from idle-release plus scale-down. What the $-44.5\%$ proves is therefore that \emph{releasing drained decoders inside a rollout phase reclaims GPU time}, not that live migration is what reclaimed it. Migration is proven separately: correct in a dedicated micro-benchmark and firing in 3/3 \texttt{s3\_only} runs of the acceptance suite with a 12.2\,s release lead. The GPU reclaim attributable to migration \emph{alone}, under a tail heavy enough to require it, remains future work rather than part of the headline.
 
 \noindent\textbf{A fidelity defect the acceptance gate caught.} The gate compares every \texttt{ignore\_eos} straggler's finish reason against \texttt{length@max\_tokens}. It failed in exactly the runs where a migration occurred: 4 of 4 migrating runs ended their migrated straggler at \texttt{finish\_reason=stop} after 1557--4578 of 5000 tokens, while 0 of 11 non-migrating runs did. The source snapshotted every sampling field faithfully, but the destination rebuilt \texttt{SamplingParams} from a hand-written 12-name whitelist that omitted \texttt{ignore\_eos}---so migration silently changed the request's stopping policy while preserving the token stream itself. The two lists now derive from one source of truth. We report the defect rather than a patched-and-unverified state, because a migrated request that stops early would \emph{flatter} a GPU-saving number.
 
