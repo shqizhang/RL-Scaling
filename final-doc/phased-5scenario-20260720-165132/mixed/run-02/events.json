@@ -1,0 +1,46 @@
+[
+  {
+    "ts": 1784540178.6352434,
+    "iso": "2026-07-20T17:36:18",
+    "event": "prewarm_ready",
+    "scenario": "mixed",
+    "topology": {
+      "prefill": 2,
+      "decode": 2
+    }
+  },
+  {
+    "ts": 1784540180.049767,
+    "iso": "2026-07-20T17:36:20",
+    "event": "T0_batch_dispatch",
+    "batch": {
+      "batch_size": 59,
+      "avg_isl": 1085,
+      "avg_osl": 844
+    }
+  },
+  {
+    "ts": 1784540180.052685,
+    "iso": "2026-07-20T17:36:20",
+    "event": "phase_dispatch",
+    "phase": "A_prefill"
+  },
+  {
+    "ts": 1784540202.050112,
+    "iso": "2026-07-20T17:36:42",
+    "event": "phase_dispatch",
+    "phase": "B_decode"
+  },
+  {
+    "ts": 1784540220.0500674,
+    "iso": "2026-07-20T17:37:00",
+    "event": "phase_dispatch",
+    "phase": "C_tail"
+  },
+  {
+    "ts": 1784540254.6331563,
+    "iso": "2026-07-20T17:37:34",
+    "event": "T_end_batch_complete",
+    "completed": 59
+  }
+]

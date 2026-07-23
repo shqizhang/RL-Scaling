@@ -1,0 +1,72 @@
+{
+  "scenario": "mixed",
+  "repeat": 3,
+  "position_in_round": 2,
+  "valid_decode_pct": 100.0,
+  "timeout_count": 0,
+  "http_5xx_count": 0,
+  "success": 59,
+  "request_count": 59,
+  "T_batch_s": 73.23664689064026,
+  "prefill_gpu_s": 146.47329378128052,
+  "decode_gpu_s": 139.68338298797607,
+  "total_gpu_s": 286.1566767692566,
+  "gpu_hours": 0.07948796576923794,
+  "avg_prefill_gpus": 2.0,
+  "avg_decode_gpus": 1.9072880711832234,
+  "avg_total_gpus": 3.907288071183223,
+  "decode_kv_occupancy_mean": 0.18795915390226112,
+  "decode_kv_occupancy_max": 0.5789934354485777,
+  "min_spec_decode_replicas": 1,
+  "tokens_per_gpu_s": 132.52879656056442,
+  "requests_per_gpu_s": 0.20618075617216805,
+  "s2_executed_count": 2,
+  "s2_switch_total_ms": 0.0,
+  "s3_migrated_requests": 0,
+  "s3_drained_source_count": 2,
+  "phase_metrics": {
+    "A_prefill": {
+      "n": 32,
+      "valid_pct": 100.0,
+      "serving_wall_s": 37.426084995269775,
+      "prefill_gpu_s": 74.85216999053955,
+      "decode_gpu_s": 74.85216999053955,
+      "avg_decode_gpus": 2.0,
+      "completion_tokens": 3040,
+      "p95_latency_s": 37.42115616798401
+    },
+    "B_decode": {
+      "n": 24,
+      "valid_pct": 100.0,
+      "serving_wall_s": 23.43272876739502,
+      "prefill_gpu_s": 46.86545753479004,
+      "decode_gpu_s": 46.86545753479004,
+      "avg_decode_gpus": 2.0,
+      "completion_tokens": 16884,
+      "p95_latency_s": 23.12575912475586
+    },
+    "C_tail": {
+      "n": 3,
+      "valid_pct": 100.0,
+      "serving_wall_s": 33.23405575752258,
+      "prefill_gpu_s": 66.46811151504517,
+      "decode_gpu_s": 59.679763078689575,
+      "avg_decode_gpus": 1.7957411973463686,
+      "completion_tokens": 18000,
+      "p95_latency_s": 27.96365976333618
+    }
+  },
+  "business_wall_s": 73.23664689064026,
+  "overhead_vs_tbatch_s": 0.0,
+  "completion_tokens": 37924.0,
+  "p50_latency_s": 35.892595052719116,
+  "p95_latency_s": 37.42099046707153,
+  "ugpu_samples": 15,
+  "batch_meta": {
+    "batch_size": 59,
+    "avg_isl": 1085,
+    "avg_osl": 844
+  },
+  "t0": 1784556103.3258636,
+  "t_end": 1784556176.5625105
+}
