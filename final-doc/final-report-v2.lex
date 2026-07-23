@@ -226,12 +226,57 @@ Consolidation & Live migration & Free target & \texttt{/migrate} \\
 \end{tabularx}
 \end{table}
 
-Rollout-driven cluster scaling serves as the foundation: it simulates hot-start by pre-warming pods before a rollout begins, so that role-switching and consolidation operate on already-running engines rather than cold-starting new ones. The controller architecture is shown in Figure~\ref{fig:rl-controller}.
+Cluster scaling is the foundation the other two primitives stand on. It does not avoid cold start; it moves the cost outside the phase that is being optimised. The rollout's first phase signal takes the controller from \texttt{IDLE} to \texttt{WARM\_UP}, where replicas are raised and the engines load; only when the workers report Ready does the controller enter \texttt{ACTIVE}, and between consecutive batches a cooldown grace period keeps the pods warm rather than releasing them. Role switching and consolidation therefore always act on already-running engines, which is what makes their sub-second and few-second costs meaningful---an equivalent reaction by pod replication would pay tens of seconds of cold start and start with an empty prefix cache. Figure~\ref{fig:rl-controller} shows the resulting control plane.
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
-\includegraphics[width=\linewidth]{RL-controller.png}
-\caption{RL-Scaling control plane. One periodic loop consumes the training job's phase signal and takes three decisions per tick: consolidation (S3), role switch (S2), and cluster scaling (S1, a four-state machine over the rollout lifecycle). S1 changes the deployment's size; S2 and S3 change its shape without cold-starting a pod.}
+\scriptsize
+\begin{tikzpicture}[
+  node distance=3mm,
+  st/.style={draw, rounded corners=2pt, fill=blue!8, align=center,
+             font=\scriptsize, minimum height=5mm, text width=15mm},
+  pol/.style={draw, rounded corners=1pt, fill=green!12, align=center,
+              font=\scriptsize, minimum height=4.4mm, text width=30mm},
+  act/.style={draw, dashed, rounded corners=1pt, align=center,
+              font=\tiny, minimum height=4mm, text width=30mm},
+  lbl/.style={font=\tiny, align=center},
+  ar/.style={-{Latex[length=1.2mm]}}]
+
+\node[pol] (s3) {(1) S3 consolidation};
+\node[pol, below=of s3] (s2) {(2) S2 role switch};
+\node[pol, below=of s2] (s1) {(3) S1 cluster scaling};
+\draw[ar] (s3) -- (s2);
+\draw[ar] (s2) -- (s1);
+\node[lbl, above=1.5mm of s3] (tick) {one periodic loop, every tick};
+\node[lbl, above=1.5mm of tick] (sig)
+  {RL phase signal: \texttt{sampling\_progress}, \texttt{sampling\_done}, \texttt{batch\_complete}};
+\draw[ar] (sig) -- (tick);
+
+\node[act, right=5mm of s3] (mig) {migrate most-progressed request; when a decoder is drained: cordon, settle, scale down};
+\node[act, right=5mm of s2] (sw) {D$\to$P when prefill pressure is high and decode idle; P$\to$D on the reverse};
+\draw[ar, dashed] (s3) -- (mig);
+\draw[ar, dashed] (s2) -- (sw);
+
+\node[st, below=7mm of s1] (idle) {IDLE};
+\node[st, right=6mm of idle] (warm) {WARM\_UP};
+\node[st, right=6mm of warm] (active) {ACTIVE};
+\node[st, right=6mm of active] (cool) {COOL\_DOWN};
+\draw[ar] (idle) -- (warm);
+\draw[ar] (warm) -- (active);
+\draw[ar] (active) -- (cool);
+\draw[ar] (cool.south) to[out=250,in=290] (idle.south);
+\draw[ar] (cool.north) to[out=110,in=70] (warm.north);
+\draw[ar] (s1) -- (idle);
+\node[lbl, below=6mm of warm] {S1 alters the deployment's \emph{size} over a rollout; S2 and S3 alter its \emph{shape} within a phase};
+\end{tikzpicture}
+\caption{The RL-driven control plane as implemented. A single periodic loop
+consumes the training job's phase signal and takes three decisions per tick,
+in this order: consolidation, role switch, cluster scaling. Only cluster
+scaling is a state machine (four states over the rollout lifecycle); S2 and S3
+are policies re-evaluated every tick while the batch is active, so both may act
+in the same tick. This replaces the mid-term figure, which drew rebalancing and
+consolidation as sequential \emph{states} of one machine and gated consolidation
+on a training signal.}
 \label{fig:rl-controller}
 \end{figure}
 
