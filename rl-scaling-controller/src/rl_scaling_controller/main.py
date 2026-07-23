@@ -48,10 +48,19 @@ class StrategyRuntime:
         batch_size = int(self.latest_batch_meta.get("batch_size") or 0)
         avg_isl = int(self.latest_batch_meta.get("avg_isl") or 0)
         avg_osl = int(self.latest_batch_meta.get("avg_osl") or 0)
-        if avg_isl >= 1024 and batch_size > 0:
+        if avg_isl >= 1024 and batch_size > 0 and progress < 0.9:
             self.prefill_pressure_hint = max(1, ceil(batch_size / 64))
             self.prefill_pressure_hint_until = now + 45.0
-        elif progress >= 0.9:
+        else:
+            # The signal now describes work that is no longer prompt-heavy (or
+            # the rollout is nearly done): the prompts have been sampled, so the
+            # prefill hint must die NOW instead of coasting on its 45 s TTL.
+            # Coasting keeps prefill_queue_depth pinned at the hint value, which
+            # is both untrue once the prompts are prefilled and fatal to the
+            # P->D revert, whose condition requires the prefill backlog to be
+            # clear. Measured (suite phased-v2-20260723-082153): the last
+            # prompt-heavy signal at T0+36 s kept the hint alive to T0+72 s,
+            # spanning the entire decode phase, so P->D never fired at all.
             self.prefill_pressure_hint = 0
             self.prefill_pressure_hint_until = 0.0
         if progress >= 0.9 and avg_osl >= 512 and batch_size > 0:
