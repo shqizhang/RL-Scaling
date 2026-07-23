@@ -1,0 +1,23 @@
+{
+  "label": "Round 5 acceptance suite (fast switch + hint retire)",
+  "built_at": "2026-07-23T01:49:19+00:00",
+  "source_suite": "reports/phased-v2-20260723-084824",
+  "runs_included": 8,
+  "runs_per_scenario": {
+    "baseline_1p1d": 1,
+    "static_2p2d": 2,
+    "s2_only": 2,
+    "s3_only": 2,
+    "mixed": 1
+  },
+  "complete": false,
+  "raw_files_copied": 83,
+  "rl_scaling_commit": "45ad86c348438735331429eec2528fdabe206f19",
+  "dynamo_commit": "a59ef248e994af472727bc5a2ff98675136f0516",
+  "quality": {
+    "all_runs_100pct_valid": true,
+    "total_http_5xx": 0,
+    "total_timeouts": 0,
+    "wall_alignment_ok_all": true
+  }
+}

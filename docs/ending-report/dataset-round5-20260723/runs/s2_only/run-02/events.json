@@ -1,0 +1,103 @@
+[
+  {
+    "ts": 1784770365.0120988,
+    "iso": "2026-07-23T09:32:45",
+    "event": "worker_roles_reset",
+    "deployments": [
+      "vllm-v1-disagg-router-vllmprefillworker-41888dc2",
+      "vllm-v1-disagg-router-vllmdecodeworker-41888dc2"
+    ]
+  },
+  {
+    "ts": 1784770552.3579643,
+    "iso": "2026-07-23T09:35:52",
+    "event": "prewarm_ready",
+    "scenario": "s2_only",
+    "topology": {
+      "prefill": 2,
+      "decode": 2
+    }
+  },
+  {
+    "ts": 1784770573.4487777,
+    "iso": "2026-07-23T09:36:13",
+    "event": "strategy_enabled_after_prewarm",
+    "scenario": "s2_only",
+    "role_switch": "true",
+    "consolidation": "false",
+    "decode_idle_threshold": "0.05",
+    "prefill_queue_threshold": "2",
+    "min_switch_interval": "20"
+  },
+  {
+    "ts": 1784770581.3635619,
+    "iso": "2026-07-23T09:36:21",
+    "event": "pre_t0_guard_passed",
+    "watched_s": 6.0
+  },
+  {
+    "ts": 1784770583.071382,
+    "iso": "2026-07-23T09:36:23",
+    "event": "T0_batch_dispatch",
+    "batch": {
+      "batch_size": 96,
+      "avg_isl": 1208,
+      "avg_osl": 666,
+      "arrival_mode": "phased_no_gate",
+      "phases": {
+        "prefill_burst": {
+          "requests": 44,
+          "offset_s": 0.0,
+          "avg_isl_est": 1955,
+          "avg_max_tokens": 1
+        },
+        "decode_dense": {
+          "requests": 49,
+          "offset_s": 45.0,
+          "avg_isl_est": 576,
+          "avg_max_tokens": 997
+        },
+        "decode_tail": {
+          "requests": 3,
+          "offset_s": 45.0,
+          "avg_isl_est": 584,
+          "avg_max_tokens": 5000
+        }
+      }
+    },
+    "arrival_mode": "phased_no_gate",
+    "t0_phase_signal": true
+  },
+  {
+    "ts": 1784770584.5736704,
+    "iso": "2026-07-23T09:36:24",
+    "event": "phase_scheduled",
+    "phase": "prefill_burst",
+    "offset_s": 0.0,
+    "requests": 44
+  },
+  {
+    "ts": 1784770584.5996435,
+    "iso": "2026-07-23T09:36:24",
+    "event": "phase_scheduled",
+    "phase": "decode_dense",
+    "offset_s": 45.0,
+    "requests": 49
+  },
+  {
+    "ts": 1784770584.6049354,
+    "iso": "2026-07-23T09:36:24",
+    "event": "phase_scheduled",
+    "phase": "decode_tail",
+    "offset_s": 45.0,
+    "requests": 3
+  },
+  {
+    "ts": 1784770665.9038293,
+    "iso": "2026-07-23T09:37:45",
+    "event": "T_end_batch_complete",
+    "completed": 96,
+    "business_wall_s": 81.02958680002484,
+    "T_batch_s": 81.02868747711182
+  }
+]

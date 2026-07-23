@@ -1,0 +1,44 @@
+{
+  "harness": "run_phased_rollout_5scenario_e2e.py",
+  "arrival_mode": "phased_no_gate_v2",
+  "legacy_script_modified": false,
+  "config": {
+    "suite_dir": "reports/phased-v2-20260723-084824",
+    "repeats": 3,
+    "batch_size": 96,
+    "seed": 20260720,
+    "concurrency": 48,
+    "phase_b_offset": 45.0,
+    "phase_c_offset": 45.0,
+    "phase_a_max_tokens": "1",
+    "sample_interval": 1.0,
+    "scenarios": "all",
+    "continue_after_timeout": false
+  },
+  "meta": {
+    "batch_size": 96,
+    "avg_isl": 1208,
+    "avg_osl": 666,
+    "arrival_mode": "phased_no_gate",
+    "phases": {
+      "prefill_burst": {
+        "requests": 44,
+        "offset_s": 0.0,
+        "avg_isl_est": 1955,
+        "avg_max_tokens": 1
+      },
+      "decode_dense": {
+        "requests": 49,
+        "offset_s": 45.0,
+        "avg_isl_est": 576,
+        "avg_max_tokens": 997
+      },
+      "decode_tail": {
+        "requests": 3,
+        "offset_s": 45.0,
+        "avg_isl_est": 584,
+        "avg_max_tokens": 5000
+      }
+    }
+  }
+}
