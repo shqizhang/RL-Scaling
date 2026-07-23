@@ -72,10 +72,9 @@ Beyond confirming correctness, we evaluate efficacy on a Kubernetes deployment o
 \section{Introduction}
 \label{sec:intro}
 
-\subsection{Overview of the NVIDIA Dynamo Serving Framework}
-\label{sec:dynamo-overview}
+The cost of large-language-model inference is measured in GPU-hours, and the dominant architectural answer to that cost is prefill--decode (PD) disaggregation: the two phases of a request have different bottlenecks, so they are served by separate GPU pools connected by a high-bandwidth KV fabric. NVIDIA Dynamo is the de-facto open-source realisation of that architecture---a Rust runtime that routes requests across prefill and decode worker pools and discovers those workers through Kubernetes Custom Resources---and it is the system this work extends. Section~\ref{sec:dynamo-arch} describes the three of its subsystems that the design depends on.
 
-NVIDIA Dynamo is an open-source serving framework for disaggregated LLM inference. Architecturally, it is a Rust runtime that hosts (i)~a KV-aware router that accepts incoming LLM inference requests, (ii)~any number of worker pods each wrapping a vLLM engine, and (iii)~a discovery layer that uses Kubernetes Custom Resources as the single observable source of truth for worker membership. The frontend embeds two stateful routers---\texttt{KvRouter} for decode dispatch and \texttt{PrefillRouter} for prefill dispatch---and a \texttt{ModelWatcher} that maintains the WorkerSet by \texttt{list+watching} worker metadata CRs. The KV-cache transfer between prefill and decode workers is performed by the NIXL connector over NVLink / RDMA. This stack is the \texttt{de facto} mainstream choice today for production PD-disaggregated serving and is the baseline on which our extensions are built.
+This paper concerns a workload for which that architecture is mis-provisioned by construction: the reinforcement-learning rollout loop. We show that its characteristic waste can be removed by changing a deployment's \emph{shape} rather than its \emph{size}, and we develop, deploy and measure two runtime primitives that do so.
 
 \subsection{The RL Workload and Its GPU-Waste Problem}
 \label{sec:rl-waste}
@@ -156,9 +155,13 @@ Dynamo provides the routing and discovery substrate on top of stateful vLLM engi
 \label{fig:dynamo-arch}
 \end{figure}
 
-The architecture consists of three core subsystems relevant to this work. The discovery layer uses Kubernetes Custom Resources (one CR per worker pod) as the single source of truth for worker membership. Each worker calls strategic-merge-patch to update its own CR; the frontend's \texttt{ModelWatcher} reconstructs the WorkerSet from these CRs via \texttt{list+watch}. There is no etcd and no central registry. The routing layer consists of \texttt{KvRouter} and \texttt{PrefillRouter}, both stateful engines. \texttt{KvRouter} maintains a radix-tree index over KV blocks held by each decoder, scoring candidates by prefix-overlap, queue load, and capacity. \texttt{PrefillRouter} fans prefill traffic to any prefill-role worker discovered through the CRs. When a worker's role changes, the router state must reconverge through CR propagation. The NIXL connector provides zero-copy cross-GPU KV transfer over NVLink (RDMA over InfiniBand for multi-host). Combined with the KV-Block Manager (KVBM) that tracks per-request GPU-block layout, it enables a decoder to pull KV blocks directly from another worker's VRAM---the mechanism our consolidation protocol builds upon.
+Three of Dynamo's subsystems determine what an in-place elasticity mechanism can and cannot do, and we introduce each together with the consequence this work relies on.
 
-For our autoscaling research, Dynamo's CR-based discovery provides the critical property that role changes can be made visible to the entire system through a single metadata mutation, without restarting pods or rebuilding engines.
+\noindent\textbf{Discovery: membership is metadata.} One Kubernetes Custom Resource per worker pod is the single source of truth for membership. Each worker strategic-merge-patches its own CR and the frontend's \texttt{ModelWatcher} reconstructs the WorkerSet by \texttt{list+watch}; there is no etcd and no central registry. \emph{Consequence:} a role change is a single metadata mutation visible to the whole system, so it needs neither a pod restart nor an engine rebuild---the property the switch protocol is built on.
+
+\noindent\textbf{Routing: the routers are stateful.} \texttt{KvRouter} maintains a radix-tree index over the KV blocks held by each decoder and scores candidates by prefix-overlap, queue load and remaining capacity; \texttt{PrefillRouter} fans prefill traffic to any prefill-role worker discovered through the CRs. \emph{Consequence:} that state must reconverge after every role change, and because convergence is eventually consistent, a worker keeps receiving old-role traffic for a short interval after it is withdrawn. Absorbing that interval safely is the central difficulty of Section~\ref{sec:protocol}.
+
+\noindent\textbf{Transport: KV is addressable across GPUs.} The NIXL connector performs zero-copy KV transfer over NVLink, or RDMA over InfiniBand between hosts, and the KV-Block Manager tracks the per-request block layout. \emph{Consequence:} one decoder can read another's KV blocks directly from VRAM, which is what makes migrating a \emph{running} request feasible at all (Section~\ref{sec:three-phase}).
 
 \subsection{KV Cache, Prefix Caching, and the Coherence Problem}
 \label{sec:kv-cache}
