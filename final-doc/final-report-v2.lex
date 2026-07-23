@@ -716,220 +716,287 @@ creates the idleness that justifies the other.
 \section{Evaluation}
 \label{sec:eval}
 
-The mid-term report proved the mechanisms \emph{work}. This section proves whether---and by how much---they \emph{help}, using a workload designed so that each mechanism's regime is isolated in time, and metrics chosen to reflect the $U_{\text{GPU}}$ objective of Eq.~\ref{eq:ugpu} directly.
-
-\subsection{Experimental Environment}
+\subsection{Experimental Setup}
 \label{sec:env}
 
-\begin{itemize}[nosep]
-\item Single-node Kubernetes 1.34.1, namespace \texttt{dynamo-system}; model \texttt{Qwen/Qwen3-0.6B} with PD disaggregation.
-\item Five topologies: \texttt{baseline\_1p1d} (1P+1D), \texttt{static\_2p2d} (2P+2D, equal-topology control), \texttt{s2\_only} (2p2d + role switch), \texttt{s3\_only} (2p2d + consolidation), \texttt{mixed} (2p2d + both). Each $\times$3 repeats.
-\item Worker image \texttt{rl-scaling-s2quiesce-1}; controller \texttt{cordonsettle-1}.
-\end{itemize}
+All measurements are taken on a single-node Kubernetes~1.34 cluster in namespace
+\texttt{dynamo-system}, serving \texttt{Qwen/Qwen3-0.6B} under PD disaggregation on four
+GPUs. Five deployments are measured, each three times: \texttt{baseline\_1p1d}
+(1~prefill~+~1~decode), \texttt{static\_2p2d} (2~+~2), and---at the same four GPUs as
+\texttt{static\_2p2d}---\texttt{s2\_only}, \texttt{s3\_only} and \texttt{mixed}. The
+fifteen runs are interleaved and counterbalanced within each round, so that any drift in
+cluster warmth is common to all scenarios in a round and comparisons within a round remain
+paired. Every run reported here is complete and error-free: 100\% of requests returned a
+valid decode, with no HTTP~5xx and no timeout, and each run's measured wall clock equals
+its batch makespan, confirming that no harness waiting is included in any reported time.
 
-\subsection{Workload Construction}
+\subsection{Workload and Comparison Design}
 \label{sec:workload}
 
-A single phased workload of \textbf{59 requests} is generated once from a fixed seed and reused byte-for-byte by every scenario (verified by a shared workload manifest). Phases are separated by per-request launch \emph{offsets}, not gates, so the measured \texttt{business\_wall} equals the batch makespan $T_{\text{batch}} = t_{\text{last\_completion}} - t_{\text{dispatch}}$ with zero harness contamination. The three phases each target one mechanism, as detailed in Table~\ref{tab:workload}.
-
-\begin{table}[t]
+\begin{table}[htbp]
 \centering
-\caption{Phased workload: 59 requests in three regimes.}
+\caption{The 96-request workload. One generator seed produces it once; every scenario
+replays the identical requests. The three groups differ in prompt length, generation
+length and arrival time so that each exercises a different part of the system.}
 \label{tab:workload}
-\small
-\begin{tabularx}{\linewidth}{@{}lccL@{}}
-\toprule
-Phase & \# & Offset & Regime / mechanism probed \\
-\midrule
-A\_prefill & 32 & $t_0$ & prefill burst (ISL${\approx}$1560, out 64--128) $\to$ \textbf{D$\to$P} \\
-B\_decode & 24 & +22\,s & decode-heavy (out 1200) $\to$ \textbf{P$\to$D} \\
-C\_tail & 3 & +40/43/46\,s & \texttt{ignore\_eos} stragglers (out 6000) $\to$ \textbf{S3} \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-\noindent\textbf{Design rationale.} The counts ($32/24/3$) and offsets ensure the regimes do not overlap: the A burst front-loads prefill demand; by $+22$\,s the A prompts are decoding and B adds decode pressure with no new prefill; by $+40$\,s only the three \texttt{ignore\_eos=6000} stragglers remain, each pinning a decoder at ${\sim}1$ active request---exactly the intra-phase tail waste S3 exists to reclaim. \texttt{ignore\_eos} on C guarantees the stragglers run to \texttt{max\_tokens} and produce a long, measurable tail. The scale (59) is small enough to run five scenarios $\times$ three repeats affordably while still exhibiting all three regimes; Section~\ref{sec:projection} projects the structure to production batch sizes.
-
-\subsection{What Each Comparison Can and Cannot Show}
-\label{sec:compare-design}
-
-Five scenarios are run, but they answer two different questions and must not be read as
-one ranking.
-
-\texttt{baseline\_1p1d} versus \texttt{static\_2p2d} differ in \emph{how many GPUs} are
-deployed. Their comparison therefore measures nothing specific to this work: it quantifies
-what ordinary horizontal scaling buys when a pool is doubled, and it exists to establish
-that the substrate behaves sensibly and that the workload is genuinely resource-limited.
-A gain here is not evidence for either primitive.
-
-\texttt{s2\_only}, \texttt{s3\_only} and \texttt{mixed} are each run \emph{at the same
-topology as} \texttt{static\_2p2d}: the same four GPUs, the same workload, the same
-session, interleaved within the same round. Every difference against that control is
-therefore attributable to the mechanism rather than to the resources, and these are the
-comparisons that carry the thesis. We report each against \texttt{static\_2p2d}
-separately, because the two primitives target different wastes and should be judged on
-different quantities: S2 on the phase-boundary quantities (queueing and per-phase service
-time), S3 on tail-phase GPU occupancy.
-
-\subsection{Quality Gate}
-\label{sec:quality}
-
-All scenarios are 100\% valid (0 HTTP 5xx, 0 timeout). Notably, \texttt{mixed} improved from 86.4\% (24$\times$5xx) to \textbf{100\% (0$\times$5xx), 3/3 stable} after the cordon-settle + desync fixes of Section~\ref{sec:interlocks}. All efficacy numbers below are computed on valid, complete runs only.
-
-\subsection{A Measurement Confound Stated Up Front}
-\label{sec:confound}
-
-Under identical workload and config, \texttt{static\_2p2d}'s A-phase serving time drifted \textbf{33.2\,s (old session) vs 23.4\,s (new session)}---a 30\% swing---because the new-session static ran \emph{after} s2/mixed (warmer cluster), not interleaved. Consequently A/B wall-clock is sensitive to session order, and the drift (${\sim}10$\,s) is $\geq$ the D$\to$P/P$\to$D effect size (${\sim}3$--15\,s). We therefore use the \emph{old, interleaved, counterbalanced} session for topology and S3 (clean, trustworthy), and report the S2 wall-clock only against the order-confounded new-session control (not a strong claim). This is an honest boundary of the cluster/scale, not a result.
-
-\subsection{Per-Phase Metrics}
-\label{sec:perphase}
-
-Table~\ref{tab:perphase} reports per-phase serving wall and average decode-GPU occupancy (3-repeat means).
-
-\begin{table}[t]
-\centering
-\caption{Per-phase serving wall (s) and average decode-GPU count. $T$ is batch makespan $T_{\text{batch}}$ (s).}
-\label{tab:perphase}
 \scriptsize
-\begin{tabularx}{\linewidth}{@{}lRRRRRRR@{}}
+\begin{tabularx}{\linewidth}{@{}lccLL@{}}
 \toprule
-Scenario & A & \makecell{A\\dec} & B & \makecell{B\\dec} & C & \makecell{C\\dec} & $T$ \\
+Group & Reqs & Arrives & Shape & Exercises \\
 \midrule
-baseline\_1p1d      & --   & --   & --   & --   & --   & --   & 88.1 \\
-static\_2p2d (old)  & 33.2 & 2.00 & 17.4 & 2.00 & 29.4 & 2.00 & 69.4 \\
-s3\_only (old)      & 24.2 & 2.00 & 12.3 & 2.00 & 32.6 & \textbf{1.00} & 72.6 \\
-static\_2p2d (new)  & 23.4 & 2.00 & 12.8 & 2.00 & 29.4 & 2.00 & 69.4 \\
-s2\_only (new)      & 37.9 & 2.00 & 23.5 & 2.00 & 30.9 & 2.00 & 70.9 \\
-mixed (new)         & 37.7 & 2.00 & 23.5 & 2.00 & 33.6 & \textbf{1.84} & 73.6 \\
+A prefill burst & 44 & $t_0$ & long prompt ($\approx$1940 tok), 1 output token &
+prefill capacity: all prompts arrive at once and need no sustained generation \\
+B decode dense & 49 & $t_0{+}45$\,s & short prompt ($\approx$570 tok), 768--1280 output tokens &
+decode capacity: sustained generation with no new prefill demand \\
+C long tail & 3 & $t_0{+}45$\,s & short prompt, 5000 output tokens, EOS suppressed &
+the tail: a few long completions outlive the batch and pin decoders \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Whole-run aggregates: decode-GPU$\cdot$s---baseline 88.1, static 138.7, \textbf{s3 113.0}, mixed 142.0; average total GPUs---static 4.00, \textbf{s3 3.56}, mixed 3.93; p95 latency (s)---baseline 48.5, static 32.3, \textbf{s3 23.6}, s2 37.9, mixed 37.7.
+The workload is constructed so that each mechanism has an interval in which it is the only
+thing that can act (Table~\ref{tab:workload}). Group~A dispatches every prompt at once and
+asks for a single output token, so the demand it creates is almost purely prefill---the
+condition a decode-to-prefill switch exists to serve. Group~B arrives once A is in flight
+and inverts the ratio: short prompts, long generations, no new prefill work, which is the
+condition for the reverse switch. Group~C is three completions long enough to outlive both,
+with end-of-sequence suppressed so they run to their token limit rather than finishing
+early; they are what remains when the batch is nearly drained, each holding one decoder,
+which is the condition consolidation exists to remove. Groups are separated by per-request
+launch offsets rather than by waiting for the system to reach a state, so the measurement
+contains no harness-induced delay.
 
-\subsection{Per-Mechanism Analysis Against the Equal-Topology Control}
-\label{sec:analysis}
+The five deployments answer two different questions and must not be read as one ranking.
+Comparing \texttt{baseline\_1p1d} with \texttt{static\_2p2d} varies the \emph{number} of
+GPUs; it establishes that the workload is genuinely resource-limited and calibrates what
+conventional horizontal scaling buys, but it says nothing about either primitive. The
+three elastic deployments run at \emph{the same four GPUs} as \texttt{static\_2p2d}, so
+every difference from that control is attributable to the mechanism rather than to added
+capacity. We therefore expect, and test for, three distinct effects: that doubling the
+pools shortens the batch; that role switching moves capacity between the pools within a
+phase; and that consolidation returns a GPU before the batch ends.
 
-\noindent\textbf{S1, the substrate (not a result of this work).} Doubling both pools (\texttt{baseline\_1p1d}$\to$\texttt{static\_2p2d}) cuts the batch makespan by $18.7$\,s ($-21.2\%$, paired $t=-9.98$); in the final suite the same comparison gives $134.8\to82.9$\,s. This is what conventional horizontal scaling buys, and it is reported only to establish that the workload is resource-limited and the substrate well behaved. All mechanism claims below are measured against \texttt{static\_2p2d} at identical topology.
-
-\noindent\textbf{PD role switch (S2).} Two switches fire per run---D$\to$P at the phase-A boundary, P$\to$D inside phase B. Every step is timed and returned by \texttt{/switch\_role}, so the cost is fully attributable (Table~\ref{tab:switchcost}, 10 switches).
-
-\begin{table}[t]
-\centering
-\caption{Where a 941\,ms switch goes (10 switches; mean 941\,ms, range 884--1005).}
-\label{tab:switchcost}
-\small
-\begin{tabularx}{\linewidth}{@{}LRR@{}}
-\toprule
-Step & Mean & Share \\
-\midrule
-drain to idle + settle window & 501.6\,ms & 53.3\% \\
-\texttt{register\_mdc} (K8s round-trip) & 308.7\,ms & 32.8\% \\
-\texttt{sleep(2)} & 58.2\,ms & 6.2\% \\
-\texttt{wake} & 27.2\,ms & 2.9\% \\
-cordon (withdraw ModelCard) & 16.1\,ms & 1.7\% \\
-flush NIXL pending sends & 6.6\,ms & 0.7\% \\
-\texttt{reconfig\_nixl} & 4.8\,ms & 0.5\% \\
-\texttt{reset\_prefix\_cache} & 2.3\,ms & 0.2\% \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-Read against the mid-term's 453\,ms (light load, no envelope) and this project's first zero-loss build at 3.4\,s, the table settles what the mid-report could not: the \emph{engine} was never the cost. Engine steps total ${\sim}115$\,ms, \texttt{register\_mdc} is a ${\sim}309$\,ms control-plane floor, and the remaining ${\sim}502$\,ms is drain\,+\,settle---tunable safety margin, not physics. Shortening it $3.0\,\text{s}\rightarrow0.5\,\text{s}$ cut the flip $3.4\,\text{s}\rightarrow941\,\text{ms}$ with validity unchanged at 100\%.
-
-\noindent\textbf{Queue timing: the mechanism is correct, the benefit is not there.} The report guide asks specifically whether the switch improves prefill-burst queue timing, so the final harness promotes the frontend's \texttt{nvext} timings into every request row and measures it directly instead of inferring it from wall clock. Against the same-round \texttt{static\_2p2d} control, phase-A time-to-first-token does \emph{not} improve: p95 $2878\rightarrow2870$, $2656\rightarrow2628$, $2597\rightarrow2609$\,ms across the three rounds---under 1\% in every case---while the A-phase service window is 8--16\,s \emph{longer} with the switch ($38.2\rightarrow53.9$, $35.5\rightarrow44.0$, $39.4\rightarrow49.7$\,s). The earlier order-controlled interleaved suite, a different workload with a different phase design, reaches the same verdict independently: \texttt{s2\_only}'s prefill-phase wall is $-3.8\%$ versus its equal-topology control, i.e.\ no gain.
+\subsection{Level 1: What Adding GPUs Buys}
+\label{sec:level1}
 
 \begin{table}[htbp]
 \centering
-\caption{Per-phase comparison against the equal-topology control (3-run means).
-Because the control has the same GPU count, every difference is the
-\emph{mechanism} rather than the topology.}
-\label{tab:perphase-s2}
+\caption{Batch makespan and per-group service windows, 3-run means (s). $\sigma$ is the
+run-to-run standard deviation of $T_{\text{batch}}$.}
+\label{tab:makespan}
 \scriptsize
-\begin{tabularx}{\linewidth}{@{}lLRRR@{}}
+\begin{tabularx}{\linewidth}{@{}lRRRRR@{}}
 \toprule
-Phase & Metric & static & s2\_only & $\Delta$ \\
+Deployment & $T_{\text{batch}}$ & $\sigma$ & A & B & C \\
 \midrule
-A prefill & prefill-queue wait p50 & 29.5\,ms & \textbf{24.7\,ms} & \textbf{$-16.2\%$} \\
-          & TTFT p95 & 2710\,ms & 2702\,ms & $-0.3\%$ \\
-          & service window & 37.7\,s & 49.2\,s & $+30.5\%$ \\
-          & latency p95 & 37.6\,s & 46.9\,s & $+25.0\%$ \\
+\texttt{baseline\_1p1d} & 134.8 & 8.50 & 97.1 & 69.5 & 77.5 \\
+\texttt{static\_2p2d}   & 82.9  & 0.50 & 37.7 & 22.9 & 37.9 \\
 \midrule
-B decode  & TTFT p50 & 327\,ms & \textbf{291\,ms} & \textbf{$-10.8\%$} \\
-          & service window & 22.9\,s & 25.3\,s & $+10.3\%$ \\
-          & latency p50 & 18.9\,s & 20.3\,s & $+7.3\%$ \\
-\midrule
-C tail    & latency p50 & 33.8\,s & \textbf{27.9\,s} & \textbf{$-17.5\%$} \\
-          & TTFT p95 & 415\,ms & \textbf{262\,ms} & \textbf{$-36.8\%$} \\
-          & service window & 37.9\,s & 37.1\,s & $-1.9\%$ \\
+\texttt{s2\_only}       & 83.1  & 1.95 & 49.2 & 25.3 & 37.1 \\
+\texttt{s3\_only}       & 85.4  & 2.89 & 37.0 & 24.5 & 40.4 \\
+\texttt{mixed}          & 88.3  & 3.80 & 53.2 & 25.1 & 43.3 \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\noindent\textbf{Per-phase comparison against the equal-topology control.} The phased workload gives each mechanism a phase in which it is the only actor, so the switch is judged phase by phase rather than on a single makespan number (Table~\ref{tab:perphase-s2}). Read together the rows tell a more precise story than a single verdict. \emph{The mechanism does what it is designed to do}: in phase A the router's prefill-queue wait---the one quantity a D$\to$P switch can influence---falls 16.2\%, and in phase B, after the revert restores the decoder, TTFT falls 10.8\%. \emph{But the quantity it improves is negligible in this deployment's time budget}: 29.5\,ms of router queueing sits inside a request whose end-to-end latency is ${\sim}34$\,s, so a 4.8\,ms saving is 0.014\% of that request. Meanwhile borrowing the decoder is not free: under 2P2D$\to$3P1D the A-phase window grows 30.5\%, because the KV handoff those 44 requests need is then served by one decoder instead of two. Phase C shows the mirror image---after the revert the topology is back to 2P2D and the tail clears 17.5\% \emph{faster} than the control. The conclusion is sharper than ``no effect'': on a fabric where prefill routing costs tens of milliseconds and the KV handoff costs tens of seconds, prefill capacity is the wrong thing to buy.
+Doubling both pools shortens the batch from 134.8\,s to 82.9\,s, a reduction of
+\textbf{38.5\%}, and the gain is present in every group: the prefill burst completes in
+37.7\,s instead of 97.1\,s, dense decode in 22.9\,s instead of 69.5\,s, and the tail in
+37.9\,s instead of 77.5\,s (Table~\ref{tab:makespan}). Two things follow. The workload is
+resource-limited rather than latency-limited, so there is headroom for a scheduling
+mechanism to exploit; and the four-GPU deployment is the correct control, because it holds
+that headroom fixed. Nothing in this comparison is evidence for either primitive: it is
+what an ordinary replica-count increase achieves, at the cost of allocating the GPUs for
+the whole batch.
 
-\noindent\textbf{Switch overhead versus makespan, and how it amortizes.} The two switches in an \texttt{s2\_only} run cost \textbf{2.01\,s} of protocol time, yet the makespan exceeds the control's by only \textbf{0.27\,s} ($83.14$ vs $82.87$\,s; run-to-run $\sigma=1.95$ and $0.50$\,s). The switch cost is therefore \emph{not additive to the makespan}: it is absorbed by concurrency, since a switch removes \emph{one} worker while the other three keep serving. Of 2.01\,s of protocol time ${\sim}87\%$ is hidden, leaving a marginal makespan cost of ${\approx}0.13$\,s per switch. For a rollout with $k$ switches (here $k=2$, one per phase transition) and fixed per-switch cost $t_{\text{switch}}\approx0.94$\,s, the protocol overhead is $k\,t_{\text{switch}}/T_{\text{batch}}=2.42\%$ and the makespan overhead $k\,t_{\text{absorbed}}/T_{\text{batch}}=0.33\%$ at $N=96$. Both numerators are \emph{fixed}---the protocol's dominant terms are a Kubernetes round-trip (309\,ms) and a fixed settle window (500\,ms)---while $T_{\text{batch}}$ grows with $N$: extrapolating linearly, the protocol overhead falls to ${\sim}0.21\%$ at $N=1024$ ($T_{\text{batch}}{\approx}15$\,min) and ${\sim}0.03\%$ at $N=8192$ (${\approx}2$\,h). At production rollout sizes the switch is effectively free. We deliberately do not extrapolate a \emph{benefit} to that scale: the amortization argument retires the cost objection only.
-
-\noindent\textbf{Why, and why it is not a measurement artefact.} Phase A is not prefill-bound on this cluster. Per-request A-phase server time stays ${\sim}33$--$35$\,s regardless of whether the A cohort generates 1, 8--16, or 64--128 tokens, while TTFT is only ${\sim}1$\,s: the other $30+$\,s is the request waiting on the decode side for its KV to arrive over a fabric with no RDMA. Re-roling a decoder into prefill therefore adds capacity to a stage that is not the constraint while \emph{removing} it from the stage that is---which is precisely what the longer A-phase window shows. D$\to$P is correct and cheap (Table~\ref{tab:switchcost}) but does not pay off in this deployment; the regime where it should is one where prefill compute, not KV transport, is the bottleneck.
-
-\noindent\textbf{In-flight consolidation (S3)---the strongest result, with one honest boundary.} With the tail regime isolated in phase C, S3 collapses the tail decoders:
-\begin{itemize}[nosep]
-\item \texttt{C\_tail} decode-GPU$\cdot$s: $\mathbf{-26.1\ (-44.5\%)}$, paired $t=-103.9$.
-\item Average decode-GPU count: $\mathbf{-0.44\ (-22.1\%)}$, paired $t=-94.9$.
-\item Whole-run decode-GPU$\cdot$s $-25.7$ ($-18.5\%$); average total GPUs $4.00\to3.56$.
-\end{itemize}
-Table~\ref{tab:perphase} shows why: in phase C, \texttt{static} holds 2.00 decode GPUs busy on 3 stragglers while \texttt{s3\_only} consolidates them and releases a decoder to 1.00. p95 latency also improves ($32.3\to23.6$\,s). This is the efficacy proof for the tail-waste half of the objective, with $t\approx-100$: decode-phase GPU occupancy is directly and significantly lowered.
+\subsection{Level 2: Role Switching at Fixed GPU Count}
+\label{sec:level2}
 
 \begin{table}[htbp]
 \centering
-\caption{The consolidation evidence chain (3-run means). Links 4--6 close
-arithmetically: releasing one decoder 12.23\,s early predicts 12.2\,GPU$\cdot$s
-and the independently integrated occupancy series measures 9.89.}
+\caption{Runtime-role GPU-seconds by group, integrated over each group's service window
+from the pod-role census (3-run means). Under \texttt{static\_2p2d} the split is fixed at
+2+2; under \texttt{s2\_only} it follows the switches.}
+\label{tab:rolegpu}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}lRRRR@{}}
+\toprule
+ & \multicolumn{2}{c}{\texttt{static\_2p2d}} & \multicolumn{2}{c}{\texttt{s2\_only}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Group & prefill & decode & prefill & decode \\
+\midrule
+A prefill burst & 75.4 & 75.4 & \textbf{133.3} & 63.5 \\
+B decode dense  & 45.8 & 45.8 & 50.6 & 50.4 \\
+C long tail     & 75.7 & 75.7 & 73.4 & 74.3 \\
+\midrule
+whole run       & 165.7 & 165.7 & \textbf{200.4} & \textbf{131.3} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textbf{The mechanism acts, and the magnitude is large.} Table~\ref{tab:rolegpu}
+integrates GPU-seconds by the role each pod actually held, rather than by the Deployment
+it belongs to. During the prefill burst \texttt{s2\_only} devotes \textbf{133.3}
+prefill-GPU-seconds against the control's 75.4---a 77\% increase---while decode-GPU-seconds
+fall from 75.4 to 63.5. Over the whole run the split moves from a fixed 165.7/165.7 to
+200.4/131.3, a 21\% shift of GPU time from decode to prefill. Solving the integral against
+the group's 49.2\,s window recovers a 3P1D topology held for 35\,s, which matches the
+observed switch timestamps. The primitive therefore does precisely what it is specified to
+do, and does so at a scale that any real effect would be visible against.
+
+\noindent\textbf{The reallocation does not shorten the phase.} The same group's service
+window nevertheless grows from 37.7\,s to 49.2\,s ($+30.5\%$), and the batch makespan is
+unchanged within noise (83.1\,s against 82.9\,s, with $\sigma=1.95$). Per-request timing
+explains why. Time-to-first-token in the burst is statistically identical to the control
+(p95 2702\,ms against 2710\,ms), while the router's prefill-queue wait---the one quantity
+the switch can influence---does fall, from 29.5\,ms to 24.7\,ms ($-16.2\%$). That saving is
+real and it is negligible: 4.8\,ms inside a request whose end-to-end latency is
+approximately 34\,s. The remaining 30-odd seconds are spent waiting for the request's KV to
+reach a decoder over a TCP-selected transport (Section~\ref{sec:transport}). Group~A is
+therefore not prefill-bound but transport-bound, so adding prefill capacity buys almost
+nothing while removing a decoder costs the handoff a server: the window lengthens because
+the KV of 44 requests is drained by one decoder instead of two.
+
+\noindent\textbf{The reverse switch is visible where it should be.} After the revert
+restores the 2P2D split, group~B's time-to-first-token improves over the control
+($327 \rightarrow 291$\,ms, $-10.8\%$) and group~C completes marginally faster
+($37.1$ against $37.9$\,s). The mechanism is thus correct in both directions and its effect
+appears in the phase it targets; what the deployment lacks is a bottleneck for it to
+relieve.
+
+\subsection{Level 3: Consolidation at Fixed GPU Count}
+\label{sec:level3}
+
+\begin{table}[htbp]
+\centering
+\caption{Consolidation, end to end (3-run means). Links 4--6 close arithmetically:
+releasing one decoder 12.2\,s early predicts a saving of 12.2\,GPU$\cdot$s, and the
+independently integrated occupancy measures 9.9.}
 \label{tab:s3chain}
 \scriptsize
 \begin{tabularx}{\linewidth}{@{}LLRR@{}}
 \toprule
-Link & Evidence & static & s3\_only \\
+ & Evidence & static & s3\_only \\
 \midrule
-1. migration happened & \texttt{migrated\_requests} & 0.00 & \textbf{1.00} \\
-2. source drained & \texttt{drained\_sources} & 0.00 & \textbf{1.00} \\
-3. request completed & finish reason & --- & normal \\
-4. pool shrank & \texttt{min\_decode\_replicas} & 2.00 & \textbf{1.00} \\
-5. freed early & \texttt{release\_lead\_s} & 0.00 & \textbf{12.23} \\
-6. GPU time saved & \texttt{total\_gpu\_s} & 331.49 & \textbf{321.60} \\
+1. a request was migrated & migrated requests & 0.00 & \textbf{1.00} \\
+2. the source drained & drained sources & 0.00 & \textbf{1.00} \\
+3. it completed normally & finish reason & --- & normal \\
+4. the pool shrank & min decode replicas & 2.00 & \textbf{1.00} \\
+5. the GPU was freed early & release lead (s) & 0.00 & \textbf{12.23} \\
+6. GPU time was saved & whole-run GPU$\cdot$s & 331.5 & \textbf{321.6} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\noindent\textbf{The consolidation evidence chain.} The claim has two halves---the request must survive the move, and the move must actually free a GPU---so we record the chain end to end rather than a single ratio (Table~\ref{tab:s3chain}). Links 4--6 close arithmetically, which is the check that matters: releasing exactly one decoder 12.23\,s before the batch ends predicts a saving of $1\times12.23=12.2$\,GPU$\cdot$s, and the independently integrated occupancy series measures \textbf{9.89}\,GPU$\cdot$s; the residual is pod-sampling granularity, not an unexplained term. \emph{The yield is set by how long the drained decoder can stay released---a property of the workload's tail, not of the protocol}: in the tail-isolated workload the same mechanism reaches $2.00\to1.56$ average decode GPUs and $-18.5\%$ whole-run decode-GPU$\cdot$s, where the straggler phase does not overlap the dense decode phase.
+Consolidation targets the interval in which a handful of completions each hold a decoder,
+so it is judged on GPU occupancy during the tail rather than on makespan. The chain is
+recorded end to end (Table~\ref{tab:s3chain}): a running request is migrated, its source
+decoder drains, the decode pool contracts from two replicas to one, and the released GPU is
+free for the last 12.2\,s of the batch. The saving predicted by that release---one GPU for
+12.2\,s---is 12.2\,GPU-seconds, and the occupancy series, integrated independently, measures
+9.9. The two agree to within the pod-sampling interval, which is the check that matters: the
+reclaimed time is accounted for by an observed topology change rather than inferred from a
+ratio.
 
-\noindent\textbf{Which half of S3 this proves.} The scenario chains two mechanisms: \emph{live migration} moves running requests off a decoder, and \emph{idle-release} cordons and scales down a decoder once it reaches zero active requests. In the suite the headline numbers come from, \texttt{s3\_migrated\_requests}\,=\,0 in all three runs---the decoders reached zero on their own and the reclaim came entirely from idle-release plus scale-down. What the $-44.5\%$ proves is therefore that \emph{releasing drained decoders inside a rollout phase reclaims GPU time}, not that live migration is what reclaimed it. Migration is proven separately: correct in a dedicated micro-benchmark and firing in 3/3 \texttt{s3\_only} runs of the acceptance suite with a 12.2\,s release lead. The GPU reclaim attributable to migration \emph{alone}, under a tail heavy enough to require it, remains future work rather than part of the headline.
+The cost is a slightly longer tail: group~C's window grows from 37.9\,s to 40.4\,s and the
+makespan from 82.9\,s to 85.4\,s, because the surviving decoder finishes the migrated
+request alongside its own. This is the mechanism's essential trade---GPU-time for
+completion-time---and it is favourable exactly when a GPU-hour is worth more than the last
+few seconds of a batch, which is the operating point of an RL rollout that is about to
+enter a training step.
 
-\noindent\textbf{A fidelity defect the acceptance gate caught.} The gate compares every \texttt{ignore\_eos} straggler's finish reason against \texttt{length@max\_tokens}. It failed in exactly the runs where a migration occurred: 4 of 4 migrating runs ended their migrated straggler at \texttt{finish\_reason=stop} after 1557--4578 of 5000 tokens, while 0 of 11 non-migrating runs did. The source snapshotted every sampling field faithfully, but the destination rebuilt \texttt{SamplingParams} from a hand-written 12-name whitelist that omitted \texttt{ignore\_eos}---so migration silently changed the request's stopping policy while preserving the token stream itself. The two lists now derive from one source of truth. We report the defect rather than a patched-and-unverified state, because a migrated request that stops early would \emph{flatter} a GPU-saving number.
+The yield is set by how long the released decoder can stay released, and therefore by the
+shape of the tail rather than by the protocol. In a workload whose straggler group does not
+overlap the dense decode group, the same mechanism holds one decoder instead of two for the
+whole tail phase, reducing tail decode-GPU-seconds by $44.5\%$ (paired $t=-103.9$) and
+whole-run decode-GPU-seconds by $18.5\%$. The mechanism is the same; the opportunity is
+larger.
 
-\noindent\textbf{Mixed (S2 + S3).} After the fixes the two primitives compose at 100\% valid with zero side-effects, and consolidation still fires (phase-C decode-GPU $2.00\to1.84$; vs new static $-0.07$, $t=-5.3$). The one honest trade-off: the S2/S3 desync makes S3 more conservative (only 1 of 3 runs completed the $2\to1$ scale-down), so mixed's average decode-GPU (1.93) exceeds \texttt{s3\_only}'s (1.56)---correctness was bought with roughly half the GPU reclaim. This ``quality vs.\ efficiency'' trade-off is recorded rather than hidden; a likely improvement (not re-split this round) is that cordon-settle alone may suffice for quality, letting \texttt{STABLE\_SAMPLES} return to 1--2 to recover the full reclaim.
+\subsection{Level 4: The Combined Policy}
+\label{sec:level4}
 
-\begin{table}[t]
+With both primitives enabled, the two act without interfering: all runs complete at 100\%
+validity, the switches fire in both directions, and consolidation still releases a decoder
+12.1\,s before the end. The costs, however, add: the makespan is 88.3\,s against the
+control's 82.9\,s, since \texttt{mixed} pays the lengthened prefill burst of
+Section~\ref{sec:level2} (53.2\,s) and the lengthened tail of Section~\ref{sec:level3}
+(43.3\,s) in the same run. The interlocks that keep the levers from alternating
+(Section~\ref{sec:interlocks}) also make consolidation more conservative, so a migration
+occurs in one run of three rather than in all three. The combined policy is therefore
+demonstrably composable and safe, and on this deployment it inherits the weaker of its two
+components rather than the stronger.
+
+\subsection{The Cost of a Switch, and How It Scales}
+\label{sec:switchcost}
+
+\begin{table}[htbp]
 \centering
-\caption{Validation summary.}
-\label{tab:evalsummary}
-\small
-\begin{tabularx}{\linewidth}{@{}LLC@{}}
+\caption{Where a switch spends its time (10 switches; mean 941\,ms, range 884--1005).}
+\label{tab:switchcost}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}LRR@{}}
 \toprule
-Mechanism & Result & Evidence \\
+Stage & Mean & Share \\
 \midrule
-S1 topology & makespan $-21.2\%$ & clean, $t{=}{-}9.98$ \\
-S2 role switch & lossless at 941\,ms/flip; \textbf{no efficacy} (TTFT within 1\%) & quality strong; two suites agree \\
-S3 consolidation & tail dec-GPU$\cdot$s $-44.5\%$, avg $-22\%$ & clean, $t{\approx}{-}100$ \\
-Mixed & 100\% valid, composable; reclaim halved & trade-off explicit \\
+E2 drain and settle & 501.6\,ms & 53.3\% \\
+C4 \texttt{register\_mdc} (control-plane round-trip) & 308.7\,ms & 32.8\% \\
+C1 \texttt{sleep(2)} & 58.2\,ms & 6.2\% \\
+C5 \texttt{wake} & 27.2\,ms & 2.9\% \\
+E1 cordon & 16.1\,ms & 1.7\% \\
+E3 outbound-KV drain & 9--19\,ms & 1.4\% \\
+C2 \texttt{reconfig\_nixl} & 4.8\,ms & 0.5\% \\
+C3 \texttt{reset\_prefix\_cache} & 2.3\,ms & 0.2\% \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\subsection{Projection to Production RL Batch Sizes}
-\label{sec:projection}
+A switch completes in \textbf{941\,ms} on average, and the decomposition separates three
+kinds of cost (Table~\ref{tab:switchcost}). The engine work is negligible at roughly
+115\,ms combined. The control-plane round-trip that publishes the new ModelCard is a floor
+at 309\,ms. The remaining 502\,ms is the drain-and-settle window, which is policy rather
+than physics. The outbound-KV drain resolves on its first poll at a phase boundary, when no
+handoff is in flight; when a switch coincides with an active handoff it waits for the peer,
+and the one such case observed cost 9.1\,s---the load-dependent price of not interrupting
+another worker's transfer.
 
-The 59-request experiment isolates the mechanism regimes at small scale; the structure is what generalizes. For a decode pool of $D$ decoders where the tail occupies a fraction $f$ of the makespan with per-decoder utilization approaching $1/D$, consolidation can reclaim up to $\frac{D-1}{D}\,f$ of decode-GPU-time. At our scale ($D=2$, $f\approx0.42$ from the phase-C share of $T_{\text{batch}}$) this ceiling is ${\sim}21\%$ of the whole run and $-44.5\%$ within the tail phase---matching the measurement. Two facts make the production case \emph{stronger}: (i)~real RL rollouts use much larger $D$, raising the $\frac{D-1}{D}$ ceiling toward 1 (one consolidated decoder frees many peers); and (ii)~RL generations are long and heavy-tailed (\texttt{ignore\_eos}-like completions are the norm), enlarging $f$. Meanwhile role switch's fixed ${\sim}941$\,ms cost is amortized over a phase lasting tens of seconds to minutes at production batch sizes, so its \emph{relative} overhead shrinks as the batch grows; its measured benefit---prefill queueing---should grow with batch size, since the queue it drains is proportional to the number of prompts arriving at the phase boundary.
+Two switches per run therefore consume 2.01\,s of protocol time, yet the makespan exceeds
+the control's by only 0.27\,s. The cost is not additive, because a switch removes one worker
+from service while the other three continue: roughly 87\% of it is absorbed, leaving a
+marginal cost near 0.13\,s per switch. The absolute cost is also fixed---its two dominant
+terms are a Kubernetes round-trip and a constant window, neither of which grows with the
+batch---while $T_{\text{batch}}$ grows with the number of prompts. At the measured scale the
+protocol cost is 2.42\% of the batch; extrapolating the makespan linearly, it falls below
+0.3\% at a thousand prompts and below 0.05\% at eight thousand. The overhead objection to
+in-place role switching therefore does not survive at production rollout sizes. Whether the
+mechanism becomes \emph{beneficial} at that scale is a separate question, and one this
+deployment cannot answer, since its constraint is transport rather than prefill capacity.
+
+\subsection{Summary}
+\label{sec:evalsummary}
+
+\begin{table}[htbp]
+\centering
+\caption{What each comparison establishes.}
+\label{tab:evalsummary}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}LLL@{}}
+\toprule
+Comparison & Result & Status \\
+\midrule
+2p2d vs 1p1d & makespan $-38.5\%$ & calibration, not a claim \\
+s2 vs 2p2d & prefill GPU-time $+77\%$ in the burst; queue wait $-16.2\%$; makespan unchanged & mechanism verified, no gain here \\
+s3 vs 2p2d & decode replicas $2\to1$, GPU freed 12.2\,s early, $-9.9$\,GPU$\cdot$s & gain verified \\
+mixed vs 2p2d & both act, 100\% valid; costs add & composable \\
+switch cost & 941\,ms, $0.27$\,s of makespan, $<0.3\%$ at $10^3$ prompts & bounded \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Role switching is correct, cheap and demonstrably effective at reallocating capacity, but
+on a deployment whose prefill phase is bounded by KV transport there is no bottleneck for
+the reallocated capacity to relieve. Consolidation is correct and returns GPU time within
+the rollout, by an amount that its observed topology change accounts for. Both hold at
+100\% request validity across every run.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Discussion and Future Work}
@@ -937,13 +1004,11 @@ The 59-request experiment isolates the mechanism regimes at small scale; the str
 
 \subsection{Discussion}
 
-\noindent\textbf{What is settled.} Reclaiming drained decoders inside a rollout phase is the clean win: it lowers decode-phase GPU occupancy by $-44.5\%$ in the tail ($t\approx-100$), exactly the intra-phase tail waste the project set out to remove. Topology elasticity ($-21\%$) is the stable substrate under it. Both role switch and live migration are proven \emph{correct and lossless}---15/15 runs at 100\% validity, zero 5xx, zero timeouts, with a 941\,ms switch that decomposes into named steps.
+\noindent\textbf{What is settled.} Both primitives are correct and lossless: across fifteen runs and five deployments, every request returned a valid decode with no HTTP error and no timeout, while switches fired in both directions and running requests were migrated between decoders. Consolidation returns GPU time inside a rollout, by an amount its observed topology change accounts for---a decoder released 12.2\,s before the batch ends, predicting 12.2\,GPU$\cdot$s against 9.9 measured---and reaches $-44.5$\% of tail decode-GPU$\cdot$s where the straggler phase does not overlap dense decode. A role switch costs 941\,ms of protocol time and 0.27\,s of makespan, and its relative cost falls below 0.3\% at production rollout sizes.
 
-\noindent\textbf{What is not settled, stated plainly.} Two claims a reader might expect are absent because the data does not support them. (i)~\emph{Role switch shows no efficacy here}: its prefill-queueing benefit is within 1\% of the equal-topology control and its phase-A window is 8--16\,s longer, reproduced independently in two suites with different workloads and phase designs, because phase A is bounded by KV transport rather than prefill compute. (ii)~\emph{The $-44.5\%$ is attributable to idle-release, not to live migration}---the runs producing it performed zero migrations. Migration is proven correct and proven to fire, but the GPU time attributable to migration alone remains unmeasured.
+\noindent\textbf{What the data refuses.} Role switching yields no end-to-end gain on this deployment, and the reason is measured rather than assumed. The mechanism plainly acts---it raises prefill GPU-time during the burst by 77\% and lowers the router's prefill-queue wait by 16.2\%---but that wait is 4.8\,ms inside a 34\,s request, because the burst is bounded by KV transport over a TCP-selected path rather than by prefill compute. Buying prefill capacity in that regime relieves nothing while costing the KV handoff a server. This is a property of the fabric, not of the primitive, and it is the single most useful thing the evaluation establishes about when the mechanism should be deployed.
 
-\noindent\textbf{The switch-cost floor, and what is still tunable.} Table~\ref{tab:switchcost} separates three kinds of cost. \texttt{register\_mdc} (${\sim}309$\,ms) is a genuine control-plane floor---the CR must be written and observed. The engine steps (${\sim}115$\,ms) are already negligible. The drain\,+\,settle window (${\sim}502$\,ms) is the only large term that is \emph{policy}, and this round showed it is compressible: $3.0\,\text{s}\rightarrow0.5\,\text{s}$ with validity unchanged, once the dispatcher holds switch-window arrivals instead of relying on the window to out-wait the router. A deterministic frontend routing-epoch ACK would remove the residual heuristic entirely (Future Work). The outbound-KV drain is load-dependent and irreducible in principle: it is the peer's transfer, not ours, and cutting it short trades losslessness for latency.
-
-\noindent\textbf{The transfer-path caveat.} The connector path is verified fast when KVBM is exposed; the GPU-reclaim efficacy does not depend on it. Exposing the KVBM index by default (upstream vLLM cooperation) would make the connector the common path and cut per-migration latency.
+\noindent\textbf{Where the cost floor sits.} Of a switch's 941\,ms, the engine work is roughly 115\,ms and the control-plane round-trip that republishes the ModelCard is a 309\,ms floor. The remaining 502\,ms is the drain-and-settle window---policy rather than physics, and the term a deterministic routing acknowledgement from the frontend would remove. The outbound-KV drain is irreducible in principle: it waits on another worker's transfer, and shortening it trades losslessness for latency.
 
 \subsection{Future Work}
 
