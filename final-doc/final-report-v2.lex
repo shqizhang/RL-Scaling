@@ -123,7 +123,11 @@ By re-rolling idle GPUs into the currently-bottlenecked phase and by consolidati
 \label{sec:contributions}
 
 \begin{itemize}[nosep]
-\item (C1) A two-layer in-place role-switch protocol---a five-stage engine core wrapped in a three-stage zero-loss envelope (cordon-first, drain\,+\,settle, hold-during-switch, bounded outbound-KV drain)---that atomically transitions a worker between decode and prefill roles. Measured cost \textbf{941\,ms} per flip under in-flight load (engine steps ${\sim}115$\,ms; \texttt{register\_mdc} control-plane round-trip ${\sim}309$\,ms; drain\,+\,settle ${\sim}502$\,ms) at 100\% request validity.
+\item (C1) A two-layer in-place role-switch protocol: a three-stage zero-loss envelope
+(cordon, drain and settle, outbound-KV drain) that establishes the preconditions for a role
+flip, enclosing a five-stage engine core that performs it. It transitions a worker between
+decode and prefill roles without a pod restart or an engine rebuild, and without losing a
+request either on the worker or on a peer exchanging KV with it.
 \item (C2) A single-TCP-slot dispatcher for partner-prefill that lets the same vLLM engine serve both decode and prefill traffic at run-time without socket re-binding.
 \item (C3) A three-phase block-hold NIXL-pull migration protocol that consolidates running decoders with zero KV loss, bounded by a safety-net sweep timer.
 \item (C4) An RL-signal-driven autoscaling controller that dispatches the above primitives with a cordon-first quiesce/settle discipline that makes them composable without dropping requests.
@@ -328,128 +332,93 @@ The \texttt{switch\_role} operation never reopens any socket; it only renames th
 \label{sec:switch-problem}
 
 Consider a running disaggregated deployment with $D$ decoder pods and $P$ prefill pods
-served through a single frontend. At a rollout phase boundary the operator---in our
-setting, the autoscaling controller of Section~\ref{sec:implementation}---must convert a
-specific decoder pod $D_i$ into a prefill worker, and later convert it back. A call to
-\texttt{POST~<$D_i$>/switch\_role} must satisfy five requirements:
+behind a single frontend. At a rollout phase boundary the controller must convert a
+specific decoder $D_i$ into a prefill worker, and later convert it back. A call to
+\texttt{POST~<$D_i$>/switch\_role} must satisfy six requirements. Five of them define
+what a role change \emph{is}:
 
 \begin{enumerate}[nosep]
 \item \textbf{Withdrawal.} The frontend's \texttt{KvRouter} stops selecting $D_i$ for
-decode traffic, because $D_i$'s decode ModelCard is removed from its worker CR.
+decode traffic, because its decode ModelCard is removed from the worker's CR.
 \item \textbf{Release.} $D_i$'s decode-side transient KV state is released, so the new
-role starts from a clean prefix-cache index and a full block budget.
-\item \textbf{Admission.} $D_i$ subsequently serves prefill traffic dispatched to it by
-the frontend's \texttt{PrefillRouter}, as a first-class member of the prefill WorkerSet.
+role begins with a clean prefix-cache index and the full block budget.
+\item \textbf{Admission.} $D_i$ subsequently serves prefill traffic dispatched by the
+frontend's \texttt{PrefillRouter}, as a first-class member of the prefill WorkerSet.
 \item \textbf{Symmetry.} A reverse call with \texttt{target\_role="decode"} restores the
 previous condition by the same protocol, with no special-cased inverse path.
-\item \textbf{Invariance.} The pod's name, IP address, vLLM engine identity and
-prefix-cache infrastructure are unchanged. Only the role registered in the worker CR and
-the engine's transient state are mutated.
+\item \textbf{Invariance.} Pod name, IP address, engine identity and prefix-cache
+infrastructure are unchanged; only the role registered in the CR and the engine's
+transient state are mutated.
 \end{enumerate}
 
-A sixth requirement is implicit in the setting and turns out to dominate the design:
-\textbf{no request may be lost}, neither on $D_i$ nor on any peer that is exchanging KV
-with it. It is this requirement, rather than the role flip itself, that makes the
-operation a state machine rather than a flat script, and Section~\ref{sec:protocol}
-develops the protocol from it.
+\noindent The sixth constrains what may happen \emph{while} the change takes place:
 
-\subsection{Why an In-Place Flip Is Possible}
-\label{sec:kv-both}
+\begin{enumerate}[nosep, start=6]
+\item \textbf{Losslessness.} No request may be lost---neither one in flight on $D_i$ nor
+one on a peer that is exchanging KV with it---at any point in the transition.
+\end{enumerate}
 
-Three properties of the stack make a flip cheaper than a restart, and each corresponds
-to a design decision.
-
-\noindent\textbf{One engine that already knows both roles.} vLLM's
-\texttt{kv\_transfer\_config} is fixed at engine construction, so a run-time change of
-role would ordinarily require an engine rebuild---at least five seconds plus the loss of
-the prefix cache. We instead construct every dual-mode worker with
-\texttt{NixlConnector kv\_both}, under which the engine registers NIXL metadata for both
-prefill-side and decode-side semantics at boot. The role switch then reduces to (i) a
-registration change in the worker CR and (ii) an engine-state cycle that discards
-transient state inconsistent under the new role.
-
-\noindent\textbf{One TCP slot, two ModelCards.} Dynamo's \texttt{SharedTcpServer} keys
-handlers by endpoint path while the \texttt{connection\_id} is process-level, so
-registering both a decode and a prefill handler on one engine would collide. We register
-exactly one TCP handler and dispatch at request time on the worker's current role, so the
-switch never reopens a socket---it only renames the entry that the frontend's
-\texttt{ModelWatcher} observes:
-
-\begin{lstlisting}[language=Python]
-async def _generate_dispatch(request, context):
-    if dm.current_role == "prefill" \
-       and partner_prefill_handler is not None:
-        async for chunk in _partner_prefill_generate(
-            request, context):
-            yield chunk
-        return
-    async for chunk in handler.generate(
-        request, context):
-        yield chunk
-\end{lstlisting}
-
-Making the post-switch pod a \emph{real} prefill worker also required reconciling a
-protocol mismatch: vLLM~0.16's \texttt{NixlConnector} publishes
-\texttt{kv\_transfer\_params} only on the last \texttt{RequestOutput} chunk, whereas
-Dynamo's Rust \texttt{PrefillRouter} reads \texttt{disaggregated\_params} only from the
-first. A wrapper consumes the stream, captures the last observed value, and yields a
-merged first chunk.
-
-\noindent\textbf{The cluster control plane as the coordination substrate.} Correctness
-does not rely on any in-process agreement between worker and frontend. The propagation
-chain on every flip is: the worker mutates its own CR $\rightarrow$ the API server
-persists it $\rightarrow$ the kube informer delivers a watch event $\rightarrow$ the
-frontend's \texttt{ModelWatcher} re-converges the WorkerSet and invalidates the routers.
-Pod identity is invariant, the CR is the single observable truth, no Kubernetes Service
-sits on the chat path, and convergence is bounded (empirically well under 200\,ms on a
-single-node cluster). The cost of this choice is that withdrawal is \emph{eventually}
-consistent, which is precisely what the envelope in the next section must absorb.
+Requirements~1--5 could be met by a short sequence of engine and registry calls.
+Requirement~6 cannot, because two of the transition's effects are not instantaneous: the
+withdrawal in~(1) reaches the routers only after the discovery layer converges, and the
+release in~(2) reclaims memory that a peer may still be reading. The protocol is
+therefore a state machine, structured as a safety envelope that establishes the
+preconditions for a role flip, enclosing an engine core that performs it.
 
 \subsection{The Switch Protocol}
 \label{sec:protocol}
 
+\noindent\textbf{What makes an in-place flip possible.} Three properties of the stack
+keep the protocol short. First, every dual-mode worker is constructed with
+\texttt{NixlConnector kv\_both}, so the engine registers NIXL metadata for both prefill-
+and decode-side semantics at boot; since \texttt{kv\_transfer\_config} is otherwise fixed
+at construction, this is what avoids an engine rebuild. Second, the worker registers a
+single TCP handler and selects between the decode and partner-prefill paths at request
+time on its current role, so a switch never rebinds a socket---it only renames the entry
+the frontend observes. Third, membership is metadata (Section~\ref{sec:dynamo-arch}), so
+publishing and withdrawing a role is a CR mutation rather than a topology change. What
+the third property costs is that the mutation is seen only eventually, which is the
+condition the envelope exists to absorb.
+
 \texttt{DualModeWorker.switch\_role(target)} runs under a per-worker asynchronous lock
 and proceeds through eight timed stages, each surfaced in the response's
-\texttt{timings\_ms} field. They divide into a \textbf{three-stage zero-loss envelope}
-(E1--E3) that makes the flip safe under in-flight traffic and a \textbf{five-stage engine
-core} (C1--C5) that performs the flip itself, plus one untimed transition---the role
-commit---between them (Figure~\ref{fig:role-switch}). The mid-term report also described
-eight steps, but a different eight: it enumerated the core alone, included two steps that
-are no-ops on the deployed path, and ordered the withdrawal after the pause rather than
-before it (Section~\ref{sec:ordering}).
+\texttt{timings\_ms} field: three envelope stages (E1--E3) followed by five core stages
+(C1--C5), with one untimed transition between them. Figure~\ref{fig:role-switch} shows
+the sequence, which is also the order in which we describe it.
 
-\noindent\textbf{Engine core (C1--C5).} \texttt{sleep(level=2)} pauses generation and
-returns the KV blocks to the GPU allocator; \texttt{reconfig\_nixl} rebinds the connector
-handle for the target role; \texttt{reset\_prefix\_cache} clears the cache index while the
-engine is asleep; the handler's role marker and the dispatcher's view are committed
-together; \texttt{register\_mdc} publishes a fresh ModelCard under the target-role
-endpoint URI; and \texttt{wake} resumes the engine. The mid-term report described this
-core alone, and in a different order---see Section~\ref{sec:ordering}.
+\noindent\textbf{E1 --- Cordon.} The worker withdraws its current-role ModelCard from its
+CR. This closes the intake, and because propagation to the routers is eventually
+consistent, it is done first so that convergence overlaps everything that follows.
 
-\noindent\textbf{Zero-loss envelope (E1--E3).} The core by itself drops requests when a
-flip is issued mid-flight, because the router keeps dispatching to the worker until it
-observes the withdrawal, so a request can land on a half-asleep engine. The envelope
-closes three distinct windows:
+\noindent\textbf{E2 --- Drain and settle.} The worker waits for its in-flight requests to
+finish naturally, then requires the engine to remain idle for a continuous observation
+window. Any arrival during the window restarts it, so the condition asserts that the
+routers have stopped selecting this worker---not merely that the engine is momentarily
+idle. Requests that do arrive in this interval are not rejected: between E1 and C4 the
+routers can only be acting on the old ModelCard, so such a request is old-role traffic by
+construction, and the request-time dispatcher suspends it until the switch completes and
+then serves it under the pre-switch role. Losslessness is thereby a property of the
+protocol rather than of waiting long enough, which is what permits a short window.
 
-\begin{itemize}[nosep]
-\item \textbf{E1 cordon.} Withdraw the old-role ModelCard \emph{before} anything else,
-starting the eventually-consistent propagation timer as early as possible.
-\item \textbf{E2 drain and settle.} Wait for in-flight requests on this worker to finish
-naturally, then require the engine to remain idle for a continuous window before
-proceeding. An arrival during the window restarts the observation, so the condition
-asserts \emph{the router has stopped routing here}, not merely \emph{the engine is idle
-right now}.
-\item \textbf{E3 outbound-KV drain.} Wait, with a bound, until no peer is still pulling
-KV that this worker produced while it held the prefill role
-(Section~\ref{sec:ordering}, constraint~4).
-\end{itemize}
+\noindent\textbf{E3 --- Outbound-KV drain.} If the worker has been serving prefill, peers
+may still be reading KV it produced. The worker polls the connector's pending-send
+registry and the block pool's pinned state until neither reports outstanding work, under
+a bound; whatever remains at the bound is an orphan no peer claimed and is expired. Only
+now is it safe to release GPU memory (Section~\ref{sec:ordering}, constraint~4).
 
-\noindent\textbf{Hold-during-switch.} Between E1 and C4 the router can only be acting on
-the \emph{old} ModelCard, so any request arriving in that interval is old-role traffic by
-construction. Rather than letting \texttt{sleep} reject it, the request-time dispatcher
-suspends the request until the switch completes and then serves it under the pre-switch
-role. This converts losslessness from a property of \emph{waiting long enough} into a
-property of the protocol, and is what permits a short settle window.
+\noindent\textbf{C1--C3 --- Cycle the engine.} \texttt{sleep(level=2)} pauses generation
+and returns the KV blocks to the allocator; \texttt{reconfig\_nixl} rebinds the connector
+handle for the target role; and \texttt{reset\_prefix\_cache} clears the cache index while
+the engine is asleep, so index and blocks are made consistent atomically with respect to
+the scheduler.
+
+\noindent\textbf{Role commit (untimed).} The handler's role marker and the dispatcher's
+view are updated together, so the worker is internally in the target role before any
+target-role traffic can reach it.
+
+\noindent\textbf{C4--C5 --- Republish and resume.} \texttt{register\_mdc} publishes a
+fresh ModelCard under the target-role endpoint URI, admitting the worker to the new
+WorkerSet, and \texttt{wake} resumes the engine.
 
 \begin{figure}[htbp]
 \centering
@@ -462,14 +431,14 @@ property of the protocol, and is what permits a short settle window.
   core/.style={box, fill=green!12},
   ann/.style={font=\tiny, align=left, text width=26mm, inner sep=1pt},
   arr/.style={-{Latex[length=1.3mm]}}]
-\node[env] (c) {(1) cordon, 16\,ms};
-\node[env, below=of c] (d) {(2) drain + settle};
-\node[env, below=of d] (k) {(3) outbound-KV wait};
-\node[core, below=of k] (sl) {(4) sleep(2), 58\,ms};
-\node[core, below=of sl] (rn) {(5) reconfig\_nixl, 5\,ms};
-\node[core, below=of rn] (rp) {(6) reset\_prefix, 2\,ms};
-\node[core, below=of rp] (rg) {(7) register\_mdc, 309\,ms};
-\node[core, below=of rg] (w) {(8) wake, 27\,ms};
+\node[env] (c) {E1 cordon};
+\node[env, below=of c] (d) {E2 drain + settle};
+\node[env, below=of d] (k) {E3 outbound-KV drain};
+\node[core, below=of k] (sl) {C1 sleep(2)};
+\node[core, below=of sl] (rn) {C2 reconfig\_nixl};
+\node[core, below=of rn] (rp) {C3 reset\_prefix};
+\node[core, below=of rp] (rg) {C4 register\_mdc};
+\node[core, below=of rg] (w) {C5 wake};
 \draw[arr] (c) -- (d);
 \draw[arr] (d) -- (k);
 \draw[arr] (k) -- (sl);
@@ -483,49 +452,42 @@ property of the protocol, and is what permits a short settle window.
 \node[ann, right=3mm of sl] {frees the GPU KV blocks};
 \node[ann, right=3mm of rp] {reset while asleep: no stale hit};
 \node[ann, right=3mm of rg] {publish only in the target role};
-\node[ann, right=3mm of w]  {\textbf{total 941\,ms} (884--1005)};
+\node[ann, right=3mm of w]  {engine resumes in the target role};
 \end{tikzpicture}
-\caption{The deployed two-layer \texttt{switch\_role} protocol, annotated with the
-10-switch means of Table~\ref{tab:switchcost}. Blue = zero-loss envelope,
-green = engine core; the dispatcher \textbf{holds} any request arriving between
-(1) and (7) and serves it under the pre-switch role. This \emph{replaces} the
-mid-term state machine, which ordered \texttt{sleep} before
-\texttt{unregister\_mdc} and omitted steps (2)--(3) --- the stages that
-account for 89\% of the measured cost.}
+\caption{The \texttt{switch\_role} protocol: a three-stage zero-loss envelope (E1--E3, blue) that establishes the preconditions for a role flip, enclosing a five-stage engine core (C1--C5, green) that performs it. Requests arriving between E1 and C4 are held by the dispatcher and served under the pre-switch role. Per-stage costs are reported in Section~\ref{sec:eval}.}
 \label{fig:role-switch}
 \end{figure}
 
 \subsection{Ordering Constraints}
 \label{sec:ordering}
 
-Four orderings make the protocol safe. Each expresses an invariant, and violating any one
-of them produces a distinct failure mode we encountered.
+Four orderings make the protocol safe. Each states an invariant, and each rules out a
+distinct failure.
 
-\noindent\textbf{(1) Cordon before draining.} Removing the ModelCard is what closes the
-intake, and its effect is eventually consistent; draining behind a still-published card
-merely lets the router refill the worker. \emph{This revises the mid-term ordering}, which
-paused generation first and unpublished second.
+\noindent\textbf{(1) Withdraw before draining.} Removing the ModelCard is what closes the
+intake, and its effect is eventually consistent. Draining behind a published card lets
+the routers refill the worker, so the drain never terminates on a busy deployment.
 
 \noindent\textbf{(2) Drain and confirm before sleeping.} \texttt{sleep(2)} does not
-guarantee that running requests finish, so their blocks retain \texttt{ref\_cnt>0} and the
-subsequent cache reset cannot free them.
+guarantee that running requests finish. Their blocks retain a non-zero reference count, so
+the subsequent cache reset cannot free them and the new role starts with a diminished
+block budget.
 
-\noindent\textbf{(3) Reset the prefix cache inside the sleep window.} \texttt{sleep(2)}
-returns cached blocks to the allocator while the index still references them. Resetting
-after wake races a new request onto a stale block; resetting while asleep is atomic from
-the scheduler's perspective. Symmetrically, the new ModelCard is published only once the
-engine is already in the target role, so traffic arriving on it can be served.
+\noindent\textbf{(3) Reset the cache inside the sleep window, and publish only after.}
+Sleeping returns cached blocks to the allocator while the index still references them, so
+a reset after wake races a new request onto a block that has been reused; performed while
+the engine is asleep, the reset is atomic from the scheduler's perspective. Symmetrically,
+the new ModelCard is published only once the engine is already in the target role, so
+traffic arriving on it can be served.
 
-\noindent\textbf{(4) Never sleep while a peer is pulling our KV.} \texttt{sleep(level=2)}
-frees GPU memory. If this worker served prefill and a peer decoder's NIXL READ against its
-KV is still in flight, sleeping destroys that transfer and the peer's request stalls until
-its client timeout. Force-expiring the connector's pending sends is equally destructive
-for a send that a peer is about to pull. The protocol therefore \emph{waits}---polling the
-connector's pending-send registry and the block pool's pinned state under a bound---and
-force-expires only what nobody claimed within that window. This constraint is the one the
-mid-term design lacked; the conservative settle window it used at the time happened to
-outlast typical pull times, so the omission was masked rather than absent.
+\noindent\textbf{(4) Never sleep while a peer is reading our KV.}
+\texttt{sleep(level=2)} frees GPU memory. If a peer decoder's NIXL read against this
+worker's KV is still in flight, sleeping destroys the transfer and the peer's request
+stalls until its client timeout. Force-expiring the connector's pending sends is equally
+destructive for a send a peer is about to read. The protocol therefore waits for the
+transfers to complete and expires only what no peer claimed, which is why E3 precedes C1.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{In-Flight Decoder Request Consolidation}
 \label{sec:consolidation}
 
