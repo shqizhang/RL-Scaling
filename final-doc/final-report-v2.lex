@@ -285,7 +285,14 @@ preconditions for a role flip, enclosing an engine core that performs it.
 
 \subsection{The Switch Protocol}
 
-\noindent\textbf{The deployed unit.} Each dual-mode worker is one pod holding one vLLM engine, exposing an inference intake, a dynamically-assigned request-serving slot, a metrics port and the control-plane sidecar the controller calls (Table~\ref{tab:ports}). The invariant that makes the flip cheap is \emph{one pod, one engine, one serving slot, two ModelCards}: the decode and prefill cards take turns owning the same slot, so a role change never creates or destroys a serving endpoint.
+\noindent\textbf{The deployed unit.} Each dual-mode worker is one pod holding one vLLM engine, exposing an inference intake, a dynamically-assigned request-serving slot, a metrics port and the control-plane sidecar the controller calls (Table~\ref{tab:ports}). The sidecar is what makes the role switch operable at all: it terminates the \texttt{/switch\_role} endpoint the controller invokes, alongside the \texttt{/migrate\_out} and \texttt{/migrate\_in} endpoints used for consolidation, so the primitives are driven entirely through the control plane rather than through the data path. Figure~\ref{fig:k8s-deploy} shows how the sidecar, the worker's Dynamo runtime and vLLM engine, the frontend's \texttt{ModelWatcher} and the Kubernetes discovery backend fit together. The invariant that makes the flip cheap is \emph{one pod, one engine, one serving slot, two ModelCards}: the decode and prefill cards take turns owning the same slot, so a role change never creates or destroys a serving endpoint.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{K8S-deployement.png}
+\caption{Deployment topology. Each worker pod runs the Dynamo runtime, a \texttt{kv\_both} vLLM engine, and an RL-Scaling sidecar exposing \texttt{/switch\_role} and \texttt{/migrate\_out}\,/\,\texttt{/migrate\_in}; workers register their ModelCards into the Kubernetes discovery backend, which the frontend's \texttt{ModelWatcher} reads to maintain the WorkerSet. The RL-Scaling controller drives both primitives through the sidecars, off the request path.}
+\label{fig:k8s-deploy}
+\end{figure}
 
 \begin{table}[t]
 \centering
@@ -547,7 +554,7 @@ timescale of a rollout, and it is the only lever that can return capacity to the
 Role assignment decides how those GPUs are split between prefill and decode; it acts on
 the timescale of a phase and is what addresses cross-phase waste. Placement decides which
 decoder holds which running request; it also acts within a phase and is what addresses
-intra-phase tail waste. We call them signal-triggered scaling, PD role switch and request consolidation.
+intra-phase tail waste. We call them signal-triggered scaling, PD role switch and request consolidation, and Figure~\ref{fig:rl-controller} shows how one control loop drives all three.
 
 The \emph{mixed} strategy is the configuration in which all three are enabled, and it is
 the one an RL operator would deploy. Over a single rollout it produces the following
@@ -612,7 +619,7 @@ observes, the rule each lever applies, and how the three are kept from interferi
   {role switch and consolidation act only while the batch is \textsc{active}; scaling alone changes how many GPUs are held};
 \end{tikzpicture}
 \caption{The control plane as implemented. A single periodic loop consumes the training
-job's phase signal and evaluates three policies per tick, in the order shown (Figure~\ref{fig:rl-controller}): placement
+job's phase signal and evaluates three policies per tick, in the order shown: placement
 (consolidation), role (role switch), then allocation (scaling). Only allocation is a state machine; role switch and consolidation are
 re-evaluated every tick while a batch is active, so both may act in the same tick, which is
 why the interlocks described below are required. Dashed edges are the
