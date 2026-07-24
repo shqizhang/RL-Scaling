@@ -65,7 +65,7 @@ Prefill--Decode (PD) disaggregation is the mainstream LLM inference architecture
 
 This report introduces two runtime primitives on Dynamo + vLLM~0.16, driven end-to-end by an RL-signal autoscaling controller: (1)~Elastic PD Role Switching---a state-machine-driven in-place protocol that flips a worker's role via ModelCard mutation and engine sleep/wake cycling, with no engine rebuild or pod redeploy; (2)~In-Flight Decoder Request Consolidation---a three-phase block-hold protocol that migrates running decode requests across GPUs with zero KV loss and then releases the drained decoders.
 
-We evaluate both primitives on a Kubernetes deployment of \texttt{Qwen3-0.6B} with a workload whose three request groups isolate each mechanism's regime in time, comparing every elastic configuration against a static control at \emph{identical GPU count} so that each difference reflects the mechanism rather than added capacity. Across fifteen runs every request returns a valid decode with no HTTP error and no timeout. Consolidation returns GPU time inside the rollout: a running request is migrated, the decode pool contracts from two replicas to one, and the released GPU is idle for the final $12.2$\,s of the batch, a saving the integrated occupancy independently confirms. Role switching completes in $941$\,ms and demonstrably reallocates capacity---during the prefill burst it raises the GPU-time spent in the prefill role by $77$\%, the direct signature of a decoder becoming a prefill worker---yet the batch is no faster, because its length is fixed by the decode tail rather than by the burst the switch accelerates. We therefore report a positive result for consolidation and a characterisation of when in-place role switching pays off: when a phase's wall clock is set by the computation the switch re-provisions, which on this workload it is not.
+We evaluate both primitives on a Kubernetes deployment of \texttt{Qwen3-0.6B}, comparing each elastic configuration against a static control at \emph{identical GPU count} so that every difference reflects the mechanism rather than added capacity. Consolidation returns GPU time inside the rollout: the decode pool contracts from two replicas to one and the released GPU is idle for the final $12.2$\,s of the batch, a saving the integrated occupancy independently confirms. Role switching completes in $941$\,ms and demonstrably reallocates capacity---during the prefill burst it raises the GPU-time in the prefill role by $77$\%, the direct signature of a decoder becoming a prefill worker---yet the batch is no faster, because its length is fixed by the decode tail rather than by the burst the switch accelerates. We therefore report a positive result for consolidation and a characterisation of when in-place role switching pays off: when a phase's wall clock is set by the computation the switch re-provisions, which on this workload it is not.
 \end{abstract}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -796,6 +796,8 @@ paired. Every run reported here is complete and error-free: 100\% of requests re
 valid decode, with no HTTP~5xx and no timeout, and each run's measured wall clock equals
 its batch makespan, confirming that no harness waiting is included in any reported time.
 
+Where GPU-time is reported by role, it is integrated from a per-tick census of each ready pod's \emph{runtime} role, read from the role label the sidecar publishes when it switches, rather than from the Deployment a pod belongs to. The distinction is essential for the role-switch results: a decoder that has become a prefill worker still belongs to the decode Deployment, so a Deployment-based count would attribute its work to the wrong role and hide the very reallocation being measured.
+
 \subsection{Workload and Comparison Design}
 \label{sec:workload}
 
@@ -930,15 +932,14 @@ inside a 35\,s request is not visible at the phase level.
 Group~C is dispatched at $t_0{+}45$\,s and its stragglers run to their token limit, finishing
 near 83\,s; the makespan is that finishing time, and it is independent of how quickly the
 earlier groups complete. Even a burst shortened by role switching would leave the batch the
-same length. The absence of a makespan gain is thus a property of the workload's structure,
-not a failure of the mechanism, and the negative result should be read as a statement about
-when the mechanism helps rather than whether it works.
-
-\noindent\textbf{The reverse switch is visible where it should be.} After the revert restores
-the 2P2D split, group~B's time-to-first-token improves over the control ($327 \rightarrow
-291$\,ms) and group~C finishes marginally sooner ($37.1$ against $37.9$\,s). The primitive is
-therefore correct in both directions and its effect appears in the phase it targets; what
-this deployment lacks is a phase whose wall clock the reallocated capacity could shorten.
+same length. The absence of a makespan gain is thus a property of the workload's structure, not a failure
+of the mechanism. That the reverse switch is equally well-behaved confirms the point from the
+other side: after it restores the 2P2D split, group~B's time-to-first-token improves over the
+control ($327\rightarrow291$\,ms) and group~C finishes marginally sooner ($37.1$ against
+$37.9$\,s). The primitive is correct in both directions and its effect appears in the phase it
+targets; what this deployment lacks is a phase whose wall clock the reallocated capacity could
+shorten, so the negative result is a statement about when the mechanism helps, not whether it
+works.
 
 \subsection{Consolidation Reclaims GPU Time at Fixed GPU Count}
 \label{sec:level3}
