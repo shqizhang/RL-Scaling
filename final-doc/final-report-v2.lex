@@ -70,7 +70,6 @@ We evaluate both primitives on a Kubernetes deployment of \texttt{Qwen3-0.6B}, c
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Introduction}
-\label{sec:intro}
 
 The cost of large-language-model inference is measured in GPU-hours, and the dominant
 architectural response is prefill--decode (PD) disaggregation: a request's two phases have
@@ -83,7 +82,6 @@ construction---the reinforcement-learning rollout loop---and asks whether its wa
 removed by changing a deployment's \emph{shape} rather than its \emph{size}.
 
 \subsection{The RL Workload and Its Two Wastes}
-\label{sec:rl-waste}
 
 In online chat serving traffic is near-stationary and a static PD partition works, because
 both pools stay busy. The rollout loop that drives modern post-training (RLHF, DPO, GRPO)
@@ -112,7 +110,6 @@ what conventional elasticity adjusts.
 \end{figure}
 
 \subsection{Limitations of Conventional Elasticity}
-\label{sec:limitations}
 
 Horizontal pod scaling reacts on the wrong timescale. A new worker takes tens of seconds to
 become ready---one to two orders of magnitude longer than the phase it was meant to
@@ -136,7 +133,6 @@ No existing serving system re-roles a running worker or relocates a running requ
 comparison with related systems that closes this section makes precise.
 
 \subsection{Objective and Metrics}
-\label{sec:opt-targets}
 
 The waste to be removed is allocated GPU-time that does no useful work, so the quantity we
 optimise is the GPU-time a deployment spends, and the quantities we report are its
@@ -151,7 +147,6 @@ these to a single utilisation ratio: the components are what distinguish a mecha
 reallocates capacity from one that reclaims it, and a ratio would hide that distinction.
 
 \subsection{Contributions and Claims}
-\label{sec:contributions}
 
 This work contributes two runtime primitives, a policy that drives them from the training
 job's own signal, and---the result we regard as most useful---a characterisation of when
@@ -192,19 +187,16 @@ workload whose makespan is set by the phase the switch accelerates rather than b
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Background and Related Work}
-\label{sec:background}
 
 \subsection{Prefill--Decode Disaggregation}
-\label{sec:pd-disagg}
 
 LLM inference of every request goes through two serial phases that share the same model weights but have different resource bottlenecks. The prefill phase processes all $N$ prompt tokens in a single forward pass with full-rank attention, and is compute-bound due to large GEMMs. The decode phase generates one token at a time against the growing KV cache, and is memory-bandwidth-bound.
 
 Co-locating both phases on one GPU (continuous batching) maximizes raw throughput but causes severe head-of-line blocking: a single long prefill stalls a batch of fast decodes. PD-disaggregated serving---pioneered by Splitwise~\cite{splitwise} and DistServe~\cite{distserve} and now the mainstream pattern adopted by NVIDIA Dynamo~\cite{dynamo}, vLLM-disagg~\cite{vllm}, and SGLang-disagg---splits the two phases onto separate GPU pools. The prefill pool produces the KV cache and ships it to the decode pool over a high-bandwidth fabric (NVLink / RDMA via NIXL~\cite{nixl}). The advantages are: compute-bound and bandwidth-bound work no longer interfere; each pool can be sized to its own bottleneck; and prefix caching becomes a first-class cross-request optimization.
 
-However, the split inherits a structural inefficiency: the ratio of compute to memory traffic in a workload may not match the ratio of prefill to decode GPUs that the operator provisioned, so one pool is idle while the other is the bottleneck. This mismatch is amplified in RL workloads where traffic arrives in bursts, and it is the central leverage point of this work. Disaggregation also introduces a cost that co-location does not have: every request's KV must cross the fabric between the pools, so a deployment whose fabric is slow relative to its compute can find that transfer, rather than either phase's computation, sets the pace. Section~\ref{sec:transport} establishes which regime the deployment measured here is in, and Section~\ref{sec:eval} shows that the answer determines which of our two primitives pays off.
+However, the split inherits a structural inefficiency: the ratio of compute to memory traffic in a workload may not match the ratio of prefill to decode GPUs that the operator provisioned, so one pool is idle while the other is the bottleneck. This mismatch is amplified in RL workloads where traffic arrives in bursts, and it is the central leverage point of this work. Disaggregation also introduces a cost that co-location does not have: every request's KV must cross the fabric between the pools, so a deployment whose fabric is slow relative to its compute can find that transfer, rather than either phase's computation, sets the pace. Direct measurement of the KV path, reported with the consolidation protocol, establishes which regime the deployment measured here is in, and the evaluation shows that the answer determines which of our two primitives pays off.
 
 \subsection{NVIDIA Dynamo Runtime Architecture}
-\label{sec:dynamo-arch}
 
 Dynamo provides the routing and discovery substrate on top of stateful vLLM engines. Figure~\ref{fig:dynamo-arch} illustrates the overall architecture.
 
@@ -219,19 +211,17 @@ Three of Dynamo's subsystems determine what an in-place elasticity mechanism can
 
 \noindent\textbf{Discovery: membership is metadata.} One Kubernetes Custom Resource per worker pod is the single source of truth for membership. Each worker strategic-merge-patches its own CR and the frontend's \texttt{ModelWatcher} reconstructs the WorkerSet by \texttt{list+watch}; there is no etcd and no central registry. \emph{Consequence:} a role change is a single metadata mutation visible to the whole system, so it needs neither a pod restart nor an engine rebuild---the property the switch protocol is built on.
 
-\noindent\textbf{Routing: the routers are stateful.} \texttt{KvRouter} maintains a radix-tree index over the KV blocks held by each decoder and scores candidates by prefix-overlap, queue load and remaining capacity; \texttt{PrefillRouter} fans prefill traffic to any prefill-role worker discovered through the CRs. \emph{Consequence:} that state must reconverge after every role change, and because convergence is eventually consistent, a worker keeps receiving old-role traffic for a short interval after it is withdrawn. Absorbing that interval safely is the central difficulty of Section~\ref{sec:protocol}.
+\noindent\textbf{Routing: the routers are stateful.} \texttt{KvRouter} maintains a radix-tree index over the KV blocks held by each decoder and scores candidates by prefix-overlap, queue load and remaining capacity; \texttt{PrefillRouter} fans prefill traffic to any prefill-role worker discovered through the CRs. \emph{Consequence:} that state must reconverge after every role change, and because convergence is eventually consistent, a worker keeps receiving old-role traffic for a short interval after it is withdrawn. Absorbing that interval safely is the central difficulty of the switch protocol.
 
-\noindent\textbf{Transport: KV is addressable across GPUs.} The NIXL connector performs zero-copy KV transfer, selecting a transport per pair of endpoints from those actually reachable between them, and the KV-Block Manager tracks the per-request block layout. Which transport is selected on the deployment measured here, and why it matters for the results, is established in Section~\ref{sec:transport}. \emph{Consequence:} one decoder can read another's KV blocks directly from VRAM, which is what makes migrating a \emph{running} request feasible at all (Section~\ref{sec:three-phase}).
+\noindent\textbf{Transport: KV is addressable across GPUs.} The NIXL connector performs zero-copy KV transfer, selecting a transport per pair of endpoints from those actually reachable between them, and the KV-Block Manager tracks the per-request block layout. Which transport is selected on the deployment measured here, and why it matters for the results, is established where the migration protocol is described. \emph{Consequence:} one decoder can read another's KV blocks directly from VRAM, which is what makes migrating a \emph{running} request feasible at all, as the migration protocol shows.
 
 \subsection{KV Cache, Prefix Caching, and the Coherence Problem}
-\label{sec:kv-cache}
 
 Decode is only affordable because the keys and values of every prior token are retained: the KV cache turns a quadratic re-computation into an incremental one. Prefix caching~\cite{lmcache} extends the same idea across requests, reusing blocks whenever two prompts share a prefix. The implementation detail that matters for this work is that vLLM~0.16 splits the structure in two: an \emph{index} in CPU memory that maps token prefixes to block identifiers, and the \emph{blocks} themselves, pinned in GPU VRAM.
 
-That split is what makes an in-place role change delicate. Reclaiming a worker's GPU memory (via \texttt{engine.sleep(level=2)}) returns the blocks to the allocator but leaves the index intact, so the two halves can disagree: an index entry may point at a block that now belongs to a different request. A hit on such an entry after wake-up would silently splice another request's state into the current one. Any protocol that cycles the engine must therefore treat the index and the blocks as a single object and re-establish their agreement while the engine is quiescent---the constraint developed in Section~\ref{sec:ordering}. The same split has a second consequence used later: because the blocks are addressable GPU memory, a peer worker can read them directly over NIXL, which is the mechanism that makes live request migration possible at all (Section~\ref{sec:three-phase}).
+That split is what makes an in-place role change delicate. Reclaiming a worker's GPU memory (via \texttt{engine.sleep(level=2)}) returns the blocks to the allocator but leaves the index intact, so the two halves can disagree: an index entry may point at a block that now belongs to a different request. A hit on such an entry after wake-up would silently splice another request's state into the current one. Any protocol that cycles the engine must therefore treat the index and the blocks as a single object and re-establish their agreement while the engine is quiescent---the third ordering constraint of the switch protocol. The same split has a second consequence used later: because the blocks are addressable GPU memory, a peer worker can read them directly over NIXL, which is the mechanism that makes live request migration possible at all.
 
 \subsection{Related Systems and Distinctions}
-\label{sec:related}
 
 \begin{table}[t]
 \centering
@@ -256,10 +246,8 @@ To our knowledge, no prior open-source serving system combines (a) in-place sub-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Elastic PD Role Switching}
-\label{sec:role-switch}
 
 \subsection{Problem Definition}
-\label{sec:switch-problem}
 
 Consider a running disaggregated deployment with $D$ decoder pods and $P$ prefill pods
 behind a single frontend. At a rollout phase boundary the controller must convert a
@@ -296,7 +284,6 @@ therefore a state machine, structured as a safety envelope that establishes the
 preconditions for a role flip, enclosing an engine core that performs it.
 
 \subsection{The Switch Protocol}
-\label{sec:protocol}
 
 \noindent\textbf{The deployed unit.} Each dual-mode worker is one pod holding one vLLM engine, exposing an inference intake, a dynamically-assigned request-serving slot, a metrics port and the control-plane sidecar the controller calls (Table~\ref{tab:ports}). The invariant that makes the flip cheap is \emph{one pod, one engine, one serving slot, two ModelCards}: the decode and prefill cards take turns owning the same slot, so a role change never creates or destroys a serving endpoint.
 
@@ -324,7 +311,7 @@ and decode-side semantics at boot; since \texttt{kv\_transfer\_config} is otherw
 at construction, this is what avoids an engine rebuild. Second, the worker registers a
 single TCP handler and selects between the decode and partner-prefill paths at request
 time on its current role, so a switch never rebinds a socket---it only renames the entry
-the frontend observes. Third, membership is metadata (Section~\ref{sec:dynamo-arch}), so
+the frontend observes. Third, membership is metadata---publishing or withdrawing a role is a Custom-Resource mutation---so
 publishing and withdrawing a role is a CR mutation rather than a topology change. What
 the third property costs is that the mutation is seen only eventually, which is the
 condition the envelope exists to absorb.
@@ -353,7 +340,7 @@ protocol rather than of waiting long enough, which is what permits a short windo
 may still be reading KV it produced. The worker polls the connector's pending-send
 registry and the block pool's pinned state until neither reports outstanding work, under
 a bound; whatever remains at the bound is an orphan no peer claimed and is expired. Only
-now is it safe to release GPU memory (Section~\ref{sec:ordering}, constraint~4).
+now is it safe to release GPU memory (the fourth ordering constraint below).
 
 \noindent\textbf{C1--C3 --- Cycle the engine.} \texttt{sleep(level=2)} pauses generation
 and returns the KV blocks to the allocator; \texttt{reconfig\_nixl} rebinds the connector
@@ -403,12 +390,11 @@ WorkerSet, and \texttt{wake} resumes the engine.
 \node[ann, right=3mm of rg] {publish only in the target role};
 \node[ann, right=3mm of w]  {engine resumes in the target role};
 \end{tikzpicture}
-\caption{The \texttt{switch\_role} protocol: a three-stage zero-loss envelope (E1--E3, blue) that establishes the preconditions for a role flip, enclosing a five-stage engine core (C1--C5, green) that performs it. Requests arriving between E1 and C4 are held by the dispatcher and served under the pre-switch role. Per-stage costs are reported in Section~\ref{sec:eval}.}
+\caption{The \texttt{switch\_role} protocol: a three-stage zero-loss envelope (E1--E3, blue) that establishes the preconditions for a role flip, enclosing a five-stage engine core (C1--C5, green) that performs it. Requests arriving between E1 and C4 are held by the dispatcher and served under the pre-switch role. Per-stage costs are reported in the evaluation.}
 \label{fig:role-switch}
 \end{figure}
 
 \subsection{Ordering Constraints}
-\label{sec:ordering}
 
 Four orderings make the protocol safe. Each states an invariant, and each rules out a
 distinct failure.
@@ -440,10 +426,8 @@ transfers to complete and expires only what no peer claimed, which is why E3 pre
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{In-Flight Decoder Request Consolidation}
-\label{sec:consolidation}
 
 \subsection{Problem Definition}
-\label{sec:consol-problem}
 
 Role switching can shrink the decoder pool only when the target decoder has no live
 requests, and a switch issued mid-flight terminates whatever is running. Near the end of a
@@ -455,7 +439,6 @@ migrated request is only useful if the freed GPU is actually reclaimed, a path f
 ``source is drained'' to ``GPU is released''.
 
 \subsection{The Three-Phase Block-Hold Protocol}
-\label{sec:three-phase}
 
 The protocol moves a request $R$ from a source decoder $D_{\text{src}}$ to a destination
 decoder $D_{\text{dst}}$ in three coordinated phases (Figure~\ref{fig:migration}). Its
@@ -494,12 +477,11 @@ sequential handshake.
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{request-consolidation.png}
-\caption{Three-phase block-hold migration. The source keeps the request alive and its blocks pinned for the whole handshake, so an authoritative KV copy exists at every instant. The read is issued through NIXL, whose transport is selected per agent pair (Section~\ref{sec:transport}); recompute is the fallback when the block index is unavailable. The stage that reclaims the GPU follows in Section~\ref{sec:idle-release-mech}.}
+\caption{Three-phase block-hold migration. The source keeps the request alive and its blocks pinned for the whole handshake, so an authoritative KV copy exists at every instant. The read is issued through NIXL, whose transport is selected per agent pair as discussed below; recompute is the fallback when the block index is unavailable. The stage that reclaims the freed GPU follows separately.}
 \label{fig:migration}
 \end{figure}
 
 \subsection{KV Transport and Its Measured Cost}
-\label{sec:transport}
 
 The protocol is written against read semantics---the destination fetches from the source's
 memory---and is indifferent to how the read is realised. Realising it is the responsibility
@@ -528,10 +510,9 @@ UCX selected---a faster fabric would shorten the handshake without changing its 
 the evaluation, ruling out transport as the bottleneck is what makes the later finding
 interpretable: when role switching adds prefill capacity yet the burst does not finish
 sooner, the cause is not a slow KV path but the structure of the workload, which we examine
-directly in Section~\ref{sec:eval}.
+directly in the evaluation.
 
 \subsection{Selecting the Request and the Destination}
-\label{sec:mig-strategy}
 
 Each worker maintains an in-process registry of its active requests, updated at
 submission, on every streaming delta and at completion. Source-side victim selection picks
@@ -541,7 +522,6 @@ tokens remain to justify the transfer. The controller ranks candidate peers by l
 chooses the least-loaded decoder with spare KV capacity.
 
 \subsection{From a Drained Decoder to a Reclaimed GPU}
-\label{sec:idle-release-mech}
 
 Migration makes a decoder drainable; it does not by itself return the GPU. The controller
 completes the chain: once a decoder reports no active requests it is marked for release,
@@ -553,17 +533,15 @@ This is the stage that converts a successful migration into reclaimed GPU time, 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{The RL-Driven Control Plane}
-\label{sec:implementation}
 
-The two primitives of Sections~\ref{sec:role-switch} and~\ref{sec:consolidation} are
+The role-switch and consolidation primitives are
 mechanisms: each performs one operation when asked. This section defines the policy that
 asks. Its objective is that a training job's own phase signal, and nothing else, should
 reshape a live deployment for the duration of a rollout and return it afterwards.
 
 \subsection{Three Levers on Three Timescales}
-\label{sec:levers}
 
-The waste identified in Section~\ref{sec:rl-waste} has two components, and no single lever
+The two-part waste identified in the introduction---cross-phase and tail---admits no single lever that
 removes both. Allocation decides how many GPUs the deployment holds; it acts on the
 timescale of a rollout, and it is the only lever that can return capacity to the cluster.
 Role assignment decides how those GPUs are split between prefill and decode; it acts on
@@ -637,13 +615,12 @@ observes, the rule each lever applies, and how the three are kept from interferi
 job's phase signal and evaluates three policies per tick, in the order shown (Figure~\ref{fig:rl-controller}): placement
 (consolidation), role (role switch), then allocation (scaling). Only allocation is a state machine; role switch and consolidation are
 re-evaluated every tick while a batch is active, so both may act in the same tick, which is
-why the interlocks of Section~\ref{sec:interlocks} are required. Dashed edges are the
+why the interlocks described below are required. Dashed edges are the
 actions each policy may issue.}
 \label{fig:rl-controller}
 \end{figure*}
 
 \subsection{What the Controller Observes}
-\label{sec:inputs}
 
 One periodic loop drives everything, over three inputs.
 
@@ -665,7 +642,6 @@ per pool, falling back to in-flight counts when a metric is unavailable so that 
 failure degrades the policy rather than disabling it.
 
 \subsection{The Decision Rules}
-\label{sec:rules}
 
 On each tick the loop evaluates placement, then role, then allocation. The order is
 deliberate: consolidation may empty a decoder, which changes the idleness the role rule
@@ -738,7 +714,7 @@ that the destination pool is actually short of capacity; the occupancy term esta
 that the source pool can spare a worker, so the switch does not create the shortage it is
 meant to relieve; and the cardinality term preserves a minimum of each role, without which
 a pool could be emptied and the deployment would cease to serve. The extra conjunct in
-Equation~\ref{eq:p2d} is discussed in Section~\ref{sec:interlocks}. The target is the
+Equation~\ref{eq:p2d} is discussed under the interlocks below. The target is the
 eligible worker with the fewest in-flight requests, which minimises the drain the protocol
 must wait for, and a minimum interval between switches bounds how often the topology may
 change.
@@ -760,7 +736,6 @@ observations rather than a single one distinguishes a decoder that has genuinely
 from one that is momentarily between requests.
 
 \subsection{Keeping the Levers from Interfering}
-\label{sec:interlocks}
 
 Run together, the role switch and consolidation interact in two specific ways, each closed by one rule.
 
@@ -780,10 +755,8 @@ creates the idleness that justifies the other.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Evaluation}
-\label{sec:eval}
 
 \subsection{Experimental Setup}
-\label{sec:env}
 
 All measurements are taken on a single-node Kubernetes~1.34 cluster in namespace
 \texttt{dynamo-system}, serving \texttt{Qwen/Qwen3-0.6B} under PD disaggregation on four
@@ -799,7 +772,6 @@ its batch makespan, confirming that no harness waiting is included in any report
 Where GPU-time is reported by role, it is integrated from a per-tick census of each ready pod's \emph{runtime} role, read from the role label the sidecar publishes when it switches, rather than from the Deployment a pod belongs to. The distinction is essential for the role-switch results: a decoder that has become a prefill worker still belongs to the decode Deployment, so a Deployment-based count would attribute its work to the wrong role and hide the very reallocation being measured.
 
 \subsection{Workload and Comparison Design}
-\label{sec:workload}
 
 \begin{table}[htbp]
 \centering
@@ -845,7 +817,6 @@ pools shortens the batch; that role switching moves capacity between the pools w
 phase; and that consolidation returns a GPU before the batch ends.
 
 \subsection{Topology Scaling Establishes the Control}
-\label{sec:level1}
 
 \begin{table}[htbp]
 \centering
@@ -878,7 +849,6 @@ what an ordinary replica-count increase achieves, at the cost of allocating the 
 the whole batch.
 
 \subsection{Role Switching Reallocates Capacity at Fixed GPU Count}
-\label{sec:level2}
 
 \begin{table}[htbp]
 \centering
@@ -942,7 +912,6 @@ shorten, so the negative result is a statement about when the mechanism helps, n
 works.
 
 \subsection{Consolidation Reclaims GPU Time at Fixed GPU Count}
-\label{sec:level3}
 
 \begin{table}[htbp]
 \centering
@@ -990,19 +959,17 @@ whole-run decode-GPU-seconds by $18.5\%$. The mechanism is the same; the opportu
 larger.
 
 \subsection{The Combined Policy Composes Both Primitives}
-\label{sec:level4}
 
 With both primitives enabled, the two act without interfering: all runs complete at 100\%
 validity, the switches fire in both directions, and consolidation still releases a decoder
 12.1\,s before the end. The costs, however, add: the makespan is 88.3\,s against the
 control's 82.9\,s, since the combined policy pays the lengthened prefill burst of
-Section~\ref{sec:level2} (53.2\,s) and the lengthened tail of Section~\ref{sec:level3}
+the lengthened prefill burst (53.2\,s) and the lengthened tail
 (43.3\,s) in the same run. Consolidation is also less consistent here: a migration occurs in one run of three rather than in all three, although a decoder is released in all three. The interlocks of the interlocks that de-conflict the levers are the likely cause, since they delay a release candidate long enough that a decoder may drain on its own before a migration pair is formed, but we did not instrument the decision to confirm it and record the difference as unexplained. The combined policy is therefore
 demonstrably composable and safe, and on this deployment it inherits the weaker of its two
 components rather than the stronger.
 
 \subsection{Switch Cost and Its Amortisation}
-\label{sec:switchcost}
 
 \begin{table}[htbp]
 \centering
@@ -1044,7 +1011,6 @@ mechanism becomes \emph{beneficial} at that scale is a separate question, and on
 deployment cannot answer, since its constraint is transport rather than prefill capacity.
 
 \subsection{Summary}
-\label{sec:evalsummary}
 
 \begin{table}[htbp]
 \centering
@@ -1071,7 +1037,6 @@ the rollout, by an amount that its observed topology change accounts for. Both h
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Discussion and Future Work}
-\label{sec:discussion}
 
 \subsection{Discussion}
 
