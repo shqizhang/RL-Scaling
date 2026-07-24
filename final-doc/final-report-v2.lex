@@ -510,23 +510,17 @@ megabytes for the model used here---crosses in a few tens of milliseconds, two t
 orders of magnitude below a request's end-to-end service time. The transfer is therefore
 fast enough that it never appears as the dominant term in any measurement we report.
 
-This has one bearing on the design and one on the evaluation. For the design, because the
-transfer is cheap the value of consolidation comes entirely from releasing a decoder, not
-from the speed of the move, so the reclaim reported later does not depend on which transport
-UCX selected---a faster fabric would shorten the handshake without changing its outcome. For
-the evaluation, ruling out transport as the bottleneck is what makes the later finding
-interpretable: when role switching adds prefill capacity yet the burst does not finish
-sooner, the cause is not a slow KV path but the structure of the workload, which we examine
-directly in the evaluation.
+This measurement lets us set the transport aside. Because the KV path is fast, it is not a confound in what follows: the effectiveness of each primitive can be attributed to the scheduling decision it makes rather than to the speed of the fabric it runs on. Consolidation reclaims a GPU by releasing a drained decoder, a gain that a faster transport would not enlarge; and where role switching reallocates prefill capacity without shortening the batch, the cause is the structure of the workload, not a slow KV move. Ruling the transport out is what keeps the evaluation's conclusions about the mechanisms simple and direct.
 
 \subsection{Selecting the Request and the Destination}
 
-Each worker maintains an in-process registry of its active requests, updated at
-submission, on every streaming delta and at completion. Source-side victim selection picks
-the most-progressed request, which maximises the replay cost avoided per migration.
-Destination-side admission declines when the replay cost exceeds a threshold or too few
-tokens remain to justify the transfer. The controller ranks candidate peers by load and
-chooses the least-loaded decoder with spare KV capacity.
+What migrates is the request's accumulated KV cache: the destination reads the source's KV blocks over NIXL and resumes decoding from them, so the value of a migration is the compute those blocks already embody and its cost is the time to move them. Three concrete decisions follow from this, each read from the per-worker request registry that is updated at submission, on every streaming delta and at completion.
+
+\noindent\textit{Which decoder to drain.} The controller sorts decoders by in-flight count and drains the emptiest---those holding at most a small threshold of requests---since emptying a near-idle decoder frees a GPU for the fewest moves. A drain is attempted only when the estimated transfer time is below half the source's estimated remaining serving time, so a decoder that would finish on its own before the move completes is left alone.
+
+\noindent\textit{Which peer receives.} Among the remaining decoders the controller picks the one with the most spare KV capacity, and only if that capacity can absorb all of the source's in-flight requests, so consolidation never creates a new hotspot.
+
+\noindent\textit{Which request, and whether at all.} Within a drained decoder the most-progressed request moves first, as it carries the largest KV cache and thus the most saved compute. A request is admitted only if it has generated at least a floor of tokens (too little progress is not worth preserving) and has enough tokens still to produce that the round-trip pays for itself (a request about to finish is left in place). A ceiling on total sequence length bounds the cost of the recompute fallback taken when the block index is unavailable.
 
 \subsection{From a Drained Decoder to a Reclaimed GPU}
 
@@ -674,13 +668,11 @@ from the frontend's per-role queue gauge, falling back to in-flight counts when 
 metric is unavailable, and---for the prefill side only---combined with a term $a_{\mathcal{P}}$ derived from the phase signal:
 \begin{equation}
 Q_{\mathcal{P}} = \max\!\big(q_{\mathcal{P}},\; a_{\mathcal{P}}\big),
-\quad
-a_{\mathcal{P}} = \lceil B/c \rceil\; \mathbf{1}\!\big[\bar{L}_{\text{in}} \ge L^{*}\big],
-\quad
-Q_{\mathcal{D}} = q_{\mathcal{D}}.
+\qquad
+Q_{\mathcal{D}} = q_{\mathcal{D}},
 \label{eq:backlog}
 \end{equation}
-where $q_r$ is the observed queue depth and $a_{\mathcal{P}}$ admits the prefill work the signal announces: $B$ is the batch size, $c$ the per-worker concurrency and $\bar{L}_{\text{in}}$ the average input length. The indicator fires only for
+where $q_r$ is the observed queue depth and the announced term is $a_{\mathcal{P}} = \lceil B/c\rceil$ when the average input length $\bar{L}_{\text{in}}$ exceeds a threshold $L^{*}$ (a prompt-heavy batch) and $0$ otherwise, with $B$ the batch size and $c$ the per-worker concurrency. The indicator fires only for
 prompt-heavy batches ($L^{*}=1024$ tokens), and the term expires when a later signal
 reports that the remaining work is no longer prompt-heavy. Equation~\ref{eq:backlog} is
 where the ``demand is known in advance'' property enters the policy quantitatively: the
@@ -773,7 +765,7 @@ GPUs. Five deployments are measured, each three times: the 1P1D baseline
 fifteen runs are interleaved and counterbalanced within each round, so that any drift in
 cluster warmth is common to all scenarios in a round and comparisons within a round remain
 paired. Every run reported here is complete and error-free: 100\% of requests returned a
-valid decode, with no HTTP~5xx and no timeout, and each run's measured wall clock equals
+valid decode, with no errors and no timeout, and each run's measured wall clock equals
 its batch makespan, confirming that no harness waiting is included in any reported time.
 
 Where GPU-time is reported by role, it is integrated from a per-tick census of each ready pod's \emph{runtime} role, read from the role label the sidecar publishes when it switches, rather than from the Deployment a pod belongs to. The distinction is essential for the role-switch results: a decoder that has become a prefill worker still belongs to the decode Deployment, so a Deployment-based count would attribute its work to the wrong role and hide the very reallocation being measured.
@@ -783,19 +775,19 @@ Where GPU-time is reported by role, it is integrated from a per-tick census of e
 \begin{table}[htbp]
 \centering
 \caption{The 96-request workload. One generator seed produces it once; every scenario
-replays the identical requests. The three groups differ in prompt length, generation
-length and arrival time so that each exercises a different part of the system.}
+replays the identical requests. The three groups differ in prompt length and generation length, and (as the text
+describes) in when they arrive, so that each exercises a different part of the system.}
 \label{tab:workload}
 \scriptsize
-\begin{tabularx}{\linewidth}{@{}lccLL@{}}
+\begin{tabularx}{\linewidth}{@{}lcLL@{}}
 \toprule
-Group & Reqs & Arrives & Shape & Exercises \\
+Group & Reqs & Shape & Exercises \\
 \midrule
-A prefill burst & 44 & $t_0$ & long prompt ($\approx$1940 tok), 1 output token &
-prefill capacity: all prompts arrive at once and need no sustained generation \\
-B decode dense & 49 & $t_0{+}45$\,s & short prompt ($\approx$570 tok), 768--1280 output tokens &
+A prefill burst & 44 & long prompt ($\approx$1940 tok), 1 output token &
+prefill capacity: all prompts arrive together and need no sustained generation \\
+B decode dense & 49 & short prompt ($\approx$570 tok), 768--1280 output tokens &
 decode capacity: sustained generation with no new prefill demand \\
-C long tail & 3 & $t_0{+}45$\,s & short prompt, 5000 output tokens, EOS suppressed &
+C long tail & 3 & short prompt, 5000 output tokens, EOS suppressed &
 the tail: a few long completions outlive the batch and pin decoders \\
 \bottomrule
 \end{tabularx}
@@ -804,7 +796,7 @@ the tail: a few long completions outlive the batch and pin decoders \\
 The workload is constructed so that each mechanism has an interval in which it is the only
 thing that can act (Table~\ref{tab:workload}). Group~A dispatches every prompt at once and
 asks for a single output token, so the demand it creates is almost purely prefill---the
-condition a decode-to-prefill switch exists to serve. Group~B arrives once A is in flight
+condition a decode-to-prefill switch exists to serve. Group~B is launched 45\,s later, once A is in flight,
 and inverts the ratio: short prompts, long generations, no new prefill work, which is the
 condition for the reverse switch. Group~C is three completions long enough to outlive both,
 with end-of-sequence suppressed so they run to their token limit rather than finishing
