@@ -311,7 +311,7 @@ RL-Scaling sidecar & :9091 & Control-plane HTTP \\
 \end{tabularx}
 \end{table}
 
-\noindent\textbf{What makes an in-place flip possible.} Three properties of the stack
+\noindent\textbf{Enabling properties of the stack.} Three properties of the stack
 keep the protocol short. First, every dual-mode worker is constructed with
 \texttt{NixlConnector kv\_both}, so the engine registers NIXL metadata for both prefill-
 and decode-side semantics at boot; since \texttt{kv\_transfer\_config} is otherwise fixed
@@ -627,7 +627,7 @@ actions each policy may issue.}
 \label{fig:rl-controller}
 \end{figure*}
 
-\subsection{What the Controller Observes}
+\subsection{The Controller's Inputs}
 
 One periodic loop drives everything, over three inputs.
 
@@ -1047,11 +1047,11 @@ the rollout, by an amount that its observed topology change accounts for. Both h
 
 \subsection{Discussion}
 
-\noindent\textbf{What is settled.} Both primitives are correct and lossless: across fifteen runs and five deployments, every request returned a valid decode with no HTTP error and no timeout, while switches fired in both directions and running requests were migrated between decoders. Consolidation returns GPU time inside a rollout, by an amount its observed topology change accounts for---a decoder released 12.2\,s before the batch ends, predicting 12.2\,GPU$\cdot$s against 9.9 measured---and reaches $-44.5$\% of tail decode-GPU$\cdot$s where the straggler phase does not overlap dense decode. A role switch costs 941\,ms of protocol time and 0.27\,s of makespan, and its relative cost falls below 0.3\% at production rollout sizes.
+\noindent\textbf{Established results.} Both primitives are correct and lossless: across fifteen runs and five deployments, every request returned a valid decode with no HTTP error and no timeout, while switches fired in both directions and running requests were migrated between decoders. Consolidation returns GPU time inside a rollout, by an amount its observed topology change accounts for---a decoder released 12.2\,s before the batch ends, predicting 12.2\,GPU$\cdot$s against 9.9 measured---and reaches $-44.5$\% of tail decode-GPU$\cdot$s where the straggler phase does not overlap dense decode. A role switch costs 941\,ms of protocol time and 0.27\,s of makespan, and its relative cost falls below 0.3\% at production rollout sizes.
 
-\noindent\textbf{What the data refuses.} Role switching yields no end-to-end gain on this deployment, and the reason is measured rather than assumed. The mechanism plainly acts---it raises the GPU-time spent in the prefill role during the burst by 77\%---but the batch it runs in is no shorter, for two reasons the data makes explicit. The burst's own wall clock is not set by prefill: each request reaches its first token in about 1.4\,s and then spends tens of seconds being finalised on the decode side, so adding prefill capacity has almost nothing to accelerate. And the makespan is not set by the burst at all but by the decode tail dispatched later, which finishes at the same time however quickly the burst completes. Neither is a limit of the primitive; both are properties of where the workload's time is actually spent. This is a property of the fabric, not of the primitive, and it is the single most useful thing the evaluation establishes about when the mechanism should be deployed.
+\noindent\textbf{The negative result.} Role switching yields no end-to-end gain on this deployment, and the reason is measured rather than assumed. The mechanism plainly acts---it raises the GPU-time spent in the prefill role during the burst by 77\%---but the batch it runs in is no shorter, for two reasons the data makes explicit. The burst's own wall clock is not set by prefill: each request reaches its first token in about 1.4\,s and then spends tens of seconds being finalised on the decode side, so adding prefill capacity has almost nothing to accelerate. And the makespan is not set by the burst at all but by the decode tail dispatched later, which finishes at the same time however quickly the burst completes. Neither is a limit of the primitive; both are properties of where the workload's time is actually spent. This is a property of the fabric, not of the primitive, and it is the single most useful thing the evaluation establishes about when the mechanism should be deployed.
 
-\noindent\textbf{Where the cost floor sits.} Of a switch's 941\,ms, the engine work is roughly 115\,ms and the control-plane round-trip that republishes the ModelCard is a 309\,ms floor. The remaining 502\,ms is the drain-and-settle window---policy rather than physics, and the term a deterministic routing acknowledgement from the frontend would remove. The outbound-KV drain is irreducible in principle: it waits on another worker's transfer, and shortening it trades losslessness for latency.
+\noindent\textbf{The cost floor.} Of a switch's 941\,ms, the engine work is roughly 115\,ms and the control-plane round-trip that republishes the ModelCard is a 309\,ms floor. The remaining 502\,ms is the drain-and-settle window---policy rather than physics, and the term a deterministic routing acknowledgement from the frontend would remove. The outbound-KV drain is irreducible in principle: it waits on another worker's transfer, and shortening it trades losslessness for latency.
 
 \subsection{Future Work}
 
