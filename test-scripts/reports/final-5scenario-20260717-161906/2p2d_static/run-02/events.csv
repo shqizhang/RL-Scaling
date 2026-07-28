@@ -1,0 +1,14 @@
+client_signal_send,completion_tokens,completion_tps,decode,env,event,got,http_5xx_count,iso,note,p50_latency_s,p95_latency_s,p99_latency_s,prefill,prompt_tokens,prompt_tps,req_s,requests,response,scenario,success,success_pct,timeout_count,total_tokens,total_tps,ts,valid_decode,valid_decode_pct,wall_s
+,,,,"{'CONTROL_LOOP_INTERVAL': '1', 'K8S_SCALE_FALLBACK_ENABLED': 'true', 'MAX_GPUS': '4', 'MIN_PREFILL_REPLICAS': '1', 'MIN_DECODE_REPLICAS': '1', 'MAX_CONCURRENT_PER_DECODE': '64', 'SINGLE_PREFILL_TPS': '50000', 'TARGET_PREFILL_SECONDS': '5', 'COOLDOWN_SECONDS': '20', 'DRAIN_TIMEOUT_SECONDS': '120', 'CONSOLIDATION_DRAIN_TIMEOUT': '120', 'CONSOLIDATION_DRAIN_POLL_INTERVAL': '1', 'PRE_WARM_THRESHOLD': '0.80', 'ROLE_SWITCH_ENABLED': 'false', 'CONSOLIDATION_ENABLED': 'false', 'CONSOLIDATION_SCALE_DOWN_ENABLED': 'false', 'RLS_TEST_RUN_ID': '2p2d_static-run-2-1784277576'}",controller_configured,,,2026-07-17T16:39:52,,,,,,,,,,,2p2d_static,,,,,,1784277592.2719488,,,
+,,,,,initial_1p1d_ready,,,2026-07-17T16:40:06,,,,,,,,,,,,,,,,,1784277606.3887134,,,
+1784277618.0120037,,,,,T_signal_recv,,,2026-07-17T16:40:19,,,,,,,,,,"{'status': 'ok', 'state': 'warm_up'}",2p2d_static,,,,,,1784277619.8358622,,,
+,,,,,T_warmup_start,,,2026-07-17T16:40:19,,,,,,,,,,,2p2d_static,,,,,,1784277619.835948,,,
+,,,,,warmup_forcing_topology,"{'prefill': 1, 'decode': 1}",,2026-07-17T16:41:51,controller did not pre-warm to 2P2D; forcing via deployment scaler,,,,,,,,,,,,,,,,1784277711.3774889,,,
+,,,2,,T_ready,,,2026-07-17T16:43:40,,,,,2,,,,,,2p2d_static,,,,,,1784277820.4934254,,,
+,,,,,T_burst_arrival,,,2026-07-17T16:43:40,,,,,,,,,,,2p2d_static,,,,,,1784277820.4934964,,,
+,,,,,prefill_burst_start,,,2026-07-17T16:43:42,,,,,,,,,,,,,,,,,1784277822.0578623,,,
+,256,12.018226071028812,,,prefill_burst_done,,0,2026-07-17T16:44:03,,3.3664488792419434,7.9903295040130615,8.923951864242554,,94288,4426.462889785799,3.004556517757203,64,,,64,100.0,0,94544,4438.481115856828,1784277843.3617465,64,100.0,21.30098056793213
+,,,,,balanced_decode_start,,,2026-07-17T16:44:06,,,,,,,,,,,,,,,,,1784277846.7334478,,,
+,2304,325.63010443290955,,,balanced_decode_done,,0,2026-07-17T16:44:13,,2.2390353679656982,2.6544206142425537,2.6550278663635254,,18912,2672.8804405534656,3.391980254509474,24,,,24,100.0,0,21216,2998.5105449863754,1784277853.8132806,24,100.0,7.075512886047363
+,,,,,decode_tail_start,,,2026-07-17T16:44:17,,,,,,,,,,,,,,,,,1784277857.225875,,,
+,24320,597.3546589216178,,,decode_tail_done,,0,2026-07-17T16:44:57,,1.757249355316162,30.571638107299805,32.71210765838623,,5834,143.29634375611505,0.4175587665159335,17,,,17,100.0,0,30154,740.6510026777328,1784277897.9411843,17,100.0,40.71283221244812

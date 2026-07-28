@@ -1,0 +1,72 @@
+{
+  "scenario": "baseline_1p1d",
+  "repeat": 3,
+  "position_in_round": 4,
+  "valid_decode_pct": 100.0,
+  "timeout_count": 0,
+  "http_5xx_count": 0,
+  "success": 59,
+  "request_count": 59,
+  "T_batch_s": 88.60606074333191,
+  "prefill_gpu_s": 88.60606074333191,
+  "decode_gpu_s": 88.60606074333191,
+  "total_gpu_s": 177.21212148666382,
+  "gpu_hours": 0.04922558930185106,
+  "avg_prefill_gpus": 1.0,
+  "avg_decode_gpus": 1.0,
+  "avg_total_gpus": 2.0,
+  "decode_kv_occupancy_mean": 0.35478521248416445,
+  "decode_kv_occupancy_max": 0.7413566739606127,
+  "min_spec_decode_replicas": 1,
+  "tokens_per_gpu_s": 215.06993810729935,
+  "requests_per_gpu_s": 0.33293433600951544,
+  "s2_executed_count": 0,
+  "s2_switch_total_ms": 0,
+  "s3_migrated_requests": 0,
+  "s3_drained_source_count": 0,
+  "phase_metrics": {
+    "A_prefill": {
+      "n": 32,
+      "valid_pct": 100.0,
+      "serving_wall_s": 45.75481414794922,
+      "prefill_gpu_s": 45.75481414794922,
+      "decode_gpu_s": 45.75481414794922,
+      "avg_decode_gpus": 1.0,
+      "completion_tokens": 3040,
+      "p95_latency_s": 45.44138741493225
+    },
+    "B_decode": {
+      "n": 24,
+      "valid_pct": 100.0,
+      "serving_wall_s": 43.709314584732056,
+      "prefill_gpu_s": 43.709314584732056,
+      "decode_gpu_s": 43.709314584732056,
+      "avg_decode_gpus": 1.0,
+      "completion_tokens": 17073,
+      "p95_latency_s": 42.517470836639404
+    },
+    "C_tail": {
+      "n": 3,
+      "valid_pct": 100.0,
+      "serving_wall_s": 48.60219693183899,
+      "prefill_gpu_s": 48.60219693183899,
+      "decode_gpu_s": 48.60219693183899,
+      "avg_decode_gpus": 1.0,
+      "completion_tokens": 18000,
+      "p95_latency_s": 48.60219693183899
+    }
+  },
+  "business_wall_s": 88.60606074333191,
+  "overhead_vs_tbatch_s": 0.0,
+  "completion_tokens": 38113.0,
+  "p50_latency_s": 39.75093650817871,
+  "p95_latency_s": 45.593445777893066,
+  "ugpu_samples": 19,
+  "batch_meta": {
+    "batch_size": 59,
+    "avg_isl": 1085,
+    "avg_osl": 844
+  },
+  "t0": 1784541675.9284303,
+  "t_end": 1784541764.534491
+}

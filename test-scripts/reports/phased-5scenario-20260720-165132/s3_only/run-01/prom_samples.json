@@ -1,0 +1,1610 @@
+[
+  {
+    "ts": 1784538443.7481306,
+    "iso": "2026-07-20T17:07:26",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538448.4769757,
+    "iso": "2026-07-20T17:07:31",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538453.2198362,
+    "iso": "2026-07-20T17:07:36",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538458.2380295,
+    "iso": "2026-07-20T17:07:41",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538463.5680223,
+    "iso": "2026-07-20T17:07:45",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538467.9981856,
+    "iso": "2026-07-20T17:07:51",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538473.5130477,
+    "iso": "2026-07-20T17:07:58",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538480.6004162,
+    "iso": "2026-07-20T17:08:06",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538488.416631,
+    "iso": "2026-07-20T17:08:14",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538496.023651,
+    "iso": "2026-07-20T17:08:22",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538504.697011,
+    "iso": "2026-07-20T17:08:28",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538510.7202103,
+    "iso": "2026-07-20T17:08:33",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538515.9618442,
+    "iso": "2026-07-20T17:08:39",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538521.1208444,
+    "iso": "2026-07-20T17:08:44",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538526.571823,
+    "iso": "2026-07-20T17:08:49",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538531.6054463,
+    "iso": "2026-07-20T17:08:54",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538536.7061188,
+    "iso": "2026-07-20T17:08:59",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538541.7308478,
+    "iso": "2026-07-20T17:09:05",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538547.1073637,
+    "iso": "2026-07-20T17:09:10",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538552.4370844,
+    "iso": "2026-07-20T17:09:15",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538557.5126097,
+    "iso": "2026-07-20T17:09:20",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538562.8457642,
+    "iso": "2026-07-20T17:09:26",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538568.2613316,
+    "iso": "2026-07-20T17:09:31",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538573.5931485,
+    "iso": "2026-07-20T17:09:36",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538578.9373922,
+    "iso": "2026-07-20T17:09:42",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538584.155957,
+    "iso": "2026-07-20T17:09:47",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538589.6588993,
+    "iso": "2026-07-20T17:09:53",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538595.008846,
+    "iso": "2026-07-20T17:09:58",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538600.3610954,
+    "iso": "2026-07-20T17:10:02",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538604.9021459,
+    "iso": "2026-07-20T17:10:08",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538610.0558288,
+    "iso": "2026-07-20T17:10:13",
+    "kv_occupancy": [],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538615.125774,
+    "iso": "2026-07-20T17:10:17",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538619.6945066,
+    "iso": "2026-07-20T17:10:22",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538624.1384492,
+    "iso": "2026-07-20T17:10:27",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538629.19409,
+    "iso": "2026-07-20T17:10:31",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538633.967319,
+    "iso": "2026-07-20T17:10:37",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538639.4138176,
+    "iso": "2026-07-20T17:10:42",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.36201312910284467
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.37881838074398244
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 32.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538644.4603357,
+    "iso": "2026-07-20T17:10:47",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.36201312910284467
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.37881838074398244
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 32.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538649.6040223,
+    "iso": "2026-07-20T17:10:52",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.36201312910284467
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.37881838074398244
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 32.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538654.5020888,
+    "iso": "2026-07-20T17:10:57",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.36201312910284467
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.02520787746170683
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 16.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538659.4985452,
+    "iso": "2026-07-20T17:11:01",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.12656455142231948
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.13251641137855585
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 20.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538663.9947195,
+    "iso": "2026-07-20T17:11:06",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.12052516411378555
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.10345733041575489
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 3.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538668.2114067,
+    "iso": "2026-07-20T17:11:11",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538673.5930583,
+    "iso": "2026-07-20T17:11:16",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      },
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.170:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599f4xlnz"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538678.4971023,
+    "iso": "2026-07-20T17:11:21",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.006564551422319487
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538683.6601927,
+    "iso": "2026-07-20T17:11:26",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.028358862144420183
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538688.802776,
+    "iso": "2026-07-20T17:11:31",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.05006564551422321
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538693.806373,
+    "iso": "2026-07-20T17:11:36",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.06844638949671777
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538698.6278813,
+    "iso": "2026-07-20T17:11:42",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.08472647702406999
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538704.234509,
+    "iso": "2026-07-20T17:11:46",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.06301969365426696
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538708.7216141,
+    "iso": "2026-07-20T17:11:51",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": [
+      {
+        "labels": {
+          "__name__": "dynamo_frontend_queued_requests",
+          "container": "main",
+          "dynamo_namespace": "dynamo-system-vllm-v1-disagg-router",
+          "endpoint": "http",
+          "instance": "10.244.0.7:8000",
+          "job": "dynamo-system/dynamo-frontend",
+          "model": "qwen/qwen3-0.6b",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-frontend-5dd869ff9-cv82b"
+        },
+        "v": 0.0
+      }
+    ]
+  },
+  {
+    "ts": 1784538713.8182988,
+    "iso": "2026-07-20T17:11:56",
+    "kv_occupancy": [
+      {
+        "labels": {
+          "__name__": "dynamo_component_gpu_cache_usage_percent",
+          "container": "main",
+          "dp_rank": "0",
+          "dynamo_component": "backend",
+          "endpoint": "system",
+          "instance": "10.244.0.168:9090",
+          "job": "dynamo-system/dynamo-worker",
+          "model": "Qwen/Qwen3-0.6B",
+          "namespace": "dynamo-system",
+          "pod": "vllm-v1-disagg-router-vllmdecodeworker-41888dc2-6fdd4b599ffx5w6"
+        },
+        "v": 0.0
+      }
+    ],
+    "queued": []
+  }
+]

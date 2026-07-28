@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 
 *.log
+
+# Ignore the docs/ directory (large notes + data dumps)
+/docs/

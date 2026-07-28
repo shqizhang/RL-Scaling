@@ -62,6 +62,17 @@ spec:
           value: "1"
         - name: DYNAMO_RL_SIDECAR_PORT
           value: "9091"
+        # S2 production cordon protocol: the worker removes its old-role
+        # endpoint, then waits until this frontend's in-memory WorkerSet has
+        # observed the removal while draining existing requests in parallel.
+        - name: DYNAMO_RL_FRONTEND_URL
+          value: "http://vllm-v1-disagg-router-frontend:8000"
+        - name: DYNAMO_RL_FRONTEND_ACK_REQUIRED
+          value: "1"
+        - name: DYNAMO_RL_FRONTEND_ACK_TIMEOUT
+          value: "10"
+        - name: DYNAMO_RL_FRONTEND_ACK_POLL
+          value: "0.05"
         # S2: serve a real partner-prefill endpoint after a D->P switch so
         # the frontend router actually dispatches prefill traffic to this
         # worker (without this the switch is in-process only and prefill

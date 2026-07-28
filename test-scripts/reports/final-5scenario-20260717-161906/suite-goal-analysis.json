@@ -1,0 +1,44 @@
+{
+  "equal_topology_control": "2p2d_static",
+  "vs_2p2d_static": {},
+  "serving_wall_by_scenario": {
+    "s2_only": 69.23414198557536,
+    "s3_only": 64.06845990816753,
+    "mixed_strategy": 69.96169527371724
+  },
+  "serving_spec_gpu_s_by_scenario": {
+    "s2_only": 211.74811045328775,
+    "s3_only": 176.13250851631165,
+    "mixed_strategy": 175.38796631495157
+  },
+  "min_spec_decode_replicas_by_scenario": {
+    "s2_only": 0.0,
+    "s3_only": 0.0,
+    "mixed_strategy": 0.0
+  },
+  "wall_by_scenario": {
+    "s2_only": 157.7113467057546,
+    "s3_only": 81.45741828282674,
+    "mixed_strategy": 166.8496951262156
+  },
+  "tokens_per_gpu_s_by_scenario": {
+    "s2_only": 43.89499137806227,
+    "s3_only": 79.0576887579815,
+    "mixed_strategy": 39.30255413113845
+  },
+  "best_wall_scenario": "s3_only",
+  "best_tokens_per_gpu_s_scenario": "s3_only",
+  "s2_prefill_wall_improvement_pct": 0.0,
+  "s2_wall_improvement_pct": 0.0,
+  "s3_wall_improvement_pct": 0.0,
+  "mixed_wall_improvement_pct": 0.0,
+  "s2_tokens_per_gpu_s_improvement_pct": 0.0,
+  "s3_tokens_per_gpu_s_improvement_pct": 0.0,
+  "mixed_tokens_per_gpu_s_improvement_pct": 0.0,
+  "s3_tail_decode_gpu_s_savings_pct": 13.319026384544555,
+  "mixed_tail_decode_gpu_s_savings_pct": 21.691168134810034,
+  "s2_only_s2_executed_count": 6,
+  "s3_only_migrated_requests": 3,
+  "mixed_s2_executed_count": 6,
+  "mixed_migrated_requests": 3
+}

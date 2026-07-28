@@ -1,0 +1,72 @@
+{
+  "scenario": "s2_only",
+  "repeat": 1,
+  "position_in_round": 3,
+  "valid_decode_pct": 100.0,
+  "timeout_count": 0,
+  "http_5xx_count": 0,
+  "success": 59,
+  "request_count": 59,
+  "T_batch_s": 72.30909085273743,
+  "prefill_gpu_s": 144.61818170547485,
+  "decode_gpu_s": 144.61818170547485,
+  "total_gpu_s": 289.2363634109497,
+  "gpu_hours": 0.08034343428081936,
+  "avg_prefill_gpus": 2.0,
+  "avg_decode_gpus": 2.0,
+  "avg_total_gpus": 4.0,
+  "decode_kv_occupancy_mean": 0.1766411378555799,
+  "decode_kv_occupancy_max": 0.43168490153172867,
+  "min_spec_decode_replicas": 2,
+  "tokens_per_gpu_s": 125.63081478234483,
+  "requests_per_gpu_s": 0.20398541630179554,
+  "s2_executed_count": 2,
+  "s2_switch_total_ms": 0.0,
+  "s3_migrated_requests": 0,
+  "s3_drained_source_count": 0,
+  "phase_metrics": {
+    "A_prefill": {
+      "n": 32,
+      "valid_pct": 100.0,
+      "serving_wall_s": 35.813952922821045,
+      "prefill_gpu_s": 71.62790584564209,
+      "decode_gpu_s": 71.62790584564209,
+      "avg_decode_gpus": 2.0,
+      "completion_tokens": 3040,
+      "p95_latency_s": 35.56334376335144
+    },
+    "B_decode": {
+      "n": 24,
+      "valid_pct": 100.0,
+      "serving_wall_s": 20.97167468070984,
+      "prefill_gpu_s": 41.94334936141968,
+      "decode_gpu_s": 41.94334936141968,
+      "avg_decode_gpus": 2.0,
+      "completion_tokens": 15297,
+      "p95_latency_s": 20.067171335220337
+    },
+    "C_tail": {
+      "n": 3,
+      "valid_pct": 100.0,
+      "serving_wall_s": 32.30446720123291,
+      "prefill_gpu_s": 64.60893440246582,
+      "decode_gpu_s": 64.60893440246582,
+      "avg_decode_gpus": 2.0,
+      "completion_tokens": 18000,
+      "p95_latency_s": 26.305771112442017
+    }
+  },
+  "business_wall_s": 72.30909085273743,
+  "overhead_vs_tbatch_s": 0.0,
+  "completion_tokens": 36337.0,
+  "p50_latency_s": 34.21321725845337,
+  "p95_latency_s": 35.56287431716919,
+  "ugpu_samples": 16,
+  "batch_meta": {
+    "batch_size": 59,
+    "avg_isl": 1085,
+    "avg_osl": 844
+  },
+  "t0": 1784538327.109556,
+  "t_end": 1784538399.4186468
+}
