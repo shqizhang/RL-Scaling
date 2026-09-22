@@ -1,0 +1,3849 @@
+diff --git a/components/src/dynamo/vllm/dual_mode.py b/components/src/dynamo/vllm/dual_mode.py
+new file mode 100644
+index 0000000000..3bd3037c2b
+--- /dev/null
++++ b/components/src/dynamo/vllm/dual_mode.py
+@@ -0,0 +1,871 @@
++# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
++# SPDX-License-Identifier: Apache-2.0
++"""S2 — Elastic role switching for a Dynamo vLLM worker (RL-Scaling).
++
++This module orchestrates a *true end-to-end* role flip (prefill <-> decode)
++on a single worker without restarting the engine. The crucial property
++this module guarantees is that **after a successful switch the Dynamo
++router actually delivers traffic of the new role to this worker**, not
++just that the in-process engine state changed.
++
++End-to-end flow (mirrors design doc S2.4 / S2.7, with the missing
++re-registration step that earlier revisions lacked):
++
++    1. Acquire the per-worker switch lock (idempotency / concurrency guard).
++    2. ``handler.sleep(level=2)``
++         - drains in-flight, frees KV memory, *unregisters the current
++           endpoint instance* from discovery (so the router stops
++           dispatching old-role traffic).
++    3. ``Reregistrar.unregister(current_role)``
++         - removes the ModelDeploymentCard from the *current* endpoint
++           (router's WorkerSet rebuild drops this worker from the old role
++           pool).
++    4. ``_reconfig_nixl(target_role)``
++         - invalidates cached NIXL connector handle so the next request
++           rebuilds it cleanly for the new role.
++    5. ``_reconfig_kv_pool(target_role)``
++         - calls ``engine.reset_prefix_cache()`` so the new role starts
++           with a clean GPU block budget (KV consistency guarantee).
++    6. ``handler.set_disaggregation_mode(target_role)``.
++    7. ``Reregistrar.register(target_role)``
++         - publishes a fresh MDC under the *target-role* endpoint URI
++           (router's ModelWatcher picks it up; PrefillRouter or chat pool
++           gains this worker).
++    8. ``handler.wake_up()``
++         - re-attaches the *current handler's* endpoint instance to
++           discovery and resumes engine generation.
++    9. ``_emit_role_changed`` — best-effort pod label patch + optional
++       publisher event for observability.
++
++If any step fails, the orchestration's outer ``except`` attempts a
++recovery: re-register the previous role's MDC, wake the engine, restore
++the previous role flag — so the worker is never left silently stuck in a
++half-flipped state.
++
++KV consistency
++--------------
++All in-flight requests are drained inside ``handler.sleep`` (which calls
++``engine.pause_generation``). Then ``reset_prefix_cache`` clears the KV
++pool *while the engine is asleep*, before any traffic of the new role
++arrives. The new role therefore starts with an empty, role-correct KV
++pool; no cross-role KV bleed is possible.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++import os
++import time
++from typing import Any, Awaitable, Callable, Optional, Protocol
++
++logger = logging.getLogger(__name__)
++
++
++def _switch_drain_timeout() -> float:
++    try:
++        return max(0.0, float(os.environ.get("DYNAMO_RL_SWITCH_DRAIN_TIMEOUT", "30.0")))
++    except (TypeError, ValueError):
++        return 30.0
++
++
++def _cordon_settle_seconds() -> float:
++    """The QUIESCE stable-idle window: after withdrawing its ModelCard and
++    draining to idle, switch_role requires the engine to stay idle (no new
++    arrivals) for this long continuously before sleeping, confirming the
++    frontend has stopped routing here. Bounds the switch-instant request-loss
++    race under high concurrency. A fixed 0.5s was too short; 1.5s covers the
++    ModelCard-withdrawal propagation to the router."""
++    try:
++        return max(0.0, float(os.environ.get("DYNAMO_RL_CORDON_SETTLE", "1.5")))
++    except (TypeError, ValueError):
++        return 1.5
++
++
++def _flush_nixl_pending_sends(worker) -> dict:
++    """Runs INSIDE each engine worker (via AsyncLLM.collective_rpc).
++
++    While this worker served the prefill role it produced KV that the NIXL
++    connector holds in ``_reqs_to_send`` until a decode worker pulls it (up to
++    ``VLLM_NIXL_ABORT_REQUEST_TIMEOUT`` = 480s). Any un-pulled entry keeps its KV
++    blocks pinned (ref_cnt>0) so ``reset_prefix_cache`` cannot free them and the
++    role-switched decode engine runs with a shrunken/confused KV pool. Before a
++    role switch we force every pending send to expire NOW, so the next
++    ``get_finished`` reports it as finished-sending and the scheduler frees the
++    blocks. Best-effort and self-contained (cloudpickled to the worker process).
++    """
++    import time as _t
++    try:
++        from vllm.distributed.kv_transfer import get_kv_transfer_group
++
++        conn = get_kv_transfer_group()
++    except Exception as exc:  # noqa: BLE001
++        return {"ok": False, "reason": f"no_kv_transfer_group: {exc}"}
++    cw = getattr(conn, "connector_worker", None) or conn
++    reqs = getattr(cw, "_reqs_to_send", None)
++    if not isinstance(reqs, dict):
++        return {"ok": False, "reason": "no__reqs_to_send"}
++    now = _t.perf_counter()
++    n = len(reqs)
++    for rid in list(reqs.keys()):
++        reqs[rid] = now  # already-elapsed -> expired on next get_finished()
++    return {"ok": True, "expired": n}
++
++
++def _count_nixl_pending_sends(worker) -> dict:
++    """Runs INSIDE each engine worker (via AsyncLLM.collective_rpc).
++
++    Read-only companion to :func:`_flush_nixl_pending_sends`: report how many
++    produced-but-not-yet-pulled KV sends the connector still tracks, so the
++    switch can WAIT for peers to finish pulling instead of destroying their
++    in-flight reads (see ``_wait_outbound_kv_drained``).
++    """
++    try:
++        from vllm.distributed.kv_transfer import get_kv_transfer_group
++
++        conn = get_kv_transfer_group()
++    except Exception as exc:  # noqa: BLE001
++        return {"ok": False, "reason": f"no_kv_transfer_group: {exc}", "pending": 0}
++    cw = getattr(conn, "connector_worker", None) or conn
++    reqs = getattr(cw, "_reqs_to_send", None)
++    if not isinstance(reqs, dict):
++        return {"ok": False, "reason": "no__reqs_to_send", "pending": 0}
++    return {"ok": True, "pending": len(reqs)}
++
++
++_VALID_ROLES = ("prefill", "decode")
++
++
++class Reregistrar(Protocol):
++    """Callback contract used by :class:`DualModeWorker` to swap which
++    endpoint URI carries this worker's ModelDeploymentCard.
++
++    Implementations are wired in :mod:`dynamo.vllm.main` where the two
++    endpoint objects (``backend.generate`` for decode and
++    ``prefill.generate`` for prefill) and ``register_model`` /
++    ``unregister_model`` are in scope.
++    """
++
++    async def register(self, role: str) -> None: ...
++    async def unregister(self, role: str) -> None: ...
++    def get_endpoint(self, role: str): ...  # returns Endpoint or None
++
++
++class DualModeWorker:
++    """Coordinates a true role flip on a single ``BaseWorkerHandler``.
++
++    Parameters
++    ----------
++    handler:
++        A ``BaseWorkerHandler`` whose ``sleep`` / ``wake_up`` machinery is
++        used to quiesce the engine across the flip. Both decode and
++        prefill handler-shaped objects accept ``set_disaggregation_mode``
++        from this class.
++    initial_role:
++        The role the worker started in. Source of truth for
++        ``current_role`` until the first successful switch.
++    reregistrar:
++        Callback object that knows how to ``register`` / ``unregister`` a
++        ModelDeploymentCard against the role-specific endpoint URIs.
++        When ``None`` the switch only does the in-process reconfig (legacy
++        behaviour — keeps unit tests working without a real runtime).
++    publisher:
++        Optional KV-event publisher; ``WorkerRoleChanged`` is emitted via
++        :meth:`publish_role_changed` if available.
++    label_patcher:
++        Optional async callable ``(label_key, label_value) -> None`` used
++        to update the pod's ``nvidia.com/dynamo-current-role`` label after
++        a successful switch (informational only — does not affect routing).
++    """
++
++    def __init__(
++        self,
++        handler: Any,
++        initial_role: str,
++        reregistrar: Optional[Reregistrar] = None,
++        publisher: Any | None = None,
++        label_patcher: Optional[Callable[[str, str], Awaitable[None]]] = None,
++    ) -> None:
++        if initial_role not in _VALID_ROLES:
++            raise ValueError(
++                f"initial_role must be one of {_VALID_ROLES}, got {initial_role!r}"
++            )
++        self._handler = handler
++        self._reregistrar = reregistrar
++        self._publisher = publisher
++        self._label_patcher = label_patcher
++        self._lock = asyncio.Lock()
++        self._current_role = initial_role
++        self._drain_timeout_s = _switch_drain_timeout()
++        self._cordon_settle_s = _cordon_settle_seconds()
++        # --- switch-window hold support (zero-loss fast switch) ---------
++        # Between cordon (old ModelCard withdrawn) and register (new card
++        # published) the router can only be acting on the OLD card, so any
++        # request arriving in that window is old-role traffic by
++        # construction. The dispatcher in main.py uses these to HOLD such
++        # arrivals until the switch completes and then serve them under the
++        # pre-switch role instead of letting sleep() 500 them. This is what
++        # makes a short cordon-settle safe.
++        self._switch_complete = asyncio.Event()
++        self._switch_complete.set()  # no switch in progress at boot
++        self._switch_previous_role: str = initial_role
++        # True once cordon() has withdrawn this worker's ModelCard (S3
++        # scale-down, and now the cordon-first step of switch_role).
++        # switch_role() re-publishes a card at the end, so it clears this.
++        self._cordoned = False
++        try:
++            handler.set_disaggregation_mode(initial_role)
++        except Exception:  # noqa: BLE001 - tolerated for handler stubs in tests
++            logger.debug(
++                "handler does not implement set_disaggregation_mode (test stub?)"
++            )
++
++    @property
++    def current_role(self) -> str:
++        return self._current_role
++
++    @property
++    def switch_in_progress(self) -> bool:
++        """True while switch_role is between cordon and register+wake."""
++        return not self._switch_complete.is_set()
++
++    @property
++    def switch_previous_role(self) -> str:
++        """The role this worker had when the in-progress switch began.
++        Arrivals during the switch window are, by construction, traffic
++        for this role (the new card is not published yet)."""
++        return self._switch_previous_role
++
++    async def wait_switch_complete(self, timeout_s: float = 20.0) -> bool:
++        """Block until the in-progress switch finishes (True) or the
++        timeout elapses (False). Returns immediately when idle."""
++        try:
++            await asyncio.wait_for(self._switch_complete.wait(), timeout=timeout_s)
++            return True
++        except asyncio.TimeoutError:
++            return False
++
++    # ------------------------------------------------------------------ public
++    async def cordon(self) -> dict:
++        """Withdraw this worker's current-role ModelCard WITHOUT touching the engine.
++
++        S3 scale-down previously went ``drain -> scale replicas`` and relied on
++        the trigger (batch_completion >= 0.92) to mean "no new work is arriving".
++        That is not a guarantee: between the drain check and the pod actually
++        terminating, the pod is still in the frontend's WorkerSet, so KvRouter
++        can route a NEW request onto a decoder that is about to be deleted —
++        which then dies with EngineShutdown.
++
++        Cordoning removes the worker from the router's candidate set first
++        (cordon -> drain -> delete, the standard Kubernetes pattern that
++        ``switch_role`` already follows), while leaving the engine running so
++        any already-accepted request can still finish. Idempotent.
++        """
++        if self._reregistrar is None:
++            return {"status": "error", "message": "no reregistrar; cannot cordon"}
++        if self._cordoned:
++            return {"status": "ok", "message": "already cordoned", "role": self._current_role}
++        t0 = time.monotonic()
++        try:
++            await self._reregistrar.unregister(self._current_role)
++            self._cordoned = True
++            logger.info("[DualMode] cordon: withdrew %s ModelCard", self._current_role)
++            return {
++                "status": "ok",
++                "role": self._current_role,
++                "cordon_time_ms": (time.monotonic() - t0) * 1000.0,
++            }
++        except Exception as exc:  # noqa: BLE001
++            logger.exception("cordon failed")
++            return {"status": "error", "message": str(exc)}
++
++    async def uncordon(self) -> dict:
++        """Re-publish the current-role ModelCard (undo :meth:`cordon`).
++
++        Used when a planned scale-down is abandoned after the pod was already
++        cordoned, so the worker rejoins the router's candidate set instead of
++        idling invisibly. Idempotent.
++        """
++        if self._reregistrar is None:
++            return {"status": "error", "message": "no reregistrar; cannot uncordon"}
++        if not self._cordoned:
++            return {"status": "ok", "message": "not cordoned", "role": self._current_role}
++        try:
++            await self._reregistrar.register(self._current_role)
++            self._cordoned = False
++            logger.info("[DualMode] uncordon: republished %s ModelCard", self._current_role)
++            return {"status": "ok", "role": self._current_role}
++        except Exception as exc:  # noqa: BLE001
++            logger.exception("uncordon failed")
++            return {"status": "error", "message": str(exc)}
++
++    async def switch_role(self, target_role: str) -> dict:
++        """Flip the worker's role. Returns an HTTP-friendly response dict.
++
++        Timing fields:
++          * ``switch_time_ms``   - total wall-clock from accept to ack.
++          * ``timings_ms``       - per-phase breakdown (sleep, unregister,
++            reset_kv, register, wake) — useful for SLO debugging.
++        """
++        if target_role not in _VALID_ROLES:
++            return {
++                "status": "error",
++                "message": (
++                    f"target_role must be one of {_VALID_ROLES}, "
++                    f"got {target_role!r}"
++                ),
++                "new_role": self._current_role,
++                "switch_time_ms": 0.0,
++            }
++        if self._lock.locked():
++            return {
++                "status": "busy",
++                "message": "another switch is in progress",
++                "new_role": self._current_role,
++                "switch_time_ms": 0.0,
++            }
++
++        async with self._lock:
++            if target_role == self._current_role:
++                return {
++                    "status": "ok",
++                    "message": "already in target role",
++                    "new_role": self._current_role,
++                    "switch_time_ms": 0.0,
++                    "timings_ms": {},
++                }
++
++            t0 = time.monotonic()
++            previous_role = self._current_role
++            timings: dict[str, float] = {}
++
++            # Open the switch window: the dispatcher holds new arrivals
++            # (which can only be previous-role traffic until register)
++            # instead of letting sleep() reject them.
++            self._switch_previous_role = previous_role
++            self._switch_complete.clear()
++
++            def mark(label: str, since: float) -> float:
++                now = time.monotonic()
++                timings[label] = round((now - since) * 1000.0, 3)
++                return now
++
++            try:
++                # 0-pre. CORDON FIRST — fixes the S2 switch-instant request
++                #   loss. The steps below drain and then sleep(level=2) the
++                #   engine, but the previous ordering did not withdraw this
++                #   worker's ModelCard until step 2 (after drain+sleep). So
++                #   throughout drain+sleep the card was still published and the
++                #   router could route a NEW request onto this worker; sleep
++                #   then 500'd it (observed: 1/105 requests, HTTP 500, 0 tokens,
++                #   during the D->P switch in prefill_burst — 2 of 6 S2 runs).
++                #   Withdraw the current-role card up front and give the
++                #   frontend's ModelWatcher a bounded settle window to observe
++                #   the withdrawal BEFORE we quiesce the engine, so drain sees a
++                #   closed intake and sleep has nothing live to kill. This is the
++                #   cordon->drain->delete order the rest of this method already
++                #   documents; cordon() uses the same unregister.
++                t = time.monotonic()
++                if self._reregistrar is not None and not self._cordoned:
++                    await self._reregistrar.unregister(previous_role)
++                    self._cordoned = True
++                    t = mark("cordon", t)
++
++                # 0. Drain in-flight requests BEFORE sleep so their KV blocks
++                #    are released. handler.sleep(level=2) pauses generation but
++                #    does not guarantee running requests finish, so their blocks
++                #    keep ref_cnt>0 and reset_prefix_cache below cannot free them
++                #    ("some blocks (N) are not freed yet"). Those leaked blocks
++                #    then shrink the new role's KV budget and make long decode
++                #    requests hang after a P->D switch-back. Wait for natural
++                #    completion, then force-abort any straggler past the timeout.
++                #    QUIESCE HANDSHAKE (fixes the residual switch-instant 500s
++                #    under high concurrency): a fixed post-cordon settle is not
++                #    enough — the frontend's routing pipeline keeps dispatching to
++                #    this worker until it observes the ModelCard withdrawal, so a
++                #    request can slip in AFTER drain returns idle and get 500'd by
++                #    sleep. Instead, drain to idle then CONFIRM the engine stays
++                #    idle for a stable window (no new arrivals => the router has
++                #    stopped routing here); any arrival re-drains and re-confirms.
++                t = time.monotonic()
++                quiesce = await self._drain_and_quiesce(self._cordon_settle_s, self._drain_timeout_s)
++                timings["quiesce_arrivals_after_cordon"] = quiesce.get("arrivals_after_cordon", 0)
++                t = mark("drain", t)
++
++                # 0a. Wait for OUTBOUND KV to drain before sleep frees VRAM.
++                #     While this worker held the prefill role it produced KV
++                #     that peer decoders pull via NIXL READ; interrupting an
++                #     in-flight pull (or force-expiring a send about to be
++                #     pulled) hangs the peer's request. Bounded wait first;
++                #     only true orphans are force-expired on timeout. At a
++                #     phase boundary with no handoff in flight this passes on
++                #     the first poll (~0 cost); under load it is the honest
++                #     zero-loss fabric-drain cost.
++                t = time.monotonic()
++                outbound = await self._wait_outbound_kv_drained(timeout_s=8.0)
++                timings["kv_outbound_drain_waited_ms"] = round(
++                    float(outbound.get("waited_s", 0.0)) * 1000.0, 3)
++                t = mark("kv_outbound_drain", t)
++
++                # 1. Drain & sleep so the GPU is quiesced and the current
++                #    endpoint instance is unregistered from discovery.
++                sleep_resp = await self._handler.sleep({"level": 2})
++                t = mark("sleep", t)
++                if sleep_resp.get("status") not in {"ok", None}:
++                    return {
++                        "status": "error",
++                        "message": f"sleep failed: {sleep_resp}",
++                        "new_role": previous_role,
++                        "switch_time_ms": (time.monotonic() - t0) * 1000.0,
++                        "timings_ms": timings,
++                    }
++
++                # 1b. Also unregister the previous role's endpoint instance
++                #     if it differs from the handler's generate_endpoint.
++                #     (handler.sleep already unregisters generate_endpoint,
++                #      but we also need to remove the role-specific one.)
++                if self._reregistrar is not None:
++                    prev_ep = self._reregistrar.get_endpoint(previous_role)
++                    handler_ep = getattr(self._handler, "generate_endpoint", None)
++                    if prev_ep is not None and prev_ep is not handler_ep:
++                        try:
++                            await prev_ep.unregister_endpoint_instance()
++                            logger.info(
++                                "[DualMode] unregistered %s endpoint instance",
++                                previous_role,
++                            )
++                        except Exception:  # noqa: BLE001
++                            logger.debug(
++                                "unregister %s endpoint instance failed (ok if first switch)",
++                                previous_role,
++                            )
++
++                # 2. Drop the previous-role MDC from discovery so the router
++                #    immediately stops considering this worker for old-role
++                #    traffic.  No-op when reregistrar is absent (unit tests) or
++                #    when step 0-pre already cordoned (the normal path now).
++                if self._reregistrar is not None and not self._cordoned:
++                    await self._reregistrar.unregister(previous_role)
++                    t = mark("unregister_mdc", t)
++
++                # 3-4. Reconfigure NIXL handle + KV pool for the new role.
++                await self._reconfig_nixl(target_role)
++                t = mark("reconfig_nixl", t)
++                await self._reconfig_kv_pool(target_role)
++                t = mark("reset_prefix_cache", t)
++
++                # 5. Persist the new role on the handler and dispatcher before
++                # publishing the target MDC. The registered generate endpoint
++                # is role-aware and reads DualModeWorker.current_role, so it
++                # must not briefly serve target-role traffic as the old role.
++                self._handler.set_disaggregation_mode(target_role)
++                self._current_role = target_role
++
++                # 6. Publish a fresh MDC under the target-role endpoint URI.
++                #    The frontend's ModelWatcher will rebuild WorkerSets and
++                #    start sending new-role traffic to this worker.
++                if self._reregistrar is not None:
++                    await self._reregistrar.register(target_role)
++                    # A switch publishes a fresh card, so any prior cordon
++                    # (S3 scale-down that was abandoned) no longer applies.
++                    self._cordoned = False
++                    t = mark("register_mdc", t)
++
++                # 7. Wake the engine. BaseWorkerHandler.wake_up() always
++                #    re-registers handler.generate_endpoint. For a decode
++                #    component this is the backend endpoint, which is correct
++                #    for target_role=decode but wrong for target_role=prefill.
++                #    Clean it up immediately below before publishing the
++                #    target endpoint instance.
++                wake_resp = await self._handler.wake_up({})
++                t = mark("wake", t)
++                if wake_resp.get("status") not in {"ok", None}:
++                    raise RuntimeError(f"wake_up failed: {wake_resp}")
++
++                # 7b. Register the target role's endpoint instance so the
++                #     PrefillRouter can discover this worker. The handler's
++                #     wake_up() only registers generate_endpoint (=backend),
++                #     but we also need the role-specific endpoint (=prefill).
++                if self._reregistrar is not None:
++                    target_ep = self._reregistrar.get_endpoint(target_role)
++                    handler_ep = getattr(self._handler, "generate_endpoint", None)
++                    if target_ep is not None and target_ep is not handler_ep:
++                        if handler_ep is not None:
++                            await handler_ep.unregister_endpoint_instance()
++                            logger.info(
++                                "[DualMode] unregistered handler endpoint instance "
++                                "after wake for target_role=%s",
++                                target_role,
++                            )
++                        await target_ep.register_endpoint_instance()
++                        logger.info(
++                            "[DualMode] registered %s endpoint instance",
++                            target_role,
++                        )
++
++                # 8. Best-effort: pod label + router event for observability.
++                await self._emit_role_changed(previous_role, target_role)
++
++                total_ms = (time.monotonic() - t0) * 1000.0
++                logger.info(
++                    "[DualMode] switch_role %s->%s OK total=%.2fms timings=%s",
++                    previous_role, target_role, total_ms, timings,
++                )
++                return {
++                    "status": "ok",
++                    "new_role": target_role,
++                    "switch_time_ms": total_ms,
++                    "timings_ms": timings,
++                    # Routing-convergence acknowledgements. The old-role ack is
++                    # observational (cordon applied + a stable arrival-silence
++                    # window with any switch-window arrivals HELD and served
++                    # under the old role — zero loss either way). A
++                    # deterministic Rust router-epoch ACK remains future work.
++                    "frontend_ack": {
++                        "acknowledged": bool(quiesce.get("quiesced", False)),
++                        "method": "cordon+arrival_silence+hold",
++                        "arrivals_after_cordon": quiesce.get("arrivals_after_cordon", 0),
++                        "settle_window_s": self._cordon_settle_s,
++                    },
++                    "frontend_target_ready": {
++                        "acknowledged": True,
++                        "method": "target_mdc_registered+engine_awake",
++                    },
++                }
++            except Exception as exc:  # noqa: BLE001
++                logger.exception(
++                    "role switch %s -> %s failed; attempting recovery",
++                    previous_role, target_role,
++                )
++                # Best-effort recovery: re-register the previous role and
++                # wake so the worker is never silently stuck asleep / off-pool.
++                try:
++                    if self._reregistrar is not None:
++                        try:
++                            await self._reregistrar.register(previous_role)
++                            # Re-published the previous-role card, so the
++                            # cordon-first withdrawal no longer applies.
++                            self._cordoned = False
++                        except Exception:  # noqa: BLE001
++                            logger.exception("recovery re-register failed")
++                    await self._handler.wake_up({})
++                    self._handler.set_disaggregation_mode(previous_role)
++                    self._current_role = previous_role
++                except Exception:  # noqa: BLE001
++                    logger.exception("recovery wake_up also failed")
++                return {
++                    "status": "error",
++                    "message": str(exc),
++                    "new_role": self._current_role,
++                    "switch_time_ms": (time.monotonic() - t0) * 1000.0,
++                    "timings_ms": timings,
++                }
++            finally:
++                # Close the switch window: release any held dispatcher
++                # arrivals (they are served under switch_previous_role).
++                self._switch_complete.set()
++
++    # -------------------------------------------------------- real reconfig ops
++    async def _wait_outbound_kv_drained(self, timeout_s: float = 8.0) -> dict:
++        """Wait for peers to finish pulling KV this worker produced as prefill.
++
++        ``sleep(level=2)`` frees GPU memory, so switching while a peer decode
++        worker's NIXL READ against this worker's KV is still in flight breaks
++        that transfer and hangs the peer's request until its client timeout
++        (observed 2026-07-23: P->D at early-B left 646 blocks pinned and hung
++        32 peer decodes to their 600s timeout). Force-expiring the pending
++        sends (the old flush-first order) is just as destructive for pulls
++        that are about to start. So: WAIT, bounded, for (a) the connector's
++        pending-send registry to empty and (b) the block pool to report no
++        pinned blocks (``reset_prefix_cache`` returns True only then; calling
++        it on the cordoned+drained engine is safe and it is reset again after
++        sleep). Only what survives the wait is a true orphan (nobody pulled it
++        for ``timeout_s``) and gets force-expired by the flush fallback.
++
++        Cost model: this is load-dependent zero-loss drain (phase-boundary
++        switches with no outbound KV pass on the first poll at ~0 cost; a
++        switch under active prefill handoff pays the fabric-drain time).
++        """
++        t0 = time.monotonic()
++        engine = getattr(self._handler, "engine_client", None)
++        rpc = getattr(engine, "collective_rpc", None) if engine is not None else None
++        reset = getattr(engine, "reset_prefix_cache", None) if engine is not None else None
++        polls = 0
++        pending = -1
++        pinned_clear = None
++        while time.monotonic() - t0 < timeout_s:
++            polls += 1
++            pending = 0
++            if rpc is not None:
++                try:
++                    result = rpc(_count_nixl_pending_sends)
++                    if asyncio.iscoroutine(result):
++                        result = await result
++                    for entry in result if isinstance(result, list) else [result]:
++                        pending += int((entry or {}).get("pending", 0) or 0)
++                except Exception:  # noqa: BLE001
++                    pending = 0  # introspection unavailable -> rely on reset probe
++            pinned_clear = None
++            if reset is not None:
++                try:
++                    pinned_clear = reset()
++                    if asyncio.iscoroutine(pinned_clear):
++                        pinned_clear = await pinned_clear
++                except Exception:  # noqa: BLE001
++                    pinned_clear = None
++            if pending == 0 and pinned_clear is not False:
++                waited = time.monotonic() - t0
++                logger.info(
++                    "[DualMode] outbound KV drained (polls=%d, waited=%.3fs)",
++                    polls, waited,
++                )
++                return {"drained": True, "waited_s": waited, "polls": polls}
++            await asyncio.sleep(0.25)
++        waited = time.monotonic() - t0
++        logger.warning(
++            "[DualMode] outbound KV drain timed out after %.1fs "
++            "(pending_sends=%s, pinned_clear=%s); force-expiring leftovers",
++            waited, pending, pinned_clear,
++        )
++        await self._flush_kv_connector()
++        return {"drained": False, "waited_s": waited, "polls": polls}
++
++    async def _flush_kv_connector(self) -> None:
++        """Expire the NIXL connector's pending KV sends across all engine workers
++        so the scheduler frees the blocks they pin. Best-effort: any failure
++        (no connector, RPC unsupported) is logged and the switch continues."""
++        engine = getattr(self._handler, "engine_client", None)
++        rpc = getattr(engine, "collective_rpc", None) if engine is not None else None
++        if rpc is None:
++            return
++        try:
++            result = rpc(_flush_nixl_pending_sends)
++            if asyncio.iscoroutine(result):
++                result = await result
++            logger.info("[DualMode] flush_kv_connector: expired pending sends -> %s", result)
++        except Exception as exc:  # noqa: BLE001
++            logger.warning("[DualMode] flush_kv_connector failed (%s); continuing", exc)
++
++    async def _drain_inflight(self, timeout_s: float) -> None:
++        """Release KV blocks held by in-flight work before a role switch.
++
++        The registry only tracks requests that flow through the decode handler's
++        ``generate_tokens``. Partner-prefill requests (served via a separate
++        ``PrefillWorkerHandler`` that calls ``engine.generate`` directly) and
++        pending NIXL KV transfers keep blocks pinned (ref_cnt>0) WITHOUT
++        appearing in the registry, so a P->D switch-back then finds thousands of
++        blocks "not freed yet", shrinking the decode KV budget until long decode
++        requests hang. We therefore drain the *engine* itself to idle, then mop
++        up any registry straggler. Best-effort — missing engine/registry (unit
++        test stubs) just skips.
++        """
++        engine = getattr(self._handler, "engine_client", None)
++        # Primary: wait for the vLLM engine to become fully idle (covers
++        # partner-prefill requests + pending KV transfers the registry misses).
++        drain = getattr(engine, "wait_for_requests_to_drain", None) if engine is not None else None
++        if drain is not None:
++            try:
++                await drain(int(max(1.0, timeout_s)))
++                logger.info("[DualMode] drain: engine idle before switch")
++            except Exception as exc:  # noqa: BLE001 - includes TimeoutError
++                logger.warning(
++                    "[DualMode] drain: engine did not fully quiesce in %.0fs (%s); "
++                    "aborting stragglers", timeout_s, exc,
++                )
++        # Secondary: force-abort any registry-tracked straggler still present.
++        registry = getattr(self._handler, "request_registry", None)
++        if registry is not None:
++            try:
++                active = list(registry.active_ids())
++            except Exception:  # noqa: BLE001
++                active = []
++            for rid in active:
++                try:
++                    if engine is not None:
++                        res = engine.abort(rid)
++                        if asyncio.iscoroutine(res):
++                            await res
++                except Exception:  # noqa: BLE001
++                    logger.debug("[DualMode] drain abort(%s) failed", rid, exc_info=True)
++                try:
++                    registry.deregister(rid)
++                except Exception:  # noqa: BLE001
++                    pass
++            if active:
++                logger.info("[DualMode] drain: aborted %d registry straggler(s)", len(active))
++
++    def _inflight_count(self) -> int:
++        """Best-effort count of decode requests currently accepted by this
++        worker (registry-tracked). Used by the quiesce handshake to detect NEW
++        arrivals after cordon. 0 when no registry (unit-test stubs)."""
++        reg = getattr(self._handler, "request_registry", None)
++        if reg is None:
++            return 0
++        try:
++            return len(reg.active_ids())
++        except Exception:  # noqa: BLE001
++            return 0
++
++    async def _drain_and_quiesce(self, stable_s: float, timeout_s: float) -> dict:
++        """Drain to idle, then CONFIRM the engine stays idle for ``stable_s``
++        continuously before returning — i.e. no new request has arrived, so the
++        frontend has drained its routing pipeline to this (cordoned) worker. Any
++        arrival during the stable window re-drains and re-confirms. Bounded by
++        ``timeout_s``. This is the handshake that closes the residual
++        switch-instant 500 race a fixed settle delay left open under high
++        concurrency. ``stable_s`` == 0 falls back to a single drain."""
++        deadline = time.monotonic() + max(0.0, timeout_s)
++        arrivals_after_cordon = 0
++        while True:
++            remaining = deadline - time.monotonic()
++            await self._drain_inflight(max(1.0, min(self._drain_timeout_s, remaining)) if remaining > 0 else 1.0)
++            if stable_s <= 0:
++                return {"quiesced": True, "arrivals_after_cordon": arrivals_after_cordon}
++            # Confirm the engine STAYS idle for stable_s (no new arrivals).
++            stable_deadline = time.monotonic() + stable_s
++            interrupted = False
++            while time.monotonic() < stable_deadline:
++                if self._inflight_count() > 0:
++                    arrivals_after_cordon += 1
++                    interrupted = True
++                    break
++                await asyncio.sleep(0.1)
++            if not interrupted:
++                return {"quiesced": True, "arrivals_after_cordon": arrivals_after_cordon}
++            if time.monotonic() >= deadline:
++                logger.warning("[DualMode] quiesce timed out with late arrivals=%d; proceeding", arrivals_after_cordon)
++                return {"quiesced": False, "arrivals_after_cordon": arrivals_after_cordon}
++
++    async def _reconfig_kv_pool(self, target_role: str) -> None:
++        """Reset the KV prefix cache so the new role starts with a clean pool.
++
++        vLLM 0.16 exposes ``engine.reset_prefix_cache()``. Calling it after
++        sleep frees all cached blocks held by the previous role, letting
++        the new role's traffic shape (decode = long sequences, prefill =
++        many short ones) make full use of the GPU block budget without
++        eviction churn.
++
++        We do **not** resize ``cache_config.num_gpu_blocks`` at runtime —
++        that would require ``_initialize_kv_caches`` re-execution which is
++        fragile on a sleeping engine. The block budget is shared and the
++        prefix-cache eviction policy lets each role saturate it on demand.
++        """
++        engine = getattr(self._handler, "engine_client", None)
++        if engine is None:
++            logger.warning(
++                "[DualMode] reconfig_kv_pool(%s): handler has no engine_client; skipping",
++                target_role,
++            )
++            return
++        reset = getattr(engine, "reset_prefix_cache", None)
++        if reset is None:
++            logger.warning(
++                "[DualMode] reconfig_kv_pool(%s): engine has no reset_prefix_cache; skipping",
++                target_role,
++            )
++            return
++        try:
++            result = reset()
++            if asyncio.iscoroutine(result):
++                result = await result
++            # vLLM returns False (and logs "some blocks (N) are not freed yet")
++            # when a running request still pins blocks. If drain missed one,
++            # abort remaining and retry once so the new role gets a clean pool.
++            if result is False:
++                logger.warning(
++                    "[DualMode] reconfig_kv_pool(%s): reset_prefix_cache reported "
++                    "blocks still pinned; draining and retrying", target_role,
++                )
++                await self._drain_inflight(2.0)
++                result = reset()
++                if asyncio.iscoroutine(result):
++                    result = await result
++            logger.info(
++                "[DualMode] reconfig_kv_pool(%s): reset_prefix_cache result=%s",
++                target_role, result,
++            )
++        except Exception as exc:  # noqa: BLE001
++            logger.warning(
++                "[DualMode] reconfig_kv_pool(%s): reset failed: %s; continuing",
++                target_role, exc,
++            )
++
++    async def _reconfig_nixl(self, target_role: str) -> None:
++        """Drop any cached NIXL connector handle so the next request rebuilds it.
++
++        vLLM 0.16's ``kv_transfer_config`` is fixed at engine construction;
++        we cannot swap connectors at runtime. What we CAN do is invalidate
++        the handler's cached NIXL connector handle so the next request
++        rebuilds it against the engine's current connector state —
++        preventing stale prefill→decode xfer slots from leaking across a
++        role flip.
++        """
++        handler = self._handler
++        nixl = getattr(handler, "_nixl_connector", None)
++        if nixl is None:
++            logger.info(
++                "[DualMode] reconfig_nixl(%s): no cached nixl connector; nothing to drop",
++                target_role,
++            )
++            return
++        try:
++            handler._nixl_connector = None
++            shutdown = getattr(nixl, "shutdown", None) or getattr(nixl, "close", None)
++            if shutdown is not None:
++                result = shutdown()
++                if asyncio.iscoroutine(result):
++                    await result
++            logger.info(
++                "[DualMode] reconfig_nixl(%s): dropped cached nixl connector",
++                target_role,
++            )
++        except Exception as exc:  # noqa: BLE001
++            logger.warning(
++                "[DualMode] reconfig_nixl(%s): drop failed: %s; continuing",
++                target_role, exc,
++            )
++
++    async def _emit_role_changed(self, from_role: str, to_role: str) -> None:
++        """Observability-only: pod label + (optional) publisher event.
++
++        Routing has *already* been switched at this point via the
++        unregister/register MDC steps in :meth:`switch_role`. This method
++        only updates side-channel signals so operators can see the new
++        role with ``kubectl get pod -L nvidia.com/dynamo-current-role``.
++        """
++        # 1. Pod label patch (operator-visible).
++        if self._label_patcher is not None:
++            try:
++                await self._label_patcher(
++                    "nvidia.com/dynamo-current-role", to_role
++                )
++            except Exception as exc:  # noqa: BLE001
++                logger.warning(
++                    "[DualMode] emit_role_changed: label patch failed: %s", exc
++                )
++
++        # 2. Endpoint metadata (debugging aid; router does not consume).
++        endpoint = getattr(self._handler, "generate_endpoint", None)
++        if endpoint is not None:
++            update = getattr(endpoint, "update_metadata", None)
++            if update is not None:
++                try:
++                    result = update({"disaggregation_mode": to_role})
++                    if asyncio.iscoroutine(result):
++                        await result
++                except Exception as exc:  # noqa: BLE001
++                    logger.warning(
++                        "[DualMode] emit_role_changed: update_metadata failed: %s", exc
++                    )
++
++        # 3. Publisher event (consumed by external observers).
++        if self._publisher is not None:
++            publish = getattr(self._publisher, "publish_role_changed", None)
++            if publish is not None:
++                try:
++                    res = publish(from_role=from_role, to_role=to_role)
++                    if asyncio.iscoroutine(res):
++                        await res
++                except Exception as exc:  # noqa: BLE001
++                    logger.warning(
++                        "[DualMode] emit_role_changed: publish failed: %s", exc
++                    )
+diff --git a/components/src/dynamo/vllm/handlers.py b/components/src/dynamo/vllm/handlers.py
+index e1daaa61f9..6d0c05e0b0 100644
+--- a/components/src/dynamo/vllm/handlers.py
++++ b/components/src/dynamo/vllm/handlers.py
+@@ -4,13 +4,16 @@
+ import asyncio
+ import base64
+ import binascii
++import dataclasses
+ import io
++import json
+ import logging
+ import os
+ import tempfile
+ import threading
+ import time
+ from abc import ABC, abstractmethod
++from collections.abc import Mapping
+ from contextlib import asynccontextmanager
+ from dataclasses import dataclass
+ from typing import Any, AsyncGenerator, Dict, Final
+@@ -51,6 +54,89 @@ configure_dynamo_logging()
+ logger = logging.getLogger(__name__)
+ 
+ 
++# --------------------------------------------------------------------------
++# RL-Scaling S3: request-registry extraction helpers.
++#
++# These feed the InProcessRequestRegistry, whose snapshot is what
++# /migrate_out ships to a peer decoder. Anything dropped here is silently
++# lost across a migration, so both helpers are deliberately generic.
++# --------------------------------------------------------------------------
++
++# Not migration state; never copy into a replayed request.
++_SP_EXCLUDED = {"extra_args", "logits_processors", "guided_decoding", "allowed_token_ids"}
++
++# Last-resort field list if the SamplingParams type exposes no introspection.
++_SP_FALLBACK_FIELDS = (
++    "temperature", "top_p", "top_k", "min_p", "max_tokens", "min_tokens",
++    "presence_penalty", "frequency_penalty", "repetition_penalty",
++    "stop", "stop_token_ids", "seed", "n", "ignore_eos", "logprobs",
++    "prompt_logprobs", "skip_special_tokens", "include_stop_str_in_output",
++    "spaces_between_special_tokens", "detokenize", "bad_words",
++)
++
++
++def _extract_prompt_token_ids(prompt) -> list:
++    """Return the prompt's token ids, for either a dict or an object prompt.
++
++    vLLM's ``TokensPrompt`` is a **TypedDict**, so ``prompt`` is a plain dict
++    and ``getattr(prompt, "prompt_token_ids", [])`` silently yields ``[]``.
++    That made every registry snapshot prompt-less, so a migrated request was
++    replayed as ``[] + generated_tokens`` — i.e. it lost the user's prompt.
++    Handle the mapping case first, then fall back to attribute access.
++    """
++    if prompt is None:
++        return []
++    if isinstance(prompt, Mapping):
++        return list(prompt.get("prompt_token_ids") or [])
++    return list(getattr(prompt, "prompt_token_ids", None) or [])
++
++
++def _sampling_params_to_dict(sampling_params) -> dict:
++    """JSON-safe snapshot of *all* sampling params, not a hand-picked subset.
++
++    The previous implementation copied a closed list of 12 names, which
++    silently dropped ``ignore_eos`` (and anything else) — a migrated request
++    then stopped at natural EOS instead of honouring its original stopping
++    policy. Enumerate the real fields so migration is faithful by default.
++    """
++    if sampling_params is None:
++        return {}
++    fields = None
++    # msgspec.Struct (vLLM v1) exposes __struct_fields__
++    fields = getattr(sampling_params, "__struct_fields__", None)
++    if not fields:
++        try:
++            if dataclasses.is_dataclass(sampling_params):
++                fields = [f.name for f in dataclasses.fields(sampling_params)]
++        except Exception:  # noqa: BLE001
++            fields = None
++    if not fields:
++        d = getattr(sampling_params, "__dict__", None)
++        fields = list(d.keys()) if d else None
++    if not fields:
++        fields = _SP_FALLBACK_FIELDS
++
++    out: dict = {}
++    for k in fields:
++        if not isinstance(k, str) or k.startswith("_") or k in _SP_EXCLUDED:
++            continue
++        v = getattr(sampling_params, k, None)
++        if v is None:
++            continue
++        if isinstance(v, tuple):
++            v = list(v)
++        # Keep the snapshot JSON-serialisable: the sidecar ships it over HTTP.
++        if isinstance(v, (bool, int, float, str)) or (
++            isinstance(v, (list, dict))
++        ):
++            try:
++                json.dumps(v)
++            except (TypeError, ValueError):
++                continue
++            out[k] = v
++    return out
++
++
+ @dataclass(frozen=True)
+ class LoRAInfo:
+     """Metadata for a loaded LoRA adapter."""
+@@ -332,6 +418,14 @@ class BaseWorkerHandler(ABC):
+         self.dp_range = get_dp_range_for_worker(self.engine_client.vllm_config)
+         self._sleep_wake_lock = asyncio.Lock()
+         self._engine_is_sleeping = False
++        # S2 (RL-Scaling): current disaggregation role; flipped by DualModeWorker.
++        self._disaggregation_mode: str | None = None
++        # S3 (RL-Scaling): in-flight request registry for migration. Kept on the
++        # base handler so both prefill + decode workers update it (only decode
++        # actually serves /migrate_*, but uniform recording avoids surprises).
++        # Set by main.py at construction time when sidecar is enabled; left as
++        # None when feature is off (writes become no-ops).
++        self.request_registry = None  # type: ignore[assignment]
+ 
+         # Initialize InputParamManager for text-in-text-out mode
+         tokenizer = None
+@@ -422,6 +516,20 @@ class BaseWorkerHandler(ABC):
+                 logger.error(f"Failed to wake up engine: {e}")
+                 return {"status": "error", "message": str(e)}
+ 
++    def set_disaggregation_mode(self, mode: str) -> None:
++        """S2 (RL-Scaling): record the worker's current role.
++
++        ``mode`` is one of ``"prefill"`` / ``"decode"`` / ``"agg"``. The value
++        is consumed by :class:`dynamo.vllm.dual_mode.DualModeWorker` when it
++        re-registers the endpoint after a successful role flip.
++        """
++        if mode not in {"prefill", "decode", "agg"}:
++            raise ValueError(f"unknown disaggregation mode: {mode!r}")
++        self._disaggregation_mode = mode
++
++    def get_disaggregation_mode(self) -> str | None:
++        return self._disaggregation_mode
++
+     @abstractmethod
+     async def generate(self, request, context) -> AsyncGenerator[dict, None]:
+         raise NotImplementedError
+@@ -1215,6 +1323,23 @@ class BaseWorkerHandler(ABC):
+         trace_headers=None,
+         priority=0,
+     ):
++        # RL-Scaling S3: register the request with the in-flight tracker so
++        # /migrate_out can retrieve its state. Best-effort: extracting prompt
++        # tokens from a TokensPrompt is straightforward; for TextPrompt we
++        # skip (sidecar will treat such requests as un-migratable).
++        registry = getattr(self, "request_registry", None)
++        if registry is not None:
++            try:
++                prompt_tokens_for_reg = _extract_prompt_token_ids(prompt)
++                sp_dict = _sampling_params_to_dict(sampling_params)
++                registry.register(
++                    request_id,
++                    prompt_tokens_for_reg,
++                    sp_dict,
++                    stop_conditions={},
++                )
++            except Exception:  # noqa: BLE001
++                logger.debug("request_registry.register failed", exc_info=True)
+         try:
+             # Log LoRA usage for this generation (debug level to avoid log spam)
+             self._log_with_lora_context(
+@@ -1252,7 +1377,15 @@ class BaseWorkerHandler(ABC):
+ 
+                 output = res.outputs[0]
+                 next_total_toks = len(output.token_ids)
+-                out = {"token_ids": output.token_ids[num_output_tokens_so_far:]}
++                new_token_ids = output.token_ids[num_output_tokens_so_far:]
++                out = {"token_ids": new_token_ids}
++                # RL-Scaling S3: stream new tokens into the registry so a
++                # later /migrate_out can replay them on the destination.
++                if registry is not None and new_token_ids:
++                    try:
++                        registry.record_tokens(request_id, new_token_ids)
++                    except Exception:  # noqa: BLE001
++                        logger.debug("request_registry.record_tokens failed", exc_info=True)
+ 
+                 # Extract logprobs for new tokens if available
+                 tokenizer = getattr(self.engine_client, "tokenizer", None)
+@@ -1289,6 +1422,12 @@ class BaseWorkerHandler(ABC):
+             logger.warning("Initiating Dynamo Runtime shutdown.")
+             self.runtime.shutdown()
+             os._exit(1)
++        finally:
++            if registry is not None:
++                try:
++                    registry.deregister(request_id)
++                except Exception:  # noqa: BLE001
++                    logger.debug("request_registry.deregister failed", exc_info=True)
+ 
+ 
+ class DecodeWorkerHandler(BaseWorkerHandler):
+diff --git a/components/src/dynamo/vllm/main.py b/components/src/dynamo/vllm/main.py
+index e88901e65f..28faa99838 100644
+--- a/components/src/dynamo/vllm/main.py
++++ b/components/src/dynamo/vllm/main.py
+@@ -36,6 +36,7 @@ from dynamo.llm import (
+     ModelType,
+     fetch_model,
+     register_model,
++    unregister_model,
+ )
+ 
+ # Optional imports for frontend decoding support
+@@ -586,6 +587,90 @@ async def register_vllm_model(
+     )
+ 
+ 
++class VllmReregistrar:
++    """Reregistrar implementation for the vLLM dual-mode worker (RL-Scaling).
++
++    Owns the per-role (endpoint, ModelType, ModelInput) tuples that
++    :func:`register_vllm_model` needs, and exposes the ``register`` /
++    ``unregister`` async methods consumed by
++    :class:`dynamo.vllm.dual_mode.DualModeWorker`.
++
++    The crucial behaviour: on a role flip the previous role's
++    ``ModelDeploymentCard`` is removed from etcd via ``unregister_model``
++    (which removes this worker from the router's WorkerSet for that role)
++    and a fresh MDC is published under the *target-role* endpoint URI via
++    ``register_vllm_model`` (which makes the router's PrefillRouter /
++    chat pool pick this worker up for the new role).
++
++    Endpoints map by role:
++        * ``decode``  -> ``<ns>.backend.<endpoint>``  ModelType=Chat|Completions
++        * ``prefill`` -> ``<ns>.prefill.<endpoint>``  ModelType=Prefill
++    """
++
++    def __init__(
++        self,
++        config: Config,
++        engine_client: AsyncLLM,
++        vllm_config: VllmConfig,
++        endpoints_by_role: dict,  # role -> Endpoint
++        model_types_by_role: dict,  # role -> ModelType
++    ) -> None:
++        self._config = config
++        self._engine_client = engine_client
++        self._vllm_config = vllm_config
++        self._endpoints = endpoints_by_role
++        self._model_types = model_types_by_role
++        self._model_input = (
++            ModelInput.Text if config.use_vllm_tokenizer else ModelInput.Tokens
++        )
++
++    def get_endpoint(self, role: str):
++        """Return the Endpoint object for the given role, or None."""
++        return self._endpoints.get(role)
++
++    async def register(self, role: str) -> None:
++        ep = self._endpoints.get(role)
++        mt = self._model_types.get(role)
++        if ep is None or mt is None:
++            # Role intentionally not served on this pod (e.g. partner-prefill
++            # disabled). Treated as a no-op so DualModeWorker.switch_role
++            # still works as a 'leave/rejoin own pool' elastic switch.
++            logger.info(
++                "[VllmReregistrar] register: role=%r not served on this pod; skipping",
++                role,
++            )
++            return
++        logger.info(
++            "[VllmReregistrar] register role=%s model_type=%s endpoint=%s",
++            role, mt, ep,
++        )
++        await register_vllm_model(
++            self._model_input,
++            mt,
++            ep,
++            self._config,
++            self._engine_client,
++            self._vllm_config,
++        )
++
++    async def unregister(self, role: str) -> None:
++        ep = self._endpoints.get(role)
++        if ep is None:
++            logger.info(
++                "[VllmReregistrar] unregister: role=%r not served on this pod; skipping",
++                role,
++            )
++            return
++        try:
++            logger.info("[VllmReregistrar] unregister role=%s endpoint=%s", role, ep)
++            await unregister_model(ep)
++        except Exception as exc:  # noqa: BLE001
++            # Surface but don't crash: stale MDC will time out via etcd lease.
++            logger.warning(
++                "[VllmReregistrar] unregister(%s) failed (continuing): %s", role, exc
++            )
++
++
+ async def init_prefill(
+     runtime: DistributedRuntime,
+     config: Config,
+@@ -636,6 +721,34 @@ async def init_prefill(
+     )
+     handler.add_temp_dir(prometheus_temp_dir)
+ 
++    # RL-Scaling: expose the same sidecar observability surface on native
++    # prefill workers. Native prefill is not wired for true P->D role switch,
++    # so /switch_role intentionally remains unavailable while /v1/role and
++    # /v1/active_requests are usable by controller/test gates.
++    sidecar_runner = None
++    if os.environ.get("DYNAMO_RL_SIDECAR_DISABLED") != "1":
++        try:
++            from dynamo.vllm.rl_scaling_sidecar import (
++                InProcessRequestRegistry,
++                start_sidecar,
++            )
++
++            registry = InProcessRequestRegistry()
++            handler.request_registry = registry
++            sidecar_runner, _site = await start_sidecar(
++                dual_mode_worker=None,
++                migration_handler=None,
++                initial_role="prefill",
++                registry=registry,
++            )
++        except Exception as exc:  # noqa: BLE001
++            logger.warning(
++                "[RLScalingSidecar] failed to start on prefill worker (%s); "
++                "continuing without it",
++                exc,
++            )
++            sidecar_runner = None
++
+     # Check if kv event consolidator is enabled (port was allocated in setup_vllm_engine)
+     consolidator_enabled = False
+     consolidator_port = None
+@@ -721,6 +834,11 @@ async def init_prefill(
+         raise
+     finally:
+         logger.debug("Cleaning up prefill worker")
++        if sidecar_runner is not None:
++            try:
++                await sidecar_runner.cleanup()
++            except Exception as exc:  # noqa: BLE001
++                logger.warning("[RLScalingSidecar] cleanup raised: %s", exc)
+         handler.cleanup()
+ 
+ 
+@@ -743,6 +861,61 @@ async def init(
+         f"{config.namespace}.{config.component}.clear_kv_blocks"
+     )
+ 
++    # ---- RL-Scaling: dual-mode partner endpoint (S2 true E2E switch) -------
++    # When DYNAMO_RL_DUAL_MODE=1, this decode worker also publishes a prefill
++    # endpoint URI so a /switch_role flip can re-register its MDC under the
++    # *prefill* endpoint and the frontend's PrefillRouter starts dispatching
++    # prefill traffic to it. Requires --kv-transfer-config to be present
++    # because NixlConnector cannot be added to a live engine.
++    _dual_mode_enabled = os.environ.get("DYNAMO_RL_DUAL_MODE") == "1"
++    # Partner-prefill serving (turn this decode-booted engine into a real
++    # serving prefill worker on /switch_role) is gated behind
++    # DYNAMO_RL_DUAL_PARTNER_PREFILL=1.
++    #
++    # vLLM 0.16's NixlConnector with kv_role=kv_both *can* produce a
++    # disaggregated-prefill response from a decode-booted engine, but the
++    # connector populates `RequestOutput.kv_transfer_params` only on the
++    # FINAL streamed chunk (inside `request_finished`). The Rust
++    # PrefillRouter (lib/llm/src/kv_router/prefill_router.rs) reads
++    # `disaggregated_params` from the FIRST chunk of the prefill stream
++    # only — for a real prefill-mode pod the engine emits a single chunk
++    # so first==last and it just works, but for a dual-mode decode-booted
++    # engine the stream is multi-chunk and the router rejects the
++    # response with HTTP 500 ("No disaggregated params in prefill
++    # response"), poisoning the prefill pool with ~50% failures.
++    #
++    # The fix lives further down (`_partner_prefill_generate` wrapper):
++    # it buffers all chunks and emits ONE consolidated chunk with the
++    # merged `kv_transfer_params`, so the router's first-chunk read
++    # always sees a populated `disaggregated_params`. With this gate ON
++    # the partner endpoint serves real prefill traffic; with it OFF the
++    # /switch_role still does a true E2E "elastic decode pool" flip
++    # (target leaves the chat pool on switch->prefill via MDC
++    # unregister, rejoins on switch->decode via MDC register), but does
++    # not contribute prefill capacity.
++    _dual_partner_serve = os.environ.get("DYNAMO_RL_DUAL_PARTNER_PREFILL") == "1"
++    _dual_partner_endpoint = None  # prefill-component endpoint when dual-mode
++    if _dual_mode_enabled and _dual_partner_serve:
++        _kv_cfg = getattr(config.engine_args, "kv_transfer_config", None)
++        if _kv_cfg is None:
++            raise RuntimeError(
++                "DYNAMO_RL_DUAL_MODE=1 requires --kv-transfer-config to be "
++                "set at engine startup (NixlConnector with kv_role=kv_both). "
++                "vLLM's KV transfer connector is fixed at engine construction; "
++                "without it a prefill role flip cannot push KV to the decode "
++                "side. Add to your DGD args: --kv-transfer-config "
++                "'{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\"}'"
++            )
++        _dual_partner_endpoint = runtime.endpoint(
++            f"{config.namespace}.prefill.{config.endpoint}"
++        )
++        logger.info(
++            "[RLScaling/DualMode] decode worker will also publish prefill "
++            "endpoint URI for hot role flips: %s.prefill.%s",
++            config.namespace, config.endpoint,
++        )
++    # ------------------------------------------------------------------------
++
+     shutdown_endpoints[:] = [
+         generate_endpoint,
+         clear_endpoint,
+@@ -815,6 +988,104 @@ async def init(
+     )
+     handler.add_temp_dir(prometheus_temp_dir)
+ 
++    # ---------------- RL-Scaling: in-process HTTP sidecar (S2 + S3) ----------
++    # Wires DualModeWorker (POST /switch_role, GET /v1/role) and
++    # MigrationHandler (POST /migrate_out, POST /migrate_in) onto an aiohttp
++    # server. Disabled when DYNAMO_RL_SIDECAR_DISABLED=1.
++    sidecar_runner = None
++    if os.environ.get("DYNAMO_RL_SIDECAR_DISABLED") != "1":
++        try:
++            from dynamo.vllm.dual_mode import DualModeWorker
++            from dynamo.vllm.migration import MigrationHandler, MigrationPolicy, RequestBlockIndex
++            from dynamo.vllm.rl_scaling_sidecar import (
++                EngineRequestTracker,
++                InProcessRequestRegistry,
++                make_nixl_meta_provider,
++                make_submit_request_callback,
++                start_sidecar,
++            )
++
++            registry = InProcessRequestRegistry()
++            handler.request_registry = registry
++
++            initial_role = (
++                "decode"
++                if config.disaggregation_mode == DisaggregationMode.DECODE
++                else "prefill"
++                if config.disaggregation_mode == DisaggregationMode.PREFILL
++                else "decode"
++            )
++
++            # Build the Reregistrar for true E2E role flips. When the
++            # partner endpoint is wired (DYNAMO_RL_DUAL_MODE=1), the
++            # DualModeWorker can publish a fresh MDC under the
++            # opposite-role endpoint URI on /switch_role, causing the
++            # frontend router to actually start dispatching new-role
++            # traffic to this worker. Without a partner endpoint the
++            # switch is in-process only (legacy behaviour).
++            _reregistrar = None
++            if _dual_mode_enabled:
++                _eps = {"decode": generate_endpoint}
++                _mts = {"decode": parse_endpoint_types(config.endpoint_types)}
++                if _dual_partner_endpoint is not None:
++                    _eps["prefill"] = _dual_partner_endpoint
++                    _mts["prefill"] = ModelType.Prefill
++                _reregistrar = VllmReregistrar(
++                    config=config,
++                    engine_client=engine_client,
++                    vllm_config=vllm_config,
++                    endpoints_by_role=_eps,
++                    model_types_by_role=_mts,
++                )
++
++            dual_mode = DualModeWorker(
++                handler,
++                initial_role=initial_role,
++                reregistrar=_reregistrar,
++            )
++            # Make the live DualModeWorker visible to the role-aware
++            # generate dispatcher constructed below in serve_tasks setup.
++            handler._rl_dual_mode = dual_mode
++
++            # Best-effort: KVBM cache manager exposed via engine internals.
++            try:
++                kvbm_cm = getattr(
++                    engine_client.engine_core, "kv_cache_manager", None
++                )
++            except Exception:  # noqa: BLE001
++                kvbm_cm = None
++
++            tracker = EngineRequestTracker(
++                engine_client=engine_client,
++                registry=registry,
++                submit_request_callback=make_submit_request_callback(engine_client),
++            )
++            connector_enabled = (
++                os.environ.get("DYNAMO_RL_CONNECTOR_ENABLED", "").lower()
++                in ("1", "true", "yes")
++            )
++            migration_handler = MigrationHandler(
++                tracker,
++                policy=MigrationPolicy(),
++                engine=engine_client,
++                block_index=RequestBlockIndex(kvbm_cm),
++                nixl_meta_provider=make_nixl_meta_provider(vllm_config),
++                connector_enabled=connector_enabled,
++            )
++            sidecar_runner, _site = await start_sidecar(
++                dual_mode_worker=dual_mode,
++                migration_handler=migration_handler,
++                initial_role=initial_role,
++                registry=registry,
++            )
++        except Exception as exc:  # noqa: BLE001
++            logger.warning(
++                "[RLScalingSidecar] failed to start (%s); continuing without it",
++                exc,
++            )
++            sidecar_runner = None
++    # -------------------------------------------------------------------------
++
+     # Check if kv event consolidator is enabled (port was allocated in setup_vllm_engine)
+     consolidator_enabled = False
+     consolidator_port = None
+@@ -886,11 +1157,157 @@ async def init(
+             ),
+         ]
+ 
++        # ---- RL-Scaling: dual-mode partner-prefill (HTTP-500 fix) --------
++        # Background: the shared TCP server (lib/runtime/src/pipeline/network/
++        # ingress/shared_tcp_endpoint.rs) keys registered handlers by
++        # `{cid:x}/{endpoint_name}` where `cid` is the process-scoped
++        # DistributedRuntime connection_id. If the same process serves both
++        # `<ns>.backend.generate` (decode) and `<ns>.prefill.generate`
++        # (partner-prefill), BOTH map to the same key `cid/generate` and
++        # the second insert into the DashMap silently overwrites the first.
++        # The MDC TransportType built in component/endpoint.rs also encodes
++        # `host:port/{cid:x}/{endpoint_name}` only -- so the prefill MDC
++        # ends up pointing at the same TCP slot as the backend MDC.
++        #
++        # Concretely this meant: after /switch_role decode->prefill, the
++        # frontend's PrefillRouter dispatched prefill requests to this pod
++        # via the prefill MDC, but the TCP dispatcher invoked whichever
++        # `generate` handler was registered last -- almost always the
++        # plain decode handler, which has no concept of `kv_transfer_params`
++        # and returns `disaggregated_params=None` on every chunk. The Rust
++        # PrefillRouter then rejected with HTTP 500 ("No disaggregated
++        # params in prefill response"). Roughly half of all chat completions
++        # failed (the half PrefillRouter happened to load-balance to the
++        # switched pod).
++        #
++        # Fix: register exactly ONE TCP handler per (cid, endpoint_name).
++        # The single `generate` handler is a polymorphic wrapper that, at
++        # request time, looks up `dual_mode.current_role`:
++        #   - role == "decode"  -> delegate to handler.generate (decode)
++        #   - role == "prefill" -> delegate to a chunk-buffering wrapper
++        #                          around partner_prefill_handler.generate,
++        #                          consolidating multi-chunk vLLM output
++        #                          into one chunk whose disaggregated_params
++        #                          carries the (final-chunk-published)
++        #                          kv_transfer_params.
++        # We still create _dual_partner_endpoint as an Endpoint OBJECT so
++        # VllmReregistrar.register("prefill") can publish the prefill MDC
++        # via register_vllm_model. The MDC's transport URL points at
++        # `cid/generate` -- exactly what the polymorphic wrapper handles.
++        partner_prefill_handler = None
++        if _dual_partner_endpoint is not None:
++            partner_prefill_handler = PrefillWorkerHandler(
++                runtime,
++                engine_client,
++                default_sampling_params,
++                getattr(getattr(vllm_config, "model_config", None), "max_model_len", None),
++                enable_multimodal=config.enable_multimodal,
++                generate_endpoint=_dual_partner_endpoint,
++                config=config,
++                use_vllm_tokenizer=config.use_vllm_tokenizer,
++                shutdown_event=shutdown_event,
++                enable_frontend_decoding=config.frontend_decoding,
++            )
++
++        async def _partner_prefill_generate(request, context):
++            """Run partner_prefill_handler.generate and consolidate chunks.
++
++            vLLM's NixlConnector publishes RequestOutput.kv_transfer_params
++            only on the FINAL chunk (request_finished()), but the Rust
++            PrefillRouter (kv_router/prefill_router.rs::execute_prefill)
++            reads disaggregated_params from the FIRST chunk only. We
++            therefore consume the entire stream, capture the last
++            kv_transfer_params we observe, and yield ONE consolidated
++            response chunk so the router sees the field on chunk #1.
++            """
++            merged_kv = None
++            last_chunk = None
++            async for chunk in partner_prefill_handler.generate(request, context):
++                if not isinstance(chunk, dict):
++                    yield chunk
++                    continue
++                last_chunk = chunk
++                dp = chunk.get("disaggregated_params")
++                if isinstance(dp, dict):
++                    kv = dp.get("kv_transfer_params")
++                    if kv:
++                        merged_kv = kv
++            if last_chunk is None:
++                return
++            last_chunk["disaggregated_params"] = (
++                {"kv_transfer_params": merged_kv} if merged_kv is not None else None
++            )
++            if merged_kv is None:
++                logger.warning(
++                    "[RLScaling/DualMode] partner-prefill produced no "
++                    "kv_transfer_params (engine connector not in kv_both?); "
++                    "router will reject (request_id=%s)",
++                    getattr(context, "id", lambda: "?")(),
++                )
++            yield last_chunk
++
++        def _has_decode_kv_params(request) -> bool:
++            """True when the request carries kv_transfer_params produced by a
++            prior prefill step — an unambiguous decode-intent marker."""
++            try:
++                dp = request.get("disaggregated_params")
++                return bool(isinstance(dp, dict) and dp.get("kv_transfer_params"))
++            except Exception:  # noqa: BLE001
++                return False
++
++        async def _generate_dispatch(request, context):
++            """Polymorphic generate: pick handler based on dual-mode role.
++
++            Zero-loss switch window (RL-Scaling): between cordon (old
++            ModelCard withdrawn) and register (new card published) the
++            router can only be acting on the OLD card, so any arrival in
++            that window is old-role traffic *by construction*. Instead of
++            letting sleep() reject it (the switch-instant 500), HOLD it
++            until the switch completes, then serve it under the pre-switch
++            role. This is what makes a short cordon-settle safe.
++            """
++            dm = getattr(handler, "_rl_dual_mode", None)
++            role = getattr(dm, "current_role", "decode") if dm is not None else "decode"
++
++            if dm is not None and getattr(dm, "switch_in_progress", False):
++                intent = getattr(dm, "switch_previous_role", role)
++                ok = await dm.wait_switch_complete(timeout_s=20.0)
++                logger.info(
++                    "[RLScaling/DualMode] held request through switch window "
++                    "(intent=%s, completed=%s, request_id=%s)",
++                    intent, ok, getattr(context, "id", lambda: "?")(),
++                )
++                role = intent  # serve under the role the router dispatched for
++
++            # Permanent stale guard: a request carrying prefill-produced
++            # kv_transfer_params is decode-intent regardless of our current
++            # role (e.g. routed just before a D->P withdrawal converged).
++            if role == "prefill" and _has_decode_kv_params(request):
++                logger.info(
++                    "[RLScaling/DualMode] stale decode-intent request served "
++                    "on prefill-role worker (request_id=%s)",
++                    getattr(context, "id", lambda: "?")(),
++                )
++                role = "decode"
++
++            if partner_prefill_handler is not None and role == "prefill":
++                async for chunk in _partner_prefill_generate(request, context):
++                    yield chunk
++                return
++            async for chunk in handler.generate(request, context):
++                yield chunk
++
++        # Pick the registered handler. When dual-partner is enabled use the
++        # dispatcher; otherwise keep the original behaviour exactly.
++        _registered_generate = (
++            _generate_dispatch if _dual_partner_endpoint is not None else handler.generate
++        )
++
+         serve_tasks = [
+             # for decode, we want to transfer the in-flight requests to other decode engines,
+             # because waiting them to finish can take a long time for long OSLs
+             generate_endpoint.serve_endpoint(
+-                handler.generate,
++                _registered_generate,
+                 graceful_shutdown=True,
+                 metrics_labels=model_metrics_labels,
+                 health_check_payload=health_check_payload,
+@@ -901,6 +1318,14 @@ async def init(
+             ),
+         ]
+ 
++        if _dual_partner_endpoint is not None:
++            logger.info(
++                "[RLScaling/DualMode] generate endpoint installed with "
++                "role-aware dispatcher (decode|partner-prefill); prefill MDC "
++                "will be published on /switch_role"
++            )
++        # -------------------------------------------------------------------
++
+         if lora_enabled:
+             serve_tasks.extend(
+                 [
+@@ -928,6 +1353,11 @@ async def init(
+         logger.debug("Cleaning up decode worker")
+         # Cleanup background tasks
+         handler.cleanup()
++        if sidecar_runner is not None:
++            try:
++                await sidecar_runner.cleanup()
++            except Exception as exc:  # noqa: BLE001
++                logger.warning("[RLScalingSidecar] cleanup raised: %s", exc)
+ 
+ 
+ def get_engine_cache_info(engine: AsyncLLM):
+diff --git a/components/src/dynamo/vllm/migration.py b/components/src/dynamo/vllm/migration.py
+new file mode 100644
+index 0000000000..5591156253
+--- /dev/null
++++ b/components/src/dynamo/vllm/migration.py
+@@ -0,0 +1,508 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
++# SPDX-License-Identifier: Apache-2.0
++"""S3 — Request consolidation HTTP handlers (RL-Scaling).
++
++Phase 2 (v4 · coordinated block-hold migration):
++
++* **Phase-2.A** — smart recompute-prefill migration with
++  :class:`MigrationPolicy` cost-benefit gate + prefix-cache awareness.
++
++* **Phase-2.B (coordinated)** — when ``connector_enabled=True``
++  (env ``DYNAMO_RL_CONNECTOR_ENABLED=1``):
++
++  - ``migrate_out`` **always** defers abort (block-hold), regardless of
++    KVBM/NIXL availability.  Enables safe rollback if destination declines.
++  - KV transfer (NIXL pull) used only when both KVBM block IDs and NIXL
++    coordinates are available; otherwise falls back to recompute-prefill.
++  - ``migration_rollback`` releases hold without aborting — source
++    request continues as if nothing happened.
++  - ``/migrate`` coordinated sidecar endpoint orchestrates the full
++    migrate_out → remote migrate_in → complete/rollback flow.
++
++  Block-hold protocol::
++
++    1. migrate_out: hold request (defer abort, blocks pinned)
++    2. Orchestrator calls migrate_in on destination
++    3a. Success: migration_complete aborts source, frees blocks
++    3b. Failure: migration_rollback releases hold, source continues
++
++  Sweeper force-aborts stale holds after DYNAMO_RL_MIGRATION_HOLD_TIMEOUT
++  seconds (default 10).
++
++Public surface::
++
++    await handler.migrate_out(body)        -> {status, ..., kv_transfer_params?}
++    await handler.migrate_in(body)         -> {status, path, replay_tokens}
++    await handler.migration_complete(body) -> {status}
++    await handler.migration_rollback(body) -> {status}  # release hold, keep running
++"""
++from __future__ import annotations
++
++import logging
++import os
++import time
++from dataclasses import dataclass
++from typing import Any, Callable, Iterable, Optional, Protocol
++
++logger = logging.getLogger(__name__)
++
++
++class RequestTracker(Protocol):
++    """What :class:`MigrationHandler` needs from the engine."""
++
++    async def get_request_state(self, request_id: str) -> Optional[dict]:
++        """Return ``{prompt_tokens, generated_tokens, sampling_params, stop_conditions}`` or ``None``."""
++
++    async def abort_request(self, request_id: str) -> None:
++        """Cancel the in-engine request without finalising the client stream."""
++
++    async def submit_request(self, request_id: str, payload: dict) -> None:
++        """Resubmit a request to the engine using ``prompt + generated`` as the new prompt."""
++
++    async def list_active_request_ids(self) -> Iterable[str]:
++        """Used to resolve the ``"*"`` placeholder."""
++
++
++class _BlockIdSource(Protocol):
++    """Subset of :class:`kvbm.vllm_integration.kv_cache_manager.KvbmCacheManager`
++    we depend on. Kept as a Protocol so tests can mock it without importing
++    torch / kvbm Rust extensions.
++    """
++
++    def get_block_ids(self, request_id: str) -> list[list[int]]: ...
++
++
++class RequestBlockIndex:
++    """Thin adapter over ``KvbmCacheManager.get_block_ids``.
++
++    The Rust KVBM cache manager already maintains a per-request block list
++    keyed by ``request_id`` and exposes it via PyO3 at
++    ``lib/bindings/kvbm/python/kvbm/vllm_integration/kv_cache_manager.py:295``.
++    Phase-2.B's true-D2D migration path needs to know which physical block
++    IDs hold a request's KV; this class is the read-only Python view of that.
++
++    Returns ``None`` when the request is unknown, has been freed, or the
++    underlying cache manager is unavailable — callers must treat it as a
++    best-effort hint, not a guarantee.
++    """
++
++    def __init__(self, kvbm_cache_manager: Optional[_BlockIdSource]) -> None:
++        self._kvbm = kvbm_cache_manager
++
++    def lookup(self, request_id: str) -> Optional[list[int]]:
++        """Return a flat list of block IDs for ``request_id`` or ``None``.
++
++        ``KvbmCacheManager.get_block_ids`` returns ``list[list[int]]`` where
++        the outer list is per kv-cache group (always length 1 today). We
++        flatten it for callers that just want "the blocks for this request".
++        """
++        if self._kvbm is None:
++            return None
++        try:
++            grouped = self._kvbm.get_block_ids(request_id)
++        except Exception:  # noqa: BLE001
++            logger.debug("get_block_ids(%s) failed", request_id, exc_info=True)
++            return None
++        if not grouped:
++            return None
++        flat: list[int] = []
++        for group in grouped:
++            flat.extend(int(b) for b in group)
++        return flat or None
++
++
++#: Callable that returns this worker's NIXL listener coordinates so
++#: ``migrate_out`` can advertise them to the destination. Plumbed by
++#: ``main.py`` from the engine's ``KvTransferConfig`` once NixlConnector has
++#: registered its KV caches. Expected dict shape (matches vLLM 0.16's
++#: ``kv_transfer_params`` schema)::
++#:
++#:     {"engine_id": str, "host": str, "port": int}
++#:
++#: Returning ``None`` (or the callable being ``None``) means "no NIXL coords
++#: available right now" — ``migrate_out`` will simply omit
++#: ``kv_transfer_params`` from its response, which makes ``migrate_in`` fall
++#: back to the Phase-2.A recompute path automatically.
++NixlMetaProvider = Callable[[], Optional[dict]]
++
++
++# ----------------------------------------------------------------- policy
++@dataclass
++class MigrationPolicy:
++    """Cost-benefit thresholds for ``migrate_in``.
++
++    The cost of a migration is one extra prefill on the destination worker.
++    Migrate only when the in-progress decode has enough remaining work that
++    the recompute is recouped.
++
++    Defaults are tuned for a ~7B model on a single RTX 3090:
++      - ``max_replay_tokens=8192``: above this, recompute prefill exceeds 200 ms
++        even with prefix-cache hits — usually not worth it.
++      - ``min_generated_tokens=16``: too-young requests have nothing to save.
++      - ``min_remaining_tokens=32``: too-old requests will finish faster than a
++        migration round-trip.
++    """
++
++    max_replay_tokens: int = 8192
++    min_generated_tokens: int = 16
++    min_remaining_tokens: int = 32
++
++
++# ---------------------------------------------------------------- handler
++class MigrationHandler:
++    def __init__(
++        self,
++        tracker: RequestTracker,
++        policy: Optional[MigrationPolicy] = None,
++        engine: Any = None,
++        block_index: Optional[RequestBlockIndex] = None,
++        nixl_meta_provider: Optional[NixlMetaProvider] = None,
++        connector_enabled: bool = False,
++    ) -> None:
++        self._tracker = tracker
++        self._policy = policy or MigrationPolicy()
++        self._engine = engine
++        self._block_index = block_index or RequestBlockIndex(None)
++        self._nixl_meta_provider = nixl_meta_provider
++        # Phase-2.B block-hold: when connector_enabled=True, migrate_out
++        # ALWAYS defers abort (regardless of KVBM/NIXL availability).
++        # The orchestrator calls /migration_complete to abort+free, or
++        # /migration_rollback to release the hold and let the request
++        # continue.  Sweeper force-aborts stale entries.
++        self._connector_enabled = connector_enabled
++        self._pending_migrations: dict[str, float] = {}  # request_id -> monotonic ts
++        self._migration_hold_timeout_s = float(
++            os.environ.get("DYNAMO_RL_MIGRATION_HOLD_TIMEOUT", "10.0")
++        )
++        self._warn_if_prefix_cache_disabled()
++
++    # ------------------------------------------------------------------ API
++    async def migrate_out(self, body: dict) -> dict:
++        request_id = self._validate_id(body)
++        if isinstance(request_id, dict):
++            return request_id  # error
++        # Resolve "*" -> most-progressed active id (excluding already-held).
++        if request_id == "*":
++            ids = [
++                rid
++                for rid in await self._tracker.list_active_request_ids()
++                if rid not in self._pending_migrations
++            ]
++            if not ids:
++                return {"status": "error", "message": "no active requests"}
++            request_id = await self._pick_most_progressed(ids)
++
++        state = await self._tracker.get_request_state(request_id)
++        if state is None:
++            return {"status": "error", "message": f"unknown request_id {request_id!r}"}
++
++        # Look up source-side block IDs **before** any abort: KVBM frees
++        # blocks synchronously on abort, so the lookup must happen first.
++        src_block_ids = self._block_index.lookup(request_id)
++        nixl_coords = self._read_nixl_meta()
++
++        # Phase-2.B block-hold: when connector_enabled=True, ALWAYS defer
++        # the abort so the orchestrator can rollback if dst declines.
++        # KV transfer path (NIXL) additionally requires KVBM + NIXL coords.
++        use_block_hold = self._connector_enabled
++        use_kv_transfer = (
++            self._connector_enabled
++            and src_block_ids is not None
++            and nixl_coords is not None
++        )
++        if use_block_hold:
++            self._pending_migrations[request_id] = time.monotonic()
++            logger.info(
++                "[Migration] migrate_out: holding request %s "
++                "(block_hold=True, kv_transfer=%s)",
++                request_id, use_kv_transfer,
++            )
++        else:
++            await self._tracker.abort_request(request_id)
++
++        response: dict = {
++            "status": "ok",
++            "request_id": request_id,
++            "prompt_tokens": state["prompt_tokens"],
++            "generated_tokens": state["generated_tokens"],
++            "sampling_params": state["sampling_params"],
++            "stop_conditions": state.get("stop_conditions", {}),
++        }
++        if src_block_ids is not None:
++            response["src_block_ids"] = src_block_ids
++        if use_kv_transfer:
++            # Build the same shape vLLM 0.16's NixlConnector expects on the
++            # decode side (see handlers.py:1577 for the disagg-PD use of the
++            # same dict). vLLM’s NixlConnectorScheduler at
++            # nixl_connector.py:add_new_req_to_recv reads exactly these
++            # fields.
++            response["kv_transfer_params"] = {
++                "do_remote_prefill": True,
++                "do_remote_decode": False,
++                "remote_engine_id": nixl_coords["engine_id"],
++                "remote_block_ids": list(src_block_ids),
++                "remote_host": nixl_coords["host"],
++                "remote_port": int(nixl_coords["port"]),
++                "remote_request_id": request_id,
++            }
++        return response
++
++    async def migrate_in(self, body: dict) -> dict:
++        request_id = self._validate_id(body)
++        if isinstance(request_id, dict):
++            return request_id
++        for required in ("prompt_tokens", "generated_tokens", "sampling_params"):
++            if required not in body:
++                return {"status": "error", "message": f"missing {required!r}"}
++
++        # Phase-2: cost-benefit gate.
++        ok, reason = self._should_migrate(body)
++        if not ok:
++            logger.info("[Migration] migrate_in declined for %s: %s", request_id, reason)
++            return {
++                "status": "declined",
++                "reason": reason,
++                "request_id": request_id,
++            }
++
++        replay_prompt = list(body["prompt_tokens"]) + list(body["generated_tokens"])
++        kv_transfer_params = body.get("kv_transfer_params")
++
++        # Phase-2.B: when the source provided NIXL coordinates AND the
++        # connector path is locally enabled, route via vLLM's NixlConnector.
++        # The connector chain (DynamoConnector + NixlConnector via
++        # MultiConnector) reads sampling_params.extra_args["kv_transfer_params"]
++        # and issues an async NIXL READ pull during the next scheduler step
++        # (see vLLM 0.16 nixl_connector.py:start_load_kv -> _read_blocks).
++        if self._connector_enabled and kv_transfer_params:
++            try:
++                payload = {
++                    "prompt_tokens": replay_prompt,
++                    "sampling_params": body["sampling_params"],
++                    "stop_conditions": body.get("stop_conditions", {}),
++                    "previously_emitted_tokens": list(body["generated_tokens"]),
++                    "kv_transfer_params": dict(kv_transfer_params),
++                    "migration_meta": {
++                        "path": "connector",
++                        "src_block_ids": list(
++                            kv_transfer_params.get("remote_block_ids") or []
++                        ),
++                    },
++                }
++                await self._tracker.submit_request(request_id, payload)
++                return {
++                    "status": "ok",
++                    "request_id": request_id,
++                    "path": "connector",
++                    "replay_tokens": len(replay_prompt),
++                }
++            except Exception as exc:  # noqa: BLE001
++                logger.warning(
++                    "[Migration] connector path failed for %s (%s); "
++                    "falling back to recompute-prefill",
++                    request_id,
++                    exc,
++                )
++
++        # Phase-2.A: recompute-prefill (the new "prompt" is prompt + generated).
++        payload = {
++            "prompt_tokens": replay_prompt,
++            "sampling_params": body["sampling_params"],
++            "stop_conditions": body.get("stop_conditions", {}),
++            "previously_emitted_tokens": list(body["generated_tokens"]),
++        }
++        await self._tracker.submit_request(request_id, payload)
++        return {
++            "status": "ok",
++            "request_id": request_id,
++            "path": "recompute",
++            "replay_tokens": len(replay_prompt),
++        }
++
++    async def migration_complete(self, body: dict) -> dict:
++        """Phase-2.B ack: destination confirms KV pull is done.
++
++        Called by the orchestrator (test script / RL controller) AFTER
++        ``migrate_in`` has successfully submitted the request with
++        ``kv_transfer_params``.  The source now aborts the original
++        request, freeing the held KV blocks.
++        """
++        request_id = self._validate_id(body)
++        if isinstance(request_id, dict):
++            return request_id  # error
++        ts = self._pending_migrations.pop(request_id, None)
++        if ts is None:
++            # Not tracked — might have been swept by timeout already.
++            # Still try to abort in case it is live.
++            logger.info(
++                "[Migration] migration_complete: %s not in pending "
++                "(timeout-swept or Phase-2.A); best-effort abort",
++                request_id,
++            )
++        else:
++            hold_ms = (time.monotonic() - ts) * 1000.0
++            logger.info(
++                "[Migration] migration_complete: releasing %s after %.1fms hold",
++                request_id,
++                hold_ms,
++            )
++        try:
++            await self._tracker.abort_request(request_id)
++        except Exception as exc:  # noqa: BLE001
++            logger.warning(
++                "[Migration] abort_request(%s) in migration_complete failed: %s",
++                request_id,
++                exc,
++            )
++        return {"status": "ok", "request_id": request_id}
++
++    async def sweep_stale_migrations(self) -> int:
++        """Force-abort migrations that have been held longer than timeout.
++
++        Returns the number of force-aborted entries.  Designed to be called
++        periodically from a background task (see sidecar sweeper).
++        """
++        if not self._pending_migrations:
++            return 0
++        now = time.monotonic()
++        stale = [
++            (rid, ts)
++            for rid, ts in self._pending_migrations.items()
++            if now - ts > self._migration_hold_timeout_s
++        ]
++        for rid, ts in stale:
++            hold_s = now - ts
++            logger.warning(
++                "[Migration] timeout: force-aborting held migration %s "
++                "(held %.1fs > %.1fs limit)",
++                rid,
++                hold_s,
++                self._migration_hold_timeout_s,
++            )
++            self._pending_migrations.pop(rid, None)
++            try:
++                await self._tracker.abort_request(rid)
++            except Exception:  # noqa: BLE001
++                logger.debug("force-abort %s failed", rid, exc_info=True)
++        return len(stale)
++
++    async def migration_rollback(self, body: dict) -> dict:
++        """Release a pending migration hold without aborting the request.
++
++        Called when the destination declines or the coordinated migration
++        fails.  The source request continues running as if ``migrate_out``
++        never happened.  Only meaningful when ``connector_enabled=True``
++        (block-hold mode); otherwise returns a harmless no-op.
++        """
++        request_id = self._validate_id(body)
++        if isinstance(request_id, dict):
++            return request_id  # error
++        ts = self._pending_migrations.pop(request_id, None)
++        if ts is None:
++            return {
++                "status": "ok",
++                "request_id": request_id,
++                "message": "not in pending (no-op)",
++            }
++        hold_ms = (time.monotonic() - ts) * 1000.0
++        logger.info(
++            "[Migration] migration_rollback: releasing hold on %s after "
++            "%.1fms (request continues on source)",
++            request_id,
++            hold_ms,
++        )
++        return {"status": "ok", "request_id": request_id, "hold_ms": hold_ms}
++
++    # ------------------------------------------------------------------ utils
++    def _read_nixl_meta(self) -> Optional[dict]:
++        """Best-effort fetch of the source's NIXL listener coordinates."""
++        if self._nixl_meta_provider is None:
++            return None
++        try:
++            meta = self._nixl_meta_provider()
++        except Exception:  # noqa: BLE001
++            logger.debug("nixl_meta_provider() raised", exc_info=True)
++            return None
++        if not meta:
++            return None
++        # Validate the shape our wire protocol promises.
++        for key in ("engine_id", "host", "port"):
++            if key not in meta:
++                logger.warning(
++                    "[Migration] nixl_meta_provider returned dict missing %r; "
++                    "omitting kv_transfer_params from migrate_out response",
++                    key,
++                )
++                return None
++        return meta
++
++    # ------------------------------------------------------------------ utils
++    def _should_migrate(self, body: dict) -> tuple[bool, str]:
++        """Apply the cost-benefit policy. Returns ``(ok, reason)``."""
++        prompt_len = len(body.get("prompt_tokens") or [])
++        gen_len = len(body.get("generated_tokens") or [])
++        replay_total = prompt_len + gen_len
++        policy = self._policy
++
++        if replay_total > policy.max_replay_tokens:
++            return False, (
++                f"replay_total={replay_total} exceeds max_replay_tokens="
++                f"{policy.max_replay_tokens} (recompute prefill too expensive)"
++            )
++        if gen_len < policy.min_generated_tokens:
++            return False, (
++                f"generated_tokens={gen_len} below min_generated_tokens="
++                f"{policy.min_generated_tokens} (request too young to benefit)"
++            )
++        # Best-effort remaining-work estimate from sampling_params.
++        sampling = body.get("sampling_params") or {}
++        max_tokens = sampling.get("max_tokens")
++        if isinstance(max_tokens, int) and max_tokens > 0:
++            remaining = max_tokens - gen_len
++            if remaining < policy.min_remaining_tokens:
++                return False, (
++                    f"remaining_tokens={remaining} below min_remaining_tokens="
++                    f"{policy.min_remaining_tokens} (will finish faster than migrate)"
++                )
++        return True, "policy ok"
++
++    async def _pick_most_progressed(self, ids: list[str]) -> str:
++        """Pick the request with the most generated tokens (saves the most work)."""
++        best_id = ids[0]
++        best_gen = -1
++        for rid in ids:
++            state = await self._tracker.get_request_state(rid)
++            if state is None:
++                continue
++            gen = len(state.get("generated_tokens") or [])
++            if gen > best_gen:
++                best_gen = gen
++                best_id = rid
++        return best_id
++
++    def _warn_if_prefix_cache_disabled(self) -> None:
++        if self._engine is None:
++            return
++        # vLLM 0.16: engine.vllm_config.cache_config.enable_prefix_caching
++        try:
++            cache_cfg = getattr(
++                getattr(self._engine, "vllm_config", None), "cache_config", None
++            )
++            if cache_cfg is None:
++                return
++            enabled = getattr(cache_cfg, "enable_prefix_caching", None)
++            if enabled is False:
++                logger.warning(
++                    "[Migration] enable_prefix_caching=False — recompute-prefill "
++                    "migration will pay full prefill cost (~100ms+) instead of "
++                    "the cached ~30-40ms. Strongly recommend enabling prefix cache."
++                )
++        except Exception:  # noqa: BLE001
++            logger.debug("could not inspect engine cache config", exc_info=True)
++
++    @staticmethod
++    def _validate_id(body: dict) -> Any:
++        rid = body.get("request_id") if isinstance(body, dict) else None
++        if not rid or not isinstance(rid, str):
++            return {"status": "error", "message": "request_id is required"}
++        return rid
+diff --git a/components/src/dynamo/vllm/rl_scaling_sidecar.py b/components/src/dynamo/vllm/rl_scaling_sidecar.py
+new file mode 100644
+index 0000000000..de69b8acd7
+--- /dev/null
++++ b/components/src/dynamo/vllm/rl_scaling_sidecar.py
+@@ -0,0 +1,673 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
++# SPDX-License-Identifier: Apache-2.0
++"""In-process aiohttp HTTP sidecar for the dynamo-vllm worker (RL-Scaling).
++
++This is the missing entrypoint that exposes ``DualModeWorker`` and
++``MigrationHandler`` to the rl-scaling-controller. The dynamo runtime's
++``serve_endpoint`` is NATS-RPC; the controller's `dual_mode_client` and
++`migration_client` speak HTTP. Without this sidecar, ``test-s3.sh`` and
++``test-s2.sh`` always fail at the route-probe step.
++
++Routes (default port 9090, override via ``DYNAMO_RL_SIDECAR_PORT``):
++  - GET  /healthz              -> {"status":"ok"}
++  - GET  /v1/role              -> {"current_role": "decode"|"prefill"}
++  - POST /switch_role          -> DualModeWorker.switch_role
++  - POST /migrate_out          -> MigrationHandler.migrate_out (local)
++  - POST /migrate_in           -> MigrationHandler.migrate_in (local)
++  - POST /migration_complete   -> MigrationHandler.migration_complete (ack)
++  - POST /migration_rollback   -> MigrationHandler.migration_rollback (release hold)
++  - POST /migrate              -> coordinated: migrate_out + remote migrate_in + complete/rollback
++  - GET  /v1/active_requests   -> [...]   debugging aid
++
++The HTTP server runs as an asyncio task in the same event loop as the
++worker handler, so all calls share the same AsyncLLM engine without any
++IPC. ``InProcessRequestRegistry`` acts as the side-channel between
++``BaseWorkerHandler.generate_tokens`` (which records request progress)
++and ``EngineRequestTracker`` (which the MigrationHandler reads from).
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++import os
++from dataclasses import dataclass, field
++from typing import Any, Awaitable, Callable, Iterable, Optional
++
++logger = logging.getLogger(__name__)
++
++
++# --------------------------------------------------------------- self-pod label
++# K8s pod metadata.name is immutable, so a runtime role flip cannot rename
++# the pod.  We instead surface the role on a label that operators can view
++# with `kubectl get pod -L nvidia.com/dynamo-current-role`.  The patch is
++# a strategic-merge JSON to /api/v1/namespaces/<ns>/pods/<name> using the
++# in-cluster ServiceAccount token; it is best-effort and silently no-ops
++# outside of K8s (e.g. unit tests, local dev).
++_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
++_SA_CA_PATH    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
++_SA_NS_PATH    = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
++
++
++async def _patch_self_pod_label(label_key: str, label_value: str) -> None:
++    """Patch a single label on the current pod via the in-cluster K8s API.
++
++    No-ops gracefully if any of the SA files / env vars are missing, so
++    the same code runs unmodified in unit tests and bare-metal dev.
++    """
++    pod_name = os.environ.get("POD_NAME") or os.environ.get("HOSTNAME")
++    if not pod_name:
++        return
++    if not (
++        os.path.isfile(_SA_TOKEN_PATH)
++        and os.path.isfile(_SA_NS_PATH)
++    ):
++        return  # not running in a K8s pod with a mounted SA
++
++    api_host = os.environ.get("KUBERNETES_SERVICE_HOST")
++    api_port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
++    if not api_host:
++        return
++
++    with open(_SA_TOKEN_PATH, "r", encoding="utf-8") as fh:
++        token = fh.read().strip()
++    with open(_SA_NS_PATH, "r", encoding="utf-8") as fh:
++        namespace = fh.read().strip()
++
++    url = (
++        f"https://{api_host}:{api_port}/api/v1/namespaces/"
++        f"{namespace}/pods/{pod_name}"
++    )
++    # Strategic-merge patch: only the listed label is changed; everything
++    # else on the pod is left untouched.  Escape '/' as '~1' per JSON-Patch
++    # rules — but strategic-merge takes a plain map, so a nested dict works.
++    patch_body = {"metadata": {"labels": {label_key: label_value}}}
++
++    from aiohttp import ClientSession, ClientTimeout, TCPConnector  # noqa: WPS433
++
++    ssl_ctx = None
++    if os.path.isfile(_SA_CA_PATH):
++        import ssl  # noqa: WPS433
++        ssl_ctx = ssl.create_default_context(cafile=_SA_CA_PATH)
++
++    headers = {
++        "Authorization": f"Bearer {token}",
++        "Content-Type":  "application/strategic-merge-patch+json",
++        "Accept":        "application/json",
++    }
++    timeout = ClientTimeout(total=5)
++    connector = TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
++    async with ClientSession(timeout=timeout, connector=connector) as sess:
++        async with sess.patch(url, json=patch_body, headers=headers) as resp:
++            if resp.status >= 300:
++                txt = await resp.text()
++                logger.warning(
++                    "[RLScalingSidecar] pod label patch returned HTTP %d: %s",
++                    resp.status, txt[:200],
++                )
++            else:
++                logger.info(
++                    "[RLScalingSidecar] patched pod label %s=%s on %s/%s",
++                    label_key, label_value, namespace, pod_name,
++                )
++
++
++# --------------------------------------------------------------------- registry
++@dataclass
++class _RequestSnapshot:
++    """In-flight state that ``MigrationHandler.migrate_out`` needs."""
++
++    request_id: str
++    prompt_tokens: list[int]
++    sampling_params_dict: dict
++    stop_conditions: dict = field(default_factory=dict)
++    generated_tokens: list[int] = field(default_factory=list)
++
++
++class InProcessRequestRegistry:
++    """Tracks in-flight requests on the local worker.
++
++    Kept deliberately tiny: the only writers are ``register`` /
++    ``record_tokens`` / ``deregister`` (called from the handler's generation
++    loop), and the only readers are ``EngineRequestTracker`` methods.
++
++    Thread-safety: the worker is single-threaded asyncio, so plain dict
++    mutations are safe.
++    """
++
++    def __init__(self) -> None:
++        self._snapshots: dict[str, _RequestSnapshot] = {}
++
++    # ------------------------------------------------------------ writers
++    def register(
++        self,
++        request_id: str,
++        prompt_tokens: Iterable[int],
++        sampling_params_dict: dict,
++        stop_conditions: Optional[dict] = None,
++    ) -> None:
++        self._snapshots[request_id] = _RequestSnapshot(
++            request_id=request_id,
++            prompt_tokens=list(prompt_tokens),
++            sampling_params_dict=dict(sampling_params_dict or {}),
++            stop_conditions=dict(stop_conditions or {}),
++        )
++
++    def record_tokens(self, request_id: str, new_token_ids: Iterable[int]) -> None:
++        snap = self._snapshots.get(request_id)
++        if snap is None:
++            return
++        snap.generated_tokens.extend(int(t) for t in new_token_ids)
++
++    def deregister(self, request_id: str) -> None:
++        self._snapshots.pop(request_id, None)
++
++    # ------------------------------------------------------------ readers
++    def get(self, request_id: str) -> Optional[_RequestSnapshot]:
++        return self._snapshots.get(request_id)
++
++    def active_ids(self) -> list[str]:
++        return list(self._snapshots.keys())
++
++    def active_progress(self) -> list[dict]:
++        """Per-request token progress for S3 consolidation targeting.
++
++        ``max_tokens`` comes from the request's sampling params;
++        ``remaining_tokens`` is ``max_tokens - generated_tokens`` (>=0) and is
++        the quantity the decision engine / test trigger use to pick a straggler
++        that is old enough to migrate yet has enough runtime left to be worth it.
++        """
++        out: list[dict] = []
++        for rid, snap in self._snapshots.items():
++            generated = len(snap.generated_tokens)
++            max_tokens = snap.sampling_params_dict.get("max_tokens")
++            try:
++                max_tokens = int(max_tokens) if max_tokens is not None else None
++            except (TypeError, ValueError):
++                max_tokens = None
++            remaining = max(0, max_tokens - generated) if max_tokens is not None else None
++            out.append(
++                {
++                    "request_id": rid,
++                    "prompt_tokens": len(snap.prompt_tokens),
++                    "generated_tokens": generated,
++                    "max_tokens": max_tokens,
++                    "remaining_tokens": remaining,
++                }
++            )
++        return out
++
++
++# --------------------------------------------------------------------- tracker
++class EngineRequestTracker:
++    """Implements the ``RequestTracker`` Protocol from migration.py.
++
++    Backed by:
++      - ``InProcessRequestRegistry`` for state lookups + active id listing.
++      - ``AsyncLLM.abort`` for the abort path.
++      - ``submit_request_callback`` for resubmission. Resubmission
++        re-injects the request into the engine via ``AsyncLLM.generate``,
++        but the streamed tokens are **discarded**: the original client
++        connection terminated with the abort, and re-attaching it is a
++        frontend-side responsibility (tracked separately as Phase-2.C).
++        The migration's job ends when the new engine starts producing
++        tokens; downstream metrics still observe the per-token throughput.
++    """
++
++    def __init__(
++        self,
++        engine_client: Any,
++        registry: InProcessRequestRegistry,
++        submit_request_callback: Callable[[str, dict], Awaitable[None]],
++    ) -> None:
++        self._engine = engine_client
++        self._registry = registry
++        self._submit = submit_request_callback
++
++    async def get_request_state(self, request_id: str) -> Optional[dict]:
++        snap = self._registry.get(request_id)
++        if snap is None:
++            return None
++        return {
++            "prompt_tokens": list(snap.prompt_tokens),
++            "generated_tokens": list(snap.generated_tokens),
++            "sampling_params": dict(snap.sampling_params_dict),
++            "stop_conditions": dict(snap.stop_conditions),
++        }
++
++    async def abort_request(self, request_id: str) -> None:
++        try:
++            await self._engine.abort(request_id)
++        except Exception as exc:  # noqa: BLE001
++            logger.warning("[Sidecar] engine.abort(%s) raised: %s", request_id, exc)
++        finally:
++            # Even if abort raised, the request is logically gone from this
++            # worker's perspective (the source-of-truth is the registry).
++            self._registry.deregister(request_id)
++
++    async def submit_request(self, request_id: str, payload: dict) -> None:
++        await self._submit(request_id, payload)
++
++    async def list_active_request_ids(self) -> Iterable[str]:
++        return self._registry.active_ids()
++
++
++# --------------------------------------------------------------------- HTTP app
++def _try_import_aiohttp():
++    try:
++        from aiohttp import web  # noqa: WPS433
++        return web
++    except ImportError as exc:
++        raise ImportError(
++            "RL-Scaling sidecar requires aiohttp. Install with: pip install aiohttp"
++        ) from exc
++
++
++def build_app(
++    *,
++    dual_mode_worker: Optional[Any] = None,
++    migration_handler: Optional[Any] = None,
++    initial_role: Optional[str] = None,
++    registry: Optional[InProcessRequestRegistry] = None,
++):
++    """Build the aiohttp ``Application`` and register routes.
++
++    All four collaborators are optional so callers can mount partial
++    surfaces (e.g. a prefill-only worker doesn't need migration). Missing
++    collaborators just turn the corresponding routes into 503s.
++    """
++    web = _try_import_aiohttp()
++
++    async def healthz(_request):
++        return web.json_response({"status": "ok"})
++
++    async def get_role(_request):
++        if dual_mode_worker is None:
++            return web.json_response(
++                {"current_role": initial_role or "unknown"}
++            )
++        return web.json_response({"current_role": dual_mode_worker.current_role})
++
++    async def post_switch_role(request):
++        if dual_mode_worker is None:
++            return web.json_response(
++                {"status": "error", "message": "dual_mode not enabled on this worker"},
++                status=503,
++            )
++        try:
++            body = await request.json()
++        except Exception:
++            return web.json_response({"status": "error", "message": "invalid JSON"}, status=400)
++        target = body.get("target_role")
++        if not isinstance(target, str):
++            return web.json_response(
++                {"status": "error", "message": "target_role must be a string"},
++                status=400,
++            )
++        result = await dual_mode_worker.switch_role(target)
++        # DualModeWorker returns {status, new_role, switch_time_ms, ...}
++        # Best-effort: surface the new role as a pod label so that
++        # `kubectl get pod -L nvidia.com/dynamo-current-role` reflects
++        # the runtime state (pod metadata.name is immutable in K8s).
++        if isinstance(result, dict) and result.get("status") == "ok":
++            new_role = result.get("new_role") or target
++            try:
++                await _patch_self_pod_label(
++                    "nvidia.com/dynamo-current-role", str(new_role)
++                )
++            except Exception as exc:  # noqa: BLE001
++                logger.warning(
++                    "[RLScalingSidecar] could not patch self pod label "
++                    "(non-fatal): %s", exc
++                )
++        return web.json_response(result)
++
++    async def post_migrate_out(request):
++        if migration_handler is None:
++            return web.json_response(
++                {"status": "error", "message": "migration not enabled on this worker"},
++                status=503,
++            )
++        try:
++            body = await request.json()
++        except Exception:
++            return web.json_response({"status": "error", "message": "invalid JSON"}, status=400)
++        result = await migration_handler.migrate_out(body)
++        return web.json_response(result)
++
++    async def post_migrate_in(request):
++        if migration_handler is None:
++            return web.json_response(
++                {"status": "error", "message": "migration not enabled on this worker"},
++                status=503,
++            )
++        try:
++            body = await request.json()
++        except Exception:
++            return web.json_response({"status": "error", "message": "invalid JSON"}, status=400)
++        result = await migration_handler.migrate_in(body)
++        return web.json_response(result)
++
++    async def get_active(_request):
++        if registry is None:
++            return web.json_response([])
++        # Enriched list of {request_id, prompt/generated/max/remaining_tokens}.
++        # len() of this list still equals the active count (backward compatible
++        # with callers that only counted ids).
++        return web.json_response(registry.active_progress())
++
++    async def post_migration_complete(request):
++        if migration_handler is None:
++            return web.json_response(
++                {"status": "error", "message": "migration not enabled on this worker"},
++                status=503,
++            )
++        try:
++            body = await request.json()
++        except Exception:
++            return web.json_response({"status": "error", "message": "invalid JSON"}, status=400)
++        result = await migration_handler.migration_complete(body)
++        return web.json_response(result)
++
++    async def post_migration_rollback(request):
++        if migration_handler is None:
++            return web.json_response(
++                {"status": "error", "message": "migration not enabled on this worker"},
++                status=503,
++            )
++        try:
++            body = await request.json()
++        except Exception:
++            return web.json_response({"status": "error", "message": "invalid JSON"}, status=400)
++        result = await migration_handler.migration_rollback(body)
++        return web.json_response(result)
++
++    async def post_migrate(request):
++        """Coordinated migration: migrate_out + remote migrate_in + complete/rollback.
++
++        Body: {"request_id": "*", "target_url": "http://<peer_pod_ip>:9091"}
++
++        Orchestrates the full migration in a single call:
++        1. Local migrate_out (holds request when connector_enabled)
++        2. Remote POST /migrate_in on target_url
++        3. On success: local migration_complete (abort + free)
++           On failure: local migration_rollback (release hold, request continues)
++        """
++        if migration_handler is None:
++            return web.json_response(
++                {"status": "error", "message": "migration not enabled on this worker"},
++                status=503,
++            )
++        try:
++            body = await request.json()
++        except Exception:
++            return web.json_response({"status": "error", "message": "invalid JSON"}, status=400)
++
++        target_url = body.get("target_url")
++        if not target_url or not isinstance(target_url, str):
++            return web.json_response(
++                {"status": "error", "message": "target_url is required"},
++                status=400,
++            )
++
++        # Step 1: local migrate_out (holds request if connector_enabled)
++        out_result = await migration_handler.migrate_out(body)
++        if out_result.get("status") != "ok":
++            return web.json_response(out_result)
++
++        real_rid = out_result["request_id"]
++
++        # Step 2: call target's /migrate_in
++        from aiohttp import ClientSession, ClientTimeout  # noqa: WPS433
++
++        try:
++            timeout = ClientTimeout(total=30)
++            async with ClientSession(timeout=timeout) as session:
++                target_migrate_in = f"{target_url.rstrip('/')}/migrate_in"
++                async with session.post(target_migrate_in, json=out_result) as resp:
++                    in_result = await resp.json()
++        except Exception as exc:
++            logger.warning(
++                "[Sidecar] coordinated migrate: target %s unreachable: %s",
++                target_url, exc,
++            )
++            rb = await migration_handler.migration_rollback({"request_id": real_rid})
++            return web.json_response({
++                "status": "error",
++                "request_id": real_rid,
++                "message": f"target unreachable: {exc}",
++                "rolled_back": rb.get("status") == "ok",
++            })
++
++        if in_result.get("status") == "ok":
++            # Step 3a: success -> complete (abort source, free blocks)
++            mc = await migration_handler.migration_complete({"request_id": real_rid})
++            return web.json_response({
++                "status": "ok",
++                "request_id": real_rid,
++                "migrate_out": out_result,
++                "migrate_in": in_result,
++                "migration_complete": mc,
++            })
++        else:
++            # Step 3b: declined/error -> rollback (keep source running)
++            rb = await migration_handler.migration_rollback({"request_id": real_rid})
++            return web.json_response({
++                "status": in_result.get("status", "error"),
++                "request_id": real_rid,
++                "migrate_out": out_result,
++                "migrate_in": in_result,
++                "rolled_back": rb.get("status") == "ok",
++            })
++
++    app = web.Application()
++    async def post_cordon(_request):
++        """S3: withdraw this worker's ModelCard so the router stops selecting it.
++
++        Called before a consolidation scale-down (cordon -> drain -> delete) so
++        no new request is routed onto a decoder that is about to be removed.
++        The engine keeps running; already-accepted requests still finish.
++        """
++        if dual_mode_worker is None:
++            return web.json_response(
++                {"status": "error", "message": "dual_mode not enabled on this worker"},
++                status=503,
++            )
++        result = await dual_mode_worker.cordon()
++        status = 200 if result.get("status") == "ok" else 500
++        return web.json_response(result, status=status)
++
++    async def post_uncordon(_request):
++        """S3: republish the ModelCard (undo /cordon) if a scale-down is abandoned."""
++        if dual_mode_worker is None:
++            return web.json_response(
++                {"status": "error", "message": "dual_mode not enabled on this worker"},
++                status=503,
++            )
++        result = await dual_mode_worker.uncordon()
++        status = 200 if result.get("status") == "ok" else 500
++        return web.json_response(result, status=status)
++
++    app.router.add_get("/healthz", healthz)
++    app.router.add_get("/v1/role", get_role)
++    app.router.add_post("/switch_role", post_switch_role)
++    app.router.add_post("/cordon", post_cordon)
++    app.router.add_post("/uncordon", post_uncordon)
++    app.router.add_post("/migrate_out", post_migrate_out)
++    app.router.add_post("/migrate_in", post_migrate_in)
++    app.router.add_post("/migration_complete", post_migration_complete)
++    app.router.add_post("/migration_rollback", post_migration_rollback)
++    app.router.add_post("/migrate", post_migrate)
++    app.router.add_get("/v1/active_requests", get_active)
++    return app
++
++
++async def start_sidecar(
++    *,
++    dual_mode_worker: Optional[Any] = None,
++    migration_handler: Optional[Any] = None,
++    initial_role: Optional[str] = None,
++    registry: Optional[InProcessRequestRegistry] = None,
++    host: str = "0.0.0.0",
++    port: Optional[int] = None,
++):
++    """Start the sidecar HTTP server. Returns ``(runner, site)``.
++
++    Caller is responsible for ``await runner.cleanup()`` on shutdown.
++    """
++    web = _try_import_aiohttp()
++    if port is None:
++        port = int(os.environ.get("DYNAMO_RL_SIDECAR_PORT", "9091"))
++    app = build_app(
++        dual_mode_worker=dual_mode_worker,
++        migration_handler=migration_handler,
++        initial_role=initial_role,
++        registry=registry,
++    )
++    runner = web.AppRunner(app, access_log=None)
++    await runner.setup()
++    site = web.TCPSite(runner, host, port)
++    await site.start()
++
++    # Phase-2.B: background task sweeps stale pending migrations.
++    if migration_handler is not None:
++        async def _sweeper():
++            while True:
++                await asyncio.sleep(2.0)
++                try:
++                    n = await migration_handler.sweep_stale_migrations()
++                    if n:
++                        logger.info(
++                            "[RLScalingSidecar] sweeper force-aborted %d stale migrations", n
++                        )
++                except Exception:  # noqa: BLE001
++                    logger.debug("sweeper iteration failed", exc_info=True)
++
++        asyncio.get_event_loop().create_task(_sweeper())
++
++    logger.info(
++        "[RLScalingSidecar] listening on %s:%d (dual_mode=%s, migration=%s)",
++        host,
++        port,
++        bool(dual_mode_worker),
++        bool(migration_handler),
++    )
++    return runner, site
++
++
++# ------------------------------------------------------------- nixl meta helper
++def make_nixl_meta_provider(vllm_config: Any) -> Callable[[], Optional[dict]]:
++    """Build a ``nixl_meta_provider`` callback for ``MigrationHandler``.
++
++    Reads ``engine_id``, ``nixl_side_channel_host``, ``nixl_side_channel_port``
++    from the engine's ``KvTransferConfig`` *every* time it's invoked. Reading
++    lazily lets the worker swap the underlying connector during a role flip
++    without re-wiring the migration handler.
++
++    Returns ``None`` if KV transfer is not configured (e.g. legacy
++    deployments without disagg-PD).
++    """
++
++    def _provider() -> Optional[dict]:
++        try:
++            kv_cfg = getattr(vllm_config, "kv_transfer_config", None)
++            if kv_cfg is None:
++                return None
++            engine_id = getattr(kv_cfg, "engine_id", None)
++            host = getattr(kv_cfg, "nixl_side_channel_host", None)
++            port = getattr(kv_cfg, "nixl_side_channel_port", None)
++            if not (engine_id and host and port):
++                return None
++            return {"engine_id": str(engine_id), "host": str(host), "port": int(port)}
++        except Exception:  # noqa: BLE001
++            logger.debug("nixl_meta_provider: failed to read kv_transfer_config", exc_info=True)
++            return None
++
++    return _provider
++
++
++# --------------------------------------------------------- submit_request impl
++def make_submit_request_callback(engine_client: Any) -> Callable[[str, dict], Awaitable[None]]:
++    """Build a submit_request callback bound to an AsyncLLM client.
++
++    The callback re-injects a migration's payload into the engine via
++    ``engine.generate(...)``. The streaming tokens are intentionally
++    drained-and-discarded inside a fire-and-forget asyncio task because
++    the original client connection (which terminated when migrate_out
++    aborted) cannot be re-attached server-side; that is a frontend-side
++    concern (Phase-2.C). The drain ensures the engine's state machine
++    progresses normally.
++    """
++    from vllm.inputs import TokensPrompt
++    from vllm.sampling_params import SamplingParams
++
++    # Migration state that must never be replayed verbatim: `extra_args` is
++    # rebuilt below from this migration's own kv_transfer_params, and the
++    # rest are engine-internal objects that do not survive a JSON round-trip.
++    _SP_NEVER_REPLAY = {"extra_args", "logits_processors", "guided_decoding",
++                        "allowed_token_ids", "output_kind", "_all_stop_token_ids",
++                        "_bad_words_token_ids"}
++    # Last-resort subset if the constructor refuses a replayed field.
++    _SP_MINIMAL_REPLAY = {"temperature", "top_p", "top_k", "max_tokens",
++                          "min_tokens", "stop", "stop_token_ids", "seed", "n",
++                          "ignore_eos"}
++
++    async def _submit(request_id: str, payload: dict) -> None:
++        prompt_tokens = list(payload.get("prompt_tokens") or [])
++        if not prompt_tokens:
++            raise ValueError(f"submit_request[{request_id}]: empty prompt_tokens")
++        sp_dict = payload.get("sampling_params") or {}
++        # Replay EVERY sampling field the source snapshotted, not a hand-picked
++        # subset. The previous closed list of 12 names omitted `ignore_eos`, so
++        # a migrated request silently swapped its stopping policy: the source
++        # snapshot carried ignore_eos=True faithfully (handlers.py enumerates
++        # all fields) and this rebuild dropped it, letting the replayed request
++        # stop at the first natural EOS. Measured on suite
++        # phased-v2-20260723-084824: all 4 runs that performed a real migration
++        # ended their migrated `ignore_eos, max_tokens=5000` straggler at
++        # finish_reason=stop after 1557-4578 tokens, while all 11 runs without a
++        # migration ran every straggler to length@5000 -- a 4/4 vs 0/11 split.
++        # Symmetry with the source snapshot is the invariant: accept whatever
++        # SamplingParams actually defines, drop only what must not be replayed.
++        sp_kwargs = {}
++        try:
++            allowed = set(getattr(SamplingParams, "__struct_fields__", ()) or ())
++        except Exception:  # noqa: BLE001
++            allowed = set()
++        for key, value in sp_dict.items():
++            if key in _SP_NEVER_REPLAY:
++                continue
++            if allowed and key not in allowed:
++                continue
++            sp_kwargs[key] = value
++        try:
++            sampling_params = SamplingParams(**sp_kwargs)
++        except TypeError as exc:  # a field the constructor refuses
++            logger.warning(
++                "[Sidecar] submit_request[%s]: SamplingParams rejected a "
++                "replayed field (%s); retrying without it", request_id, exc,
++            )
++            sp_kwargs = {k: v for k, v in sp_kwargs.items()
++                         if k in _SP_MINIMAL_REPLAY}
++            sampling_params = SamplingParams(**sp_kwargs)
++        kv_params = payload.get("kv_transfer_params")
++        if kv_params:
++            if sampling_params.extra_args is None:
++                sampling_params.extra_args = {}
++            sampling_params.extra_args["kv_transfer_params"] = dict(kv_params)
++
++        prompt = TokensPrompt(prompt_token_ids=prompt_tokens)
++
++        async def _drain():
++            try:
++                async for _ in engine_client.generate(prompt, sampling_params, request_id):
++                    pass
++            except Exception as exc:  # noqa: BLE001
++                logger.warning(
++                    "[Sidecar] resubmitted request %s drain raised: %s",
++                    request_id,
++                    exc,
++                )
++
++        asyncio.create_task(_drain())
++
++    return _submit
+diff --git a/components/src/dynamo/vllm/tests/test_dual_mode.py b/components/src/dynamo/vllm/tests/test_dual_mode.py
+new file mode 100644
+index 0000000000..54310d7ad6
+--- /dev/null
++++ b/components/src/dynamo/vllm/tests/test_dual_mode.py
+@@ -0,0 +1,288 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
++# SPDX-License-Identifier: Apache-2.0
++"""Unit tests for S2 (RL-Scaling) DualModeWorker orchestration."""
++from __future__ import annotations
++
++import asyncio
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++
++from dynamo.vllm.dual_mode import DualModeWorker
++
++pytestmark = [
++    pytest.mark.unit,
++    pytest.mark.vllm,
++    pytest.mark.gpu_0,
++    pytest.mark.pre_merge,
++]
++
++# Avoid importing dynamo.vllm.handlers (which pulls in torch) at unit-test time.
++# Reproduce the small surface DualModeWorker uses from BaseWorkerHandler.
++_VALID_MODES = {"prefill", "decode", "agg"}
++
++
++class _StubHandler:
++    async def generate(self, request, context):  # pragma: no cover - unused
++        yield {}
++
++    async def sleep(self, body):
++        async with self._sleep_wake_lock:
++            if self._engine_is_sleeping:
++                return {"status": "ok", "message": "Engine already sleeping"}
++            await self.engine_client.sleep((body or {}).get("level", 1))
++            self._engine_is_sleeping = True
++            return {"status": "ok", "message": "Engine slept"}
++
++    async def wake_up(self, body):
++        async with self._sleep_wake_lock:
++            if not self._engine_is_sleeping:
++                return {"status": "ok", "message": "Engine already awake"}
++            await self.engine_client.wake_up()
++            self._engine_is_sleeping = False
++            return {"status": "ok", "message": "Engine woke"}
++
++    def set_disaggregation_mode(self, mode):
++        if mode not in _VALID_MODES:
++            raise ValueError(f"unknown disaggregation mode: {mode!r}")
++        self._disaggregation_mode = mode
++
++    def get_disaggregation_mode(self):
++        return self._disaggregation_mode
++
++
++def _make_handler():
++    h = _StubHandler.__new__(_StubHandler)
++    h.engine_client = SimpleNamespace(
++        pause_generation=AsyncMock(),
++        sleep=AsyncMock(),
++        wake_up=AsyncMock(),
++        resume_generation=AsyncMock(),
++        reset_prefix_cache=AsyncMock(),
++    )
++    h.generate_endpoint = SimpleNamespace(
++        unregister_endpoint_instance=AsyncMock(),
++        register_endpoint_instance=AsyncMock(),
++        update_metadata=AsyncMock(),
++    )
++    h._sleep_wake_lock = asyncio.Lock()
++    h._engine_is_sleeping = False
++    h._disaggregation_mode = None
++    h._nixl_connector = None
++    return h
++
++
++# ---------------------------------------------------------------- handler API
++class TestSetDisaggregationMode:
++    def test_accepts_known_modes(self):
++        h = _make_handler()
++        for mode in ("prefill", "decode", "agg"):
++            h.set_disaggregation_mode(mode)
++            assert h.get_disaggregation_mode() == mode
++
++    def test_rejects_unknown_mode(self):
++        h = _make_handler()
++        with pytest.raises(ValueError):
++            h.set_disaggregation_mode("garbage")
++
++
++class _StubRegistry:
++    """active_ids() returns non-empty for the first `busy_calls` calls, then []."""
++    def __init__(self, busy_calls=0):
++        self._busy = busy_calls
++    def active_ids(self):
++        if self._busy > 0:
++            self._busy -= 1
++            return ["r1"]
++        return []
++    def deregister(self, rid):
++        pass
++
++
++class TestQuiesce:
++    @pytest.mark.asyncio
++    async def test_quiesce_returns_when_idle(self):
++        h = _make_handler()
++        h.request_registry = _StubRegistry(busy_calls=0)
++        w = DualModeWorker(h, initial_role="decode")
++        res = await w._drain_and_quiesce(stable_s=0.05, timeout_s=5)
++        assert res["quiesced"] is True
++        assert res["arrivals_after_cordon"] == 0
++
++    @pytest.mark.asyncio
++    async def test_quiesce_detects_late_arrival_then_settles(self):
++        h = _make_handler()
++        # active_ids reports a late arrival on an early stable-window poll, then
++        # goes idle -> the loop re-drains and eventually quiesces.
++        h.request_registry = _StubRegistry(busy_calls=2)
++        w = DualModeWorker(h, initial_role="decode")
++        res = await w._drain_and_quiesce(stable_s=0.05, timeout_s=5)
++        assert res["quiesced"] is True
++        assert res["arrivals_after_cordon"] >= 1
++
++    @pytest.mark.asyncio
++    async def test_quiesce_stable_zero_single_drain(self):
++        h = _make_handler()
++        h.request_registry = _StubRegistry(busy_calls=0)
++        w = DualModeWorker(h, initial_role="decode")
++        res = await w._drain_and_quiesce(stable_s=0.0, timeout_s=5)
++        assert res["quiesced"] is True
++
++
++# ------------------------------------------------------------ DualModeWorker
++class TestDualModeWorker:
++    def test_rejects_invalid_initial_role(self):
++        with pytest.raises(ValueError):
++            DualModeWorker(_make_handler(), initial_role="weird")
++
++    def test_initial_role_is_persisted_on_handler(self):
++        h = _make_handler()
++        w = DualModeWorker(h, initial_role="decode")
++        assert h.get_disaggregation_mode() == "decode"
++        assert w.current_role == "decode"
++
++    @pytest.mark.asyncio
++    async def test_invalid_target_role_returns_error(self):
++        w = DualModeWorker(_make_handler(), initial_role="decode")
++        result = await w.switch_role("garbage")
++        assert result["status"] == "error"
++        assert w.current_role == "decode"
++
++    @pytest.mark.asyncio
++    async def test_already_in_role_is_noop(self):
++        h = _make_handler()
++        w = DualModeWorker(h, initial_role="decode")
++        result = await w.switch_role("decode")
++        assert result["status"] == "ok"
++        assert "already" in result["message"]
++        h.engine_client.sleep.assert_not_awaited()
++        h.engine_client.wake_up.assert_not_awaited()
++
++    @pytest.mark.asyncio
++    async def test_full_flip_orchestration_order(self):
++        h = _make_handler()
++        order: list[str] = []
++        # Patch sleep/wake on the handler itself so we observe the orchestration.
++        original_sleep, original_wake = h.sleep, h.wake_up
++
++        async def tracked_sleep(body):
++            order.append("sleep")
++            return await original_sleep(body)
++
++        async def tracked_wake(body):
++            order.append("wake")
++            return await original_wake(body)
++
++        h.sleep = tracked_sleep  # type: ignore
++        h.wake_up = tracked_wake  # type: ignore
++
++        publisher = MagicMock()
++        publisher.publish_role_changed = AsyncMock()
++        w = DualModeWorker(h, initial_role="decode", publisher=publisher)
++
++        result = await w.switch_role("prefill")
++
++        assert result["status"] == "ok"
++        assert result["new_role"] == "prefill"
++        assert result["switch_time_ms"] >= 0
++        assert order == ["sleep", "wake"]
++        assert h.get_disaggregation_mode() == "prefill"
++        assert w.current_role == "prefill"
++        publisher.publish_role_changed.assert_awaited_once_with(
++            from_role="decode", to_role="prefill"
++        )
++
++    @pytest.mark.asyncio
++    async def test_sleep_failure_rolls_back(self):
++        h = _make_handler()
++
++        async def bad_sleep(body):
++            return {"status": "error", "message": "boom"}
++
++        h.sleep = bad_sleep  # type: ignore
++        w = DualModeWorker(h, initial_role="decode")
++        result = await w.switch_role("prefill")
++        assert result["status"] == "error"
++        assert w.current_role == "decode"  # unchanged
++        assert h.get_disaggregation_mode() == "decode"
++
++    @pytest.mark.asyncio
++    async def test_wake_failure_recovers_to_previous_role(self):
++        h = _make_handler()
++
++        async def bad_wake(body):
++            return {"status": "error", "message": "wake fail"}
++
++        # Override only the FIRST wake_up call (the orchestrated one) — the
++        # recovery path also calls wake_up; let it succeed via the original.
++        original_wake = h.wake_up
++        call_count = {"n": 0}
++
++        async def wake_router(body):
++            call_count["n"] += 1
++            if call_count["n"] == 1:
++                return await bad_wake(body)
++            return await original_wake(body)
++
++        h.wake_up = wake_router  # type: ignore
++
++        w = DualModeWorker(h, initial_role="decode")
++        result = await w.switch_role("prefill")
++
++        assert result["status"] == "error"
++        # current_role NOT updated because wake failed
++        assert w.current_role == "decode"
++        # handler role rolled back during recovery
++        assert h.get_disaggregation_mode() == "decode"
++        assert call_count["n"] == 2  # one orchestrated, one recovery
++
++    @pytest.mark.asyncio
++    async def test_no_publisher_does_not_crash(self):
++        h = _make_handler()
++        w = DualModeWorker(h, initial_role="decode", publisher=None)
++        result = await w.switch_role("prefill")
++        assert result["status"] == "ok"
++
++    @pytest.mark.asyncio
++    async def test_reconfig_kv_pool_calls_reset_prefix_cache(self):
++        h = _make_handler()
++        w = DualModeWorker(h, initial_role="decode")
++        await w.switch_role("prefill")
++        # Awaited at least twice: once as the outbound-KV-drain pinned-block
++        # probe (pre-sleep) and once by reconfig_kv_pool (post-sleep).
++        assert h.engine_client.reset_prefix_cache.await_count >= 2
++
++    @pytest.mark.asyncio
++    async def test_reconfig_kv_pool_tolerates_missing_api(self):
++        h = _make_handler()
++        # Drop the reset method to simulate an older engine.
++        h.engine_client = SimpleNamespace(
++            pause_generation=AsyncMock(),
++            sleep=AsyncMock(),
++            wake_up=AsyncMock(),
++            resume_generation=AsyncMock(),
++        )
++        w = DualModeWorker(h, initial_role="decode")
++        result = await w.switch_role("prefill")
++        assert result["status"] == "ok"
++
++    @pytest.mark.asyncio
++    async def test_reconfig_nixl_drops_cached_connector(self):
++        h = _make_handler()
++        cached = MagicMock()
++        cached.shutdown = AsyncMock()
++        h._nixl_connector = cached
++        w = DualModeWorker(h, initial_role="decode")
++        await w.switch_role("prefill")
++        assert h._nixl_connector is None
++        cached.shutdown.assert_awaited_once()
++
++    @pytest.mark.asyncio
++    async def test_emit_role_changed_pushes_metadata(self):
++        h = _make_handler()
++        w = DualModeWorker(h, initial_role="decode")
++        await w.switch_role("prefill")
++        h.generate_endpoint.update_metadata.assert_awaited_once_with(
++            {"disaggregation_mode": "prefill"}
++        )
+diff --git a/components/src/dynamo/vllm/tests/test_migration.py b/components/src/dynamo/vllm/tests/test_migration.py
+new file mode 100644
+index 0000000000..52e28cd450
+--- /dev/null
++++ b/components/src/dynamo/vllm/tests/test_migration.py
+@@ -0,0 +1,479 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
++# SPDX-License-Identifier: Apache-2.0
++"""Unit tests for S3 (RL-Scaling) MigrationHandler with recompute-prefill fallback."""
++from __future__ import annotations
++
++import pytest
++
++from dynamo.vllm.migration import MigrationHandler, MigrationPolicy
++
++pytestmark = [
++    pytest.mark.unit,
++    pytest.mark.vllm,
++    pytest.mark.gpu_0,
++    pytest.mark.pre_merge,
++]
++
++
++class FakeTracker:
++    def __init__(self, store: dict | None = None) -> None:
++        self.store: dict = store or {}
++        self.aborted: list = []
++        self.submitted: list = []
++
++    async def get_request_state(self, request_id: str):
++        return self.store.get(request_id)
++
++    async def abort_request(self, request_id: str) -> None:
++        self.aborted.append(request_id)
++
++    async def submit_request(self, request_id: str, payload: dict) -> None:
++        self.submitted.append((request_id, payload))
++
++    async def list_active_request_ids(self):
++        return list(self.store.keys())
++
++
++@pytest.fixture
++def tracker():
++    return FakeTracker(
++        store={
++            "r1": {
++                "prompt_tokens": [1, 2, 3],
++                "generated_tokens": [10, 11, 12],
++                "sampling_params": {"temperature": 0.7, "max_tokens": 100},
++                "stop_conditions": {"stop": ["\n\n"]},
++            }
++        }
++    )
++
++
++# ---------------------------------------------------------------- migrate_out
++class TestMigrateOut:
++    @pytest.mark.asyncio
++    async def test_returns_serialised_state(self, tracker):
++        h = MigrationHandler(tracker)
++        out = await h.migrate_out({"request_id": "r1"})
++        assert out["status"] == "ok"
++        assert out["prompt_tokens"] == [1, 2, 3]
++        assert out["generated_tokens"] == [10, 11, 12]
++        assert out["sampling_params"]["temperature"] == 0.7
++        assert tracker.aborted == ["r1"]
++
++    @pytest.mark.asyncio
++    async def test_unknown_id_returns_error(self, tracker):
++        h = MigrationHandler(tracker)
++        out = await h.migrate_out({"request_id": "missing"})
++        assert out["status"] == "error"
++        assert tracker.aborted == []
++
++    @pytest.mark.asyncio
++    async def test_missing_id_returns_error(self, tracker):
++        h = MigrationHandler(tracker)
++        out = await h.migrate_out({})
++        assert out["status"] == "error"
++
++    @pytest.mark.asyncio
++    async def test_wildcard_picks_first_active(self, tracker):
++        h = MigrationHandler(tracker)
++        out = await h.migrate_out({"request_id": "*"})
++        assert out["status"] == "ok"
++        assert out["request_id"] == "r1"
++        assert tracker.aborted == ["r1"]
++
++    @pytest.mark.asyncio
++    async def test_wildcard_no_active(self):
++        tracker = FakeTracker(store={})
++        h = MigrationHandler(tracker)
++        out = await h.migrate_out({"request_id": "*"})
++        assert out["status"] == "error"
++
++
++# ---------------------------------------------------------------- migrate_in
++class TestMigrateIn:
++    @pytest.mark.asyncio
++    async def test_recompute_prefill_concatenates_tokens(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr, policy=MigrationPolicy(min_generated_tokens=0, min_remaining_tokens=0))
++        body = {
++            "request_id": "r1",
++            "prompt_tokens": [1, 2, 3],
++            "generated_tokens": [10, 11, 12],
++            "sampling_params": {"temperature": 0.7},
++        }
++        out = await h.migrate_in(body)
++        assert out["status"] == "ok"
++        assert len(tr.submitted) == 1
++        rid, payload = tr.submitted[0]
++        assert rid == "r1"
++        assert payload["prompt_tokens"] == [1, 2, 3, 10, 11, 12]
++        assert payload["sampling_params"]["temperature"] == 0.7
++        assert payload["previously_emitted_tokens"] == [10, 11, 12]
++
++    @pytest.mark.asyncio
++    async def test_missing_required_field(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr)
++        out = await h.migrate_in({"request_id": "r1", "prompt_tokens": [1]})
++        assert out["status"] == "error"
++        assert tr.submitted == []
++
++    @pytest.mark.asyncio
++    async def test_missing_request_id(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr)
++        out = await h.migrate_in({
++            "prompt_tokens": [1], "generated_tokens": [], "sampling_params": {},
++        })
++        assert out["status"] == "error"
++        assert tr.submitted == []
++
++
++# ---------------------------------------------------------------- end-to-end
++class TestRoundtrip:
++    @pytest.mark.asyncio
++    async def test_out_then_in_preserves_logical_state(self, tracker):
++        src = MigrationHandler(tracker)
++        permissive = MigrationPolicy(min_generated_tokens=0, min_remaining_tokens=0)
++        dst_tracker = FakeTracker()
++        dst = MigrationHandler(dst_tracker, policy=permissive)
++
++        out = await src.migrate_out({"request_id": "r1"})
++        assert out["status"] == "ok"
++        in_resp = await dst.migrate_in(out)
++        assert in_resp["status"] == "ok"
++        assert dst_tracker.submitted[0][1]["prompt_tokens"] == [1, 2, 3, 10, 11, 12]
++
++
++# ---------------------------------------------------------------- policy
++class TestMigrationPolicy:
++    @pytest.mark.asyncio
++    async def test_declines_when_replay_too_large(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr, policy=MigrationPolicy(max_replay_tokens=10))
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": list(range(100)),
++            "generated_tokens": list(range(50)),
++            "sampling_params": {"max_tokens": 200},
++        })
++        assert out["status"] == "declined"
++        assert "max_replay_tokens" in out["reason"]
++        assert tr.submitted == []
++
++    @pytest.mark.asyncio
++    async def test_declines_when_too_young(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr, policy=MigrationPolicy(min_generated_tokens=20))
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": [1, 2, 3],
++            "generated_tokens": [10, 11],
++            "sampling_params": {"max_tokens": 200},
++        })
++        assert out["status"] == "declined"
++        assert "min_generated_tokens" in out["reason"]
++
++    @pytest.mark.asyncio
++    async def test_declines_when_almost_done(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr, policy=MigrationPolicy(min_remaining_tokens=50))
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": [1, 2, 3],
++            "generated_tokens": list(range(180)),
++            "sampling_params": {"max_tokens": 200},
++        })
++        assert out["status"] == "declined"
++        assert "min_remaining_tokens" in out["reason"]
++
++    @pytest.mark.asyncio
++    async def test_accepts_when_within_policy(self):
++        tr = FakeTracker()
++        h = MigrationHandler(tr)  # default policy
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": list(range(100)),
++            "generated_tokens": list(range(50)),
++            "sampling_params": {"max_tokens": 500},
++        })
++        assert out["status"] == "ok"
++        assert out["replay_tokens"] == 150
++
++
++class TestWildcardMostProgressed:
++    @pytest.mark.asyncio
++    async def test_wildcard_picks_most_generated(self):
++        store = {
++            "young": {
++                "prompt_tokens": [1],
++                "generated_tokens": [10],
++                "sampling_params": {},
++                "stop_conditions": {},
++            },
++            "old": {
++                "prompt_tokens": [1],
++                "generated_tokens": list(range(50)),
++                "sampling_params": {},
++                "stop_conditions": {},
++            },
++        }
++        tracker = FakeTracker(store=store)
++        h = MigrationHandler(tracker)
++        out = await h.migrate_out({"request_id": "*"})
++        assert out["status"] == "ok"
++        assert out["request_id"] == "old"
++        assert tracker.aborted == ["old"]
++
++
++class TestPrefixCacheWarning:
++    def test_warns_when_prefix_cache_disabled(self, caplog):
++        from types import SimpleNamespace
++        engine = SimpleNamespace(
++            vllm_config=SimpleNamespace(
++                cache_config=SimpleNamespace(enable_prefix_caching=False)
++            )
++        )
++        with caplog.at_level("WARNING"):
++            MigrationHandler(FakeTracker(), engine=engine)
++        assert any(
++            "enable_prefix_caching=False" in rec.message for rec in caplog.records
++        )
++
++    def test_no_warning_when_prefix_cache_enabled(self, caplog):
++        from types import SimpleNamespace
++        engine = SimpleNamespace(
++            vllm_config=SimpleNamespace(
++                cache_config=SimpleNamespace(enable_prefix_caching=True)
++            )
++        )
++        with caplog.at_level("WARNING"):
++            MigrationHandler(FakeTracker(), engine=engine)
++        assert not any(
++            "enable_prefix_caching" in rec.message for rec in caplog.records
++        )
++
++
++# ============================================================================
++# Phase 2.B (v3) — RequestBlockIndex + connector path coverage
++# ============================================================================
++from dynamo.vllm.migration import RequestBlockIndex
++
++
++class _FakeKvbm:
++    """Mimics ``KvbmCacheManager.get_block_ids`` shape ``list[list[int]]``."""
++
++    def __init__(self, mapping: dict[str, list[int]]) -> None:
++        self.mapping = mapping
++        self.calls: list[str] = []
++
++    def get_block_ids(self, request_id: str) -> list[list[int]]:
++        self.calls.append(request_id)
++        if request_id not in self.mapping:
++            raise KeyError(request_id)
++        return [self.mapping[request_id]]
++
++
++class TestRequestBlockIndex:
++    def test_returns_none_when_kvbm_missing(self):
++        idx = RequestBlockIndex(None)
++        assert idx.lookup("r1") is None
++
++    def test_flattens_grouped_block_ids(self):
++        idx = RequestBlockIndex(_FakeKvbm({"r1": [7, 8, 9, 10]}))
++        assert idx.lookup("r1") == [7, 8, 9, 10]
++
++    def test_returns_none_when_kvbm_raises(self):
++        idx = RequestBlockIndex(_FakeKvbm({}))  # any lookup raises KeyError
++        assert idx.lookup("r1") is None
++
++    def test_returns_none_for_empty_groups(self):
++        class _Empty:
++            def get_block_ids(self, rid):
++                return []
++        assert RequestBlockIndex(_Empty()).lookup("r1") is None
++
++
++class TestMigrateOutWithBlockIndex:
++    @pytest.mark.asyncio
++    async def test_migrate_out_includes_src_block_ids(self, tracker):
++        idx = RequestBlockIndex(_FakeKvbm({"r1": [7, 8, 9, 10]}))
++        h = MigrationHandler(tracker, block_index=idx)
++        out = await h.migrate_out({"request_id": "r1"})
++        assert out["status"] == "ok"
++        assert out["src_block_ids"] == [7, 8, 9, 10]
++
++    @pytest.mark.asyncio
++    async def test_migrate_out_omits_field_when_unknown(self, tracker):
++        idx = RequestBlockIndex(_FakeKvbm({}))
++        h = MigrationHandler(tracker, block_index=idx)
++        out = await h.migrate_out({"request_id": "r1"})
++        assert out["status"] == "ok"
++        assert "src_block_ids" not in out  # graceful absence
++
++    @pytest.mark.asyncio
++    async def test_lookup_happens_before_abort(self, tracker):
++        """Abort frees blocks in KVBM; lookup must run first."""
++        kvbm = _FakeKvbm({"r1": [7, 8]})
++        h = MigrationHandler(tracker, block_index=RequestBlockIndex(kvbm))
++        out = await h.migrate_out({"request_id": "r1"})
++        assert kvbm.calls == ["r1"]
++        assert tracker.aborted == ["r1"]
++        assert out["src_block_ids"] == [7, 8]
++
++
++class _FakeNixlMeta:
++    def __init__(self, meta: dict | None) -> None:
++        self.meta = meta
++        self.calls = 0
++
++    def __call__(self):
++        self.calls += 1
++        return self.meta
++
++
++class TestMigrateOutWithNixlMeta:
++    @pytest.mark.asyncio
++    async def test_migrate_out_includes_kv_transfer_params(self, tracker):
++        idx = RequestBlockIndex(_FakeKvbm({"r1": [7, 8, 9, 10]}))
++        provider = _FakeNixlMeta({"engine_id": "src-eid", "host": "10.0.0.1", "port": 5557})
++        h = MigrationHandler(
++            tracker,
++            block_index=idx,
++            nixl_meta_provider=provider,
++            connector_enabled=True,
++        )
++        out = await h.migrate_out({"request_id": "r1"})
++        assert out["status"] == "ok"
++        params = out["kv_transfer_params"]
++        assert params["do_remote_prefill"] is True
++        assert params["do_remote_decode"] is False
++        assert params["remote_engine_id"] == "src-eid"
++        assert params["remote_block_ids"] == [7, 8, 9, 10]
++        assert params["remote_host"] == "10.0.0.1"
++        assert params["remote_port"] == 5557
++        assert params["remote_request_id"] == "r1"
++
++    @pytest.mark.asyncio
++    async def test_kv_params_omitted_when_connector_disabled(self, tracker):
++        idx = RequestBlockIndex(_FakeKvbm({"r1": [7, 8]}))
++        provider = _FakeNixlMeta({"engine_id": "src", "host": "h", "port": 1})
++        h = MigrationHandler(
++            tracker,
++            block_index=idx,
++            nixl_meta_provider=provider,
++            connector_enabled=False,  # <<< default safe path
++        )
++        out = await h.migrate_out({"request_id": "r1"})
++        assert "kv_transfer_params" not in out
++        # src_block_ids still surfaced for forward-compatibility
++        assert out["src_block_ids"] == [7, 8]
++
++    @pytest.mark.asyncio
++    async def test_kv_params_omitted_when_meta_missing_field(self, tracker):
++        idx = RequestBlockIndex(_FakeKvbm({"r1": [7]}))
++        provider = _FakeNixlMeta({"engine_id": "src"})  # missing host/port
++        h = MigrationHandler(
++            tracker, block_index=idx, nixl_meta_provider=provider, connector_enabled=True
++        )
++        out = await h.migrate_out({"request_id": "r1"})
++        assert "kv_transfer_params" not in out
++
++    @pytest.mark.asyncio
++    async def test_kv_params_omitted_when_provider_raises(self, tracker):
++        def boom():
++            raise RuntimeError("nixl coords not ready")
++        h = MigrationHandler(
++            tracker,
++            block_index=RequestBlockIndex(_FakeKvbm({"r1": [7]})),
++            nixl_meta_provider=boom,
++            connector_enabled=True,
++        )
++        out = await h.migrate_out({"request_id": "r1"})
++        assert "kv_transfer_params" not in out
++
++
++class TestMigrateInConnectorPath:
++    @pytest.mark.asyncio
++    async def test_migrate_in_uses_connector_when_kv_transfer_params_present(self):
++        tr = FakeTracker()
++        permissive = MigrationPolicy(min_generated_tokens=0, min_remaining_tokens=0)
++        h = MigrationHandler(tr, policy=permissive, connector_enabled=True)
++        kv_params = {
++            "do_remote_prefill": True,
++            "do_remote_decode": False,
++            "remote_engine_id": "src-eid",
++            "remote_block_ids": [7, 8],
++            "remote_host": "10.0.0.1",
++            "remote_port": 5557,
++            "remote_request_id": "r1",
++        }
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": [1, 2, 3],
++            "generated_tokens": [10, 11, 12],
++            "sampling_params": {"temperature": 0.7},
++            "kv_transfer_params": kv_params,
++        })
++        assert out["status"] == "ok"
++        assert out["path"] == "connector"
++        rid, payload = tr.submitted[0]
++        assert payload["kv_transfer_params"] == kv_params
++        assert payload["migration_meta"]["path"] == "connector"
++
++    @pytest.mark.asyncio
++    async def test_migrate_in_uses_recompute_when_connector_disabled_at_dst(self):
++        tr = FakeTracker()
++        permissive = MigrationPolicy(min_generated_tokens=0, min_remaining_tokens=0)
++        # dst worker has connector disabled (e.g. it's not a NIXL-enabled deploy)
++        h = MigrationHandler(tr, policy=permissive, connector_enabled=False)
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": [1, 2, 3],
++            "generated_tokens": [10, 11, 12],
++            "sampling_params": {},
++            "kv_transfer_params": {"remote_engine_id": "x"},  # ignored
++        })
++        assert out["path"] == "recompute"
++        rid, payload = tr.submitted[0]
++        assert "kv_transfer_params" not in payload
++
++    @pytest.mark.asyncio
++    async def test_migrate_in_recompute_when_no_kv_transfer_params(self):
++        tr = FakeTracker()
++        permissive = MigrationPolicy(min_generated_tokens=0, min_remaining_tokens=0)
++        h = MigrationHandler(tr, policy=permissive, connector_enabled=True)
++        out = await h.migrate_in({
++            "request_id": "r1",
++            "prompt_tokens": [1, 2, 3],
++            "generated_tokens": [10, 11, 12],
++            "sampling_params": {},
++        })
++        assert out["path"] == "recompute"
++
++    @pytest.mark.asyncio
++    async def test_migrate_in_falls_back_when_submit_raises_in_connector_path(self, caplog):
++        class _Boom(FakeTracker):
++            def __init__(self):
++                super().__init__()
++                self._first = True
++            async def submit_request(self, rid, payload):
++                if self._first and "kv_transfer_params" in payload:
++                    self._first = False
++                    raise RuntimeError("injected failure")
++                self.submitted.append((rid, payload))
++        tr = _Boom()
++        permissive = MigrationPolicy(min_generated_tokens=0, min_remaining_tokens=0)
++        h = MigrationHandler(tr, policy=permissive, connector_enabled=True)
++        with caplog.at_level("WARNING"):
++            out = await h.migrate_in({
++                "request_id": "r1",
++                "prompt_tokens": [1, 2, 3],
++                "generated_tokens": [10, 11, 12],
++                "sampling_params": {},
++                "kv_transfer_params": {"remote_engine_id": "x", "remote_block_ids": [1]},
++            })
++        assert out["path"] == "recompute"
++        # Fallback submit landed and did NOT carry kv_transfer_params.
++        assert tr.submitted and "kv_transfer_params" not in tr.submitted[0][1]
++        assert any("connector path failed" in r.message for r in caplog.records)
+diff --git a/components/src/dynamo/vllm/tests/test_rl_scaling_sidecar.py b/components/src/dynamo/vllm/tests/test_rl_scaling_sidecar.py
+new file mode 100644
+index 0000000000..9720fca24a
+--- /dev/null
++++ b/components/src/dynamo/vllm/tests/test_rl_scaling_sidecar.py
+@@ -0,0 +1,290 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
++# SPDX-License-Identifier: Apache-2.0
++"""Tests for the in-process HTTP sidecar.
++
++Covers:
++  * InProcessRequestRegistry register/record_tokens/deregister/active_ids.
++  * EngineRequestTracker get_request_state / abort_request / submit_request
++    / list_active_request_ids using a fake AsyncLLM-like engine.
++  * aiohttp app routes return correct shapes (uses aiohttp's TestClient).
++  * make_nixl_meta_provider extracts coords and gracefully degrades.
++"""
++from __future__ import annotations
++
++import asyncio
++import importlib
++import sys
++from types import SimpleNamespace
++from typing import Any
++
++import pytest
++
++from dynamo.vllm.rl_scaling_sidecar import (
++    EngineRequestTracker,
++    InProcessRequestRegistry,
++    make_nixl_meta_provider,
++)
++
++
++# --------------------------------------------------------------- registry
++class TestRegistry:
++    def test_register_and_get(self):
++        reg = InProcessRequestRegistry()
++        reg.register("r1", [1, 2, 3], {"temperature": 0.7}, {"max_tokens": 100})
++        snap = reg.get("r1")
++        assert snap.prompt_tokens == [1, 2, 3]
++        assert snap.sampling_params_dict == {"temperature": 0.7}
++        assert snap.stop_conditions == {"max_tokens": 100}
++        assert snap.generated_tokens == []
++
++    def test_record_tokens_appends(self):
++        reg = InProcessRequestRegistry()
++        reg.register("r1", [1], {})
++        reg.record_tokens("r1", [4, 5])
++        reg.record_tokens("r1", [6])
++        assert reg.get("r1").generated_tokens == [4, 5, 6]
++
++    def test_record_tokens_unknown_id_is_noop(self):
++        reg = InProcessRequestRegistry()
++        reg.record_tokens("ghost", [1, 2])  # must not raise
++
++    def test_deregister(self):
++        reg = InProcessRequestRegistry()
++        reg.register("r1", [1], {})
++        reg.deregister("r1")
++        assert reg.get("r1") is None
++
++    def test_active_ids(self):
++        reg = InProcessRequestRegistry()
++        for rid in ("a", "b", "c"):
++            reg.register(rid, [1], {})
++        assert sorted(reg.active_ids()) == ["a", "b", "c"]
++
++
++# ---------------------------------------------------------------- tracker
++class _FakeEngine:
++    def __init__(self) -> None:
++        self.aborted: list[str] = []
++
++    async def abort(self, rid: str) -> None:
++        self.aborted.append(rid)
++
++
++@pytest.mark.asyncio
++class TestTracker:
++    async def test_get_request_state_returns_snapshot(self):
++        reg = InProcessRequestRegistry()
++        reg.register("r1", [1, 2], {"temperature": 0.5}, {})
++        reg.record_tokens("r1", [9])
++        engine = _FakeEngine()
++
++        async def submit(rid, payload):
++            pass
++
++        t = EngineRequestTracker(engine, reg, submit)
++        state = await t.get_request_state("r1")
++        assert state["prompt_tokens"] == [1, 2]
++        assert state["generated_tokens"] == [9]
++        assert state["sampling_params"] == {"temperature": 0.5}
++
++    async def test_get_request_state_unknown_returns_none(self):
++        t = EngineRequestTracker(_FakeEngine(), InProcessRequestRegistry(), lambda r, p: None)
++        assert await t.get_request_state("ghost") is None
++
++    async def test_abort_calls_engine_and_deregisters(self):
++        reg = InProcessRequestRegistry()
++        reg.register("r1", [1], {})
++        engine = _FakeEngine()
++        t = EngineRequestTracker(engine, reg, lambda r, p: None)
++        await t.abort_request("r1")
++        assert engine.aborted == ["r1"]
++        assert reg.get("r1") is None
++
++    async def test_abort_swallows_engine_exception(self):
++        reg = InProcessRequestRegistry()
++        reg.register("r1", [1], {})
++
++        class _Boom:
++            async def abort(self, rid):
++                raise RuntimeError("simulated")
++
++        t = EngineRequestTracker(_Boom(), reg, lambda r, p: None)
++        await t.abort_request("r1")  # must not raise
++        assert reg.get("r1") is None  # still cleaned up
++
++    async def test_submit_delegates_to_callback(self):
++        seen: list = []
++
++        async def submit(rid, payload):
++            seen.append((rid, payload))
++
++        t = EngineRequestTracker(_FakeEngine(), InProcessRequestRegistry(), submit)
++        await t.submit_request("r1", {"foo": "bar"})
++        assert seen == [("r1", {"foo": "bar"})]
++
++    async def test_list_active(self):
++        reg = InProcessRequestRegistry()
++        reg.register("a", [1], {})
++        reg.register("b", [2], {})
++        t = EngineRequestTracker(_FakeEngine(), reg, lambda r, p: None)
++        assert sorted(await t.list_active_request_ids()) == ["a", "b"]
++
++
++# ----------------------------------------------------------- nixl provider
++class TestNixlMetaProvider:
++    def test_full_coords_returned(self):
++        cfg = SimpleNamespace(
++            kv_transfer_config=SimpleNamespace(
++                engine_id="eid",
++                nixl_side_channel_host="10.0.0.1",
++                nixl_side_channel_port=5557,
++            )
++        )
++        provider = make_nixl_meta_provider(cfg)
++        assert provider() == {"engine_id": "eid", "host": "10.0.0.1", "port": 5557}
++
++    def test_returns_none_when_kv_transfer_config_missing(self):
++        provider = make_nixl_meta_provider(SimpleNamespace(kv_transfer_config=None))
++        assert provider() is None
++
++    def test_returns_none_when_partial(self):
++        cfg = SimpleNamespace(
++            kv_transfer_config=SimpleNamespace(
++                engine_id="eid",
++                nixl_side_channel_host=None,
++                nixl_side_channel_port=5557,
++            )
++        )
++        assert make_nixl_meta_provider(cfg)() is None
++
++    def test_returns_none_when_attribute_missing(self):
++        # vllm_config that lacks the attr entirely
++        provider = make_nixl_meta_provider(SimpleNamespace())
++        assert provider() is None
++
++
++# --------------------------------------------------------------- HTTP app
++@pytest.fixture
++def aiohttp_available():
++    try:
++        importlib.import_module("aiohttp")
++    except ImportError:
++        pytest.skip("aiohttp not installed in test env")
++
++
++class _FakeDualMode:
++    def __init__(self):
++        self.current_role = "decode"
++        self.calls: list[str] = []
++
++    async def switch_role(self, target):
++        self.calls.append(target)
++        if target not in ("decode", "prefill"):
++            return {"status": "error", "message": "bad role"}
++        self.current_role = target
++        return {"status": "ok", "new_role": target, "switch_time_ms": 1.0}
++
++
++class _FakeMigration:
++    def __init__(self):
++        self.out_calls = []
++        self.in_calls = []
++
++    async def migrate_out(self, body):
++        self.out_calls.append(body)
++        return {"status": "ok", "request_id": body.get("request_id"),
++                "prompt_tokens": [1], "generated_tokens": [], "sampling_params": {}}
++
++    async def migrate_in(self, body):
++        self.in_calls.append(body)
++        return {"status": "ok", "request_id": body.get("request_id"), "path": "recompute"}
++
++
++@pytest.mark.asyncio
++class TestSidecarApp:
++    async def test_healthz(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        app = build_app()
++        async with TestClient(TestServer(app)) as cli:
++            resp = await cli.get("/healthz")
++            assert resp.status == 200
++            assert (await resp.json())["status"] == "ok"
++
++    async def test_get_role_with_dual_mode(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        dm = _FakeDualMode()
++        async with TestClient(TestServer(build_app(dual_mode_worker=dm))) as cli:
++            resp = await cli.get("/v1/role")
++            assert (await resp.json())["current_role"] == "decode"
++
++    async def test_switch_role(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        dm = _FakeDualMode()
++        async with TestClient(TestServer(build_app(dual_mode_worker=dm))) as cli:
++            resp = await cli.post("/switch_role", json={"target_role": "prefill"})
++            assert resp.status == 200
++            body = await resp.json()
++            assert body["status"] == "ok"
++            assert body["new_role"] == "prefill"
++            assert dm.calls == ["prefill"]
++
++    async def test_switch_role_503_when_disabled(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        async with TestClient(TestServer(build_app())) as cli:
++            resp = await cli.post("/switch_role", json={"target_role": "prefill"})
++            assert resp.status == 503
++
++    async def test_migrate_out(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        m = _FakeMigration()
++        async with TestClient(TestServer(build_app(migration_handler=m))) as cli:
++            resp = await cli.post("/migrate_out", json={"request_id": "r1"})
++            body = await resp.json()
++            assert body["status"] == "ok"
++            assert body["request_id"] == "r1"
++            assert m.out_calls == [{"request_id": "r1"}]
++
++    async def test_migrate_in(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        m = _FakeMigration()
++        async with TestClient(TestServer(build_app(migration_handler=m))) as cli:
++            resp = await cli.post("/migrate_in", json={
++                "request_id": "r1",
++                "prompt_tokens": [1, 2],
++                "generated_tokens": [3],
++                "sampling_params": {},
++            })
++            body = await resp.json()
++            assert body["status"] == "ok"
++            assert body["path"] == "recompute"
++            assert m.in_calls and m.in_calls[0]["request_id"] == "r1"
++
++    async def test_migrate_503_when_disabled(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        async with TestClient(TestServer(build_app())) as cli:
++            assert (await cli.post("/migrate_out", json={"request_id": "x"})).status == 503
++            assert (await cli.post("/migrate_in", json={})).status == 503
++
++    async def test_active_requests(self, aiohttp_available):
++        from aiohttp.test_utils import TestClient, TestServer
++        from dynamo.vllm.rl_scaling_sidecar import build_app
++
++        reg = InProcessRequestRegistry()
++        reg.register("a", [1], {})
++        reg.register("b", [2], {})
++        async with TestClient(TestServer(build_app(registry=reg))) as cli:
++            assert sorted(await (await cli.get("/v1/active_requests")).json()) == ["a", "b"]

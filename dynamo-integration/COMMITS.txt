@@ -1,0 +1,26 @@
+- shengqi : S2 elastic role switch - DualModeWorker (Python) reusing sleep/wake_up + set_disaggregation_mode on BaseWorkerHandler + tests; Rust reconfig stubbed (see RL_SCALING_RUST_CHANGES.md)
+- shengqi : S3 request consolidation fallback - migrate_out/migrate_in (recompute-prefill) MigrationHandler with 9 tests; full NIXL D2D documented as future work in RL_SCALING_RUST_CHANGES.md
+- RL-Scaling Phase 2 (Option A): real S2 reconfig + S3 cost-benefit gate
+- Phase 2 v3: fact-corrected pure-Python design + RequestBlockIndex + MigrationConnector skeleton
+- Phase 2 v3.5: drop custom KVConnector, route migration via vLLM-native kv_transfer_params
+- [RL-Scaling v3.6] in-process aiohttp sidecar wires /switch_role and /migrate_* on worker
+- fix(sidecar): change default port from 9090 to 9091
+- rl-scaling sidecar: patch self pod label nvidia.com/dynamo-current-role on /switch_role
+- feat(rl-scaling): true E2E role flip via MDC re-registration
+- rl-scaling: gate dual-mode partner-prefill behind env (prevent prefill-router poisoning)
+- fix(rl-scaling): partner-prefill 500 — buffer multi-chunk prefill stream
+- wip: debug logging in partner-prefill wrapper
+- fix(rl-scaling): partner-prefill 500 — single TCP slot dispatcher
+- fix(dual_mode): register target role endpoint instance after switch
+- transfer kv after request switch.
+- implement kv trasform
+- fix(rl-scaling): sync current_role before publishing target MDC; add read-only sidecar to native prefill
+- fix(rl-scaling): drain in-flight before role switch; token-progress /v1/active_requests
+- fix(rl-scaling): drain engine to idle (not just registry) before role switch
+- fix(rl-scaling): flush NIXL pending KV sends before role switch (release pinned blocks)
+- fix(rl-scaling): migration fidelity (prompt + sampling params) and S3 cordon
+- S2: cordon-first in switch_role to fix switch-instant request loss
+- S2: quiesce handshake to eliminate switch-instant 500s under high concurrency
+- S2: zero-loss fast switch — hold-during-switch dispatcher + frontend ack surrogate; settle 3.0->0.5
+- S2: wait for outbound KV pulls before sleep (fix P->D hang under handoff)
+- S3: replay every sampling field on migrate_in (fix silent ignore_eos loss)
