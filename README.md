@@ -28,33 +28,13 @@ over Prometheus metrics, Kubernetes discovery, worker sidecars, and vLLM engine 
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph K8s["Kubernetes cluster (single node)"]
-        FE["<b>Frontend</b><br/>OpenAI HTTP :8000<br/>ModelWatcher → KvRouter / PrefillRouter"]
+![Deployment topology: Kubernetes-based discovery, the frontend router, the RL-Scaling controller, and the dual-mode workers](assets/K8S-deployement.png)
 
-        subgraph Pods["Dual-mode worker pods (fixed GPU count)"]
-            W1["<b>Worker A</b><br/>vLLM engine (NixlConnector kv_both)<br/>one TCP slot · sidecar :9091<br/>ModelCard: <b>prefill</b>"]
-            W2["<b>Worker B</b><br/>vLLM engine (NixlConnector kv_both)<br/>one TCP slot · sidecar :9091<br/>ModelCard: <b>decode</b>"]
-        end
-
-        CTRL["<b>RL-Scaling controller</b><br/>control loop: Consolidation → Role Switch → Signal Scaling<br/>reads Prometheus + sidecars<br/>patches Deployments / mutates ModelCards"]
-    end
-
-    RL["RL rollout<br/>(phase signal)"] -->|"warm-up / batch meta"| CTRL
-    FE -->|"prefill KV handoff (NIXL)"| W2
-    FE -->|generate| W1
-    FE -->|generate| W2
-    W1 -. "DWMD ModelCard (role)" .-> FE
-    W2 -. "DWMD ModelCard (role)" .-> FE
-    CTRL -->|"/switch_role, /migrate"| W1
-    CTRL -->|"/switch_role, /migrate"| W2
-
-    classDef ctrl fill:#1f6feb,color:#fff,stroke:#1f6feb;
-    classDef fe fill:#238636,color:#fff,stroke:#238636;
-    class CTRL ctrl;
-    class FE fe;
-```
+*Discovery is via Kubernetes `DynamoWorkerMetadata` CRs. Each worker runs one vLLM
+`kv_both` engine with a `NixlConnector`, a prefix cache + KVBM, and the RL-Scaling
+sidecar (`:9091` — `/switch_role`, `/migrate_*`). The frontend's `ModelWatcher`
+(WorkerSet / KvRouter / PrefillRouter) watches the CRs; the RL-Scaling controller
+carries the RL signal plus the role-switch and consolidation logic.*
 
 A worker's role is simply **which ModelCard it publishes** to its Kubernetes
 `DynamoWorkerMetadata` CR; the frontend routes by *watching* those CRs. The
@@ -102,6 +82,14 @@ fallback) and resume decoding → `migration_complete` releases the source. The
 request's KV lives on ≥1 GPU at every instant (**at-least-one-copy**); any failure
 rolls back and the request keeps running on the source. Zero KV loss, zero
 in-flight request loss.
+
+![Three-phase block-hold migration sequence](assets/request-consolidation.png)
+
+*The three phases between the orchestrator, the drained decoder, and its peer. In the
+diagram, `D_src` is the **source** being drained (`/migrate_out`) and `D_dst` is the
+**destination** peer that receives the request (`/migrate_in`). It illustrates the
+connector (NIXL-pull) path; on this no-RDMA cluster the runs take the equivalent
+**recompute** fallback, which re-prefills the already-generated tokens on the destination.*
 
 ### The control loop
 
