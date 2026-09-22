@@ -131,17 +131,6 @@ Router prefill-queue wait 29.5 → 24.7 ms; decode-phase TTFT 327 → 291 ms.
 **Consolidation reclaims GPU time** — pool contracts 2 → 1 decoders, GPU freed **12.2 s early**,
 at the cost of a slightly longer tail (makespan 82.9 → 85.4 s).
 
-### Honest finding
-
-Each mechanism **does exactly what it is specified to do at the phase level**, but on
-this workload the end-to-end **batch makespan does not improve** (Role Switch: 82.9 → 83.1 s;
-mixed: → 88.3 s). This is *structural*, not a mechanism failure: the makespan is set
-by the decode tail, which neither primitive targets, and on this small batch the
-fixed action costs stack without a phase to amortize them. The switch cost is O(1)
-and the reallocation is +77%, so we expect this to invert into a net win at
-production rollout scale (larger, genuinely prefill-bound bursts; more workers). This
-result is reported as *when the mechanism helps*, not *whether it works*.
-
 ---
 
 ## Repository layout
