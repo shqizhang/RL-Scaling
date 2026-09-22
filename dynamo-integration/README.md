@@ -24,8 +24,8 @@ All changes are confined to `components/src/dynamo/vllm/`:
 
 | File | Δ | Role |
 |------|---|------|
-| `dual_mode.py` | **+871 (new)** | `DualModeWorker.switch_role` — the S2 protocol: a three-stage zero-loss envelope (cordon → drain → outbound-KV drain) around a five-stage engine core (sleep → reconfig NIXL → reset prefix cache → re-register ModelCard → wake). |
-| `migration.py` | **+508 (new)** | The S3 three-phase block-hold migration (`migrate_out` / `migrate_in` / `migration_complete`) with the at-least-one-copy invariant and the cost/benefit gate. |
+| `dual_mode.py` | **+871 (new)** | `DualModeWorker.switch_role` — the Role Switch protocol: a three-stage zero-loss envelope (cordon → drain → outbound-KV drain) around a five-stage engine core (sleep → reconfig NIXL → reset prefix cache → re-register ModelCard → wake). |
+| `migration.py` | **+508 (new)** | The Consolidation three-phase block-hold migration (`migrate_out` / `migrate_in` / `migration_complete`) with the at-least-one-copy invariant and the cost/benefit gate. |
 | `rl_scaling_sidecar.py` | **+673 (new)** | An in-process aiohttp sidecar on `:9091` exposing `/switch_role`, `/migrate_*`, `/v1/role`, `/v1/active_requests` — the control-plane surface, off the data path. |
 | `main.py` | +432 | Role-aware request dispatcher (one TCP slot, two ModelCards) and the ModelCard re-registrar. |
 | `handlers.py` | +141 | Per-request token-progress registry used by the migration cost/benefit gate and straggler detection. |
